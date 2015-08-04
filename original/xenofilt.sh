@@ -19,13 +19,29 @@ exit 1
 }
 
 
-# install bwa and samtools, e.g.
-[ -z "$(which bwa)" ] && wget http://downloads.sourceforge.net/project/bio-bwa/bwa-0.7.12.tar.bz2
-[ -z "$(which samtools)" ] && wget http://downloads.sourceforge.net/project/samtools/samtools/0.1.19/samtools-0.1.19.tar.bz2
-
-ls -1 *.tar.bz2 | while read f; do tar xjf $f; cd ${f%.tar.bz2}; make; cd -; done
+# install bwa and samtools (once), e.g.
 [ -f bwa-0.7.12/bwa ] && alias bwa=bwa-0.7.12/bwa
 [ -f samtools-0.1.19/samtools ] && alias samtools=samtools-0.1.19/samtools
+donloaded=
+if [ -z "$(which bwa)" ]; then
+  downloaded=1
+  wget http://downloads.sourceforge.net/project/bio-bwa/bwa-0.7.12.tar.bz2
+fi
+if [ -z "$(which samtools)" ]; then
+  downloaded=1
+  wget http://downloads.sourceforge.net/project/samtools/samtools/0.1.19/samtools-0.1.19.tar.bz2
+fi
+
+if [ -n "$downloaded" ]; then
+  ls -1 *.tar.bz2 | while read f; do
+    tar xjf $f
+    cd ${f%.tar.bz2}
+    make
+    cd -
+  done
+  [ -f bwa-0.7.12/bwa ] && alias bwa=bwa-0.7.12/bwa
+  [ -f samtools-0.1.19/samtools ] && alias samtools=samtools-0.1.19/samtools
+fi
 
 # or if you want to use tophat/bowtie use that similarly.
 
