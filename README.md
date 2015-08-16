@@ -19,7 +19,8 @@ our method outperforms existing methods.
 
 ## Bioconductor
 
-XenoFilteR will be submit to Bioconductor.org. 
+XenofilteR will be submit to Bioconductor.org. 
+
 
 ## Installation (not via Bioconductor)
 
