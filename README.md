@@ -24,7 +24,7 @@ XenofilteR will be submit to Bioconductor.org.
 
 ## Installation (not via Bioconductor)
 
-Installation of XenoFilteR should be performed as
+Installation of XenofilteR should be performed as
 follows:
 
     > source("http://bioconductor.org/biocLite.R")
@@ -38,7 +38,7 @@ be downloaded from the
 [XenoFilteR releases webpage](https://github.com/PeeperLab/XenoFilteR/releases)
 and installed using the following command:
 
-    $ R CMD INSTALL XenoFilteR*.tar.gz
+    $ R CMD INSTALL XenofilteR*.tar.gz
 
 Now you are all set to start your analysis.
 
@@ -46,9 +46,9 @@ Now you are all set to start your analysis.
 
 Load the CopywriteR package in R using:
 
-    > library("XenoFilteR")
+    > library("XenofilteR")
 
-XenoFilteR contains a single main functions:
+XenofilteR contains a single main functions:
 
 Explain how the main function works
 
