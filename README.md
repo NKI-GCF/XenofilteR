@@ -33,6 +33,6 @@ Peeper, Roel in the Genome Core Facility.
 
 ## Changes and additions we are currently working on
 ## 
-- [ ] Making XenofilteR into an R-package - [ ] Initial loop running the
-basic function of XenofilteR
+- [ ] Making XenofilteR into an R-package 
+- [x] Initial loop running the basic function of XenofilteR
 
