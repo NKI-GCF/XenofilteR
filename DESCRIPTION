@@ -1,0 +1,14 @@
+Package: XenoFilteR
+Type: Package
+Title: Filtering mouse reads from PDX sequencing
+Version: 0.0.99
+Date: 2015-08-16
+Author: Oscar Krijgsman
+Maintainer: Oscar Krijgsman <o.krijgsman@nki.nl>
+Imports: Rsamtools, GenomicAlignments, GenomicRanges, futile.logger
+Depends: R(>= 3.2), BiocParallel
+Suggests: BiocStyle, snow
+URL: https://github.com/PeeperLab/XenofilteR
+Description: Newtool filters sequence reads in bam files for DNA from another organism (like mouse DNA in patient derived Xenografts). 
+License: GPL-2
+biocViews: TargetedResequencing, ExomeSeq, Preprocessing, PDX
