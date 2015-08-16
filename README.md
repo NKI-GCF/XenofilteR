@@ -17,6 +17,40 @@ reads that map to mouse removed. We validated XenofilteR on in-silico
 data and large sets of PDX samples, both DNA and RNA sequencing and show
 our method outperforms existing methods.
 
+## Bioconductor
+
+XenoFilteR will be submit to Bioconductor.org. 
+
+## Installation (not via Bioconductor)
+
+Installation of XenoFilteR should be performed as
+follows:
+
+    > source("http://bioconductor.org/biocLite.R")
+    > biocLite(c("matrixStats", "gtools", "data.table", "S4Vectors", 
+                 "IRanges", "Rsamtools", "GenomicAlignments",
+                 "GenomicRanges", "GenomeInfoDb", "BiocParallel",
+                 "futile.logger"))
+
+As the last step in the installation process, the latest CopywriteR package can
+be downloaded from the
+[XenoFilteR releases webpage](https://github.com/PeeperLab/XenoFilteR/releases)
+and installed using the following command:
+
+    $ R CMD INSTALL XenoFilteR*.tar.gz
+
+Now you are all set to start your analysis.
+
+## XenofilteR usage:
+
+Load the CopywriteR package in R using:
+
+    > library("XenoFilteR")
+
+XenoFilteR contains a single main functions:
+
+Explain how the main function works
+
 
 ## Contact
 ## 
