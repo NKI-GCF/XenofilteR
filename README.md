@@ -27,8 +27,8 @@ want to report any bugs, please do not hesitate and contact:
 - [Oscar Krijgsman](mailto:o.krijgsman@nki.nl) 
 - [Roel Kluin](mailto:r.kluin@nki.nl)
 
-Thomas and Oscar are working in the laboratory of Prof. Dr. Daniel S.
-Peeper.
+Oscar and Roel both work at the NKI, Oscar in the lab of Prof. Daniel
+Peeper, Roel in the Genome Core Facility.
 
 
 ## Changes and additions we are currently working on
