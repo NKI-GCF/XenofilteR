@@ -1,11 +1,7 @@
 exportPattern("^[[:alpha:]]+")
 
-importFrom(matrixStats, madDiff, colMins, colMaxs)
-importFrom(gtools, mixedorder)
 importFrom(BiocParallel, bplapply, bpworkers)
 importFrom(data.table, data.table)
-importFrom(S4Vectors, Rle)
-importFrom(GenomeInfoDb, seqlevels, 'seqlevels<-')
 import(IRanges)
 import(Rsamtools)
 import(GenomicAlignments)
