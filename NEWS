@@ -1,5 +1,15 @@
-Changes in version 1.0.1 (2015-05-XX)
+Changes in version 2.0.1 (2015-xx-xx)
 
 -------------------------------------
 
-Initial version (version 1.0) (2015-05-12)
+RELEASE (version 1.0)
+
+-------------------------------------
+
+
+Initial version (version 0.99.0) (2015-05-12)
+
+	o Added documentation
+	o Added checks for bam locations, write permissions etc.
+	o Transformed simple function into an R-package
+
