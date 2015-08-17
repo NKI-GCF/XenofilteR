@@ -1,7 +1,7 @@
-%\VignetteIndexEntry{XenoFilteR}
-%\VignetteDepends{XenoFilteR}
+%\VignetteIndexEntry{XenofilteR}
+%\VignetteDepends{XenofilteR}
 %\VignetteKeywords{Filtering of Bam files for mouse derived DNA.}
-%\VignettePackage{XenoFilteR}
+%\VignettePackage{XenofilteR}
 %\VignetteEngine{utils::Sweave}
 
 \documentclass{article}
@@ -14,7 +14,7 @@ BiocStyle::latex()
   \item \texttt{\textbackslash#1\{#2\}} #3 \csname#1\endcsname{#2}.%
 }
 
-\title{\bf XenoFilteR: filter raeds from xenograft sequencing.}
+\title{\bf XenofilteR: filter raeds from xenograft sequencing.}
 \author{Oscar Krijgsman}
 
 \begin{document}
@@ -45,7 +45,7 @@ advantages relative to current approaches \cite{s13059-015-0617-1} and it
 constitutes a viable alternative for copy number detection from targeted
 sequencing data.
 
-\section{XenoFilteR workflow}
+\section{XenofilteR workflow}
 
 Xenofilter uses 2 bam files as input. The first of the reads mapped to the human reference, the second of the same reads maped to the mouse genome. Based on these 2 bam files XenofilteR assigns a read to either human or mouse. To do this the following steps are performed:
 
@@ -60,7 +60,7 @@ Xenofilter uses 2 bam files as input. The first of the reads mapped to the human
 
 \section{Analysis workflow}
 
-The full analysis ofxenograft data with CopywriteR includes a single step, \Rcode{Xenofilter()}. 
+The full analysis of xenograft data with CopywriteR includes a single step, \Rcode{Xenofilter()}. 
 
 In this analysis workflow, we will use CopywriteR to extract copy number
 information from whole-exome sequening data from a murine small-cell lung
