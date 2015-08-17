@@ -11,7 +11,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
     on.exit(setwd(wd.orig))
 
 	## Make folder paths absolute
-    sample.control <- apply(Sample_list.control, c(1, 2),
+    Sample_list <- apply(Sample_list, c(1, 2),
                             tools::file_path_as_absolute)
     Sample_list <- data.frame(Sample_list, stringsAsFactors = FALSE)
     colnames(Sample_list) <- c("samples", "controls")
@@ -69,7 +69,8 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
     ## Actual filter ##
     ###################
 
-	for (i in 1:nrow(Sample_list)){
+    i <- c(seq_along(sample.paths))
+	ActualFilter<-function(i, destination.folder, Sample_list, is.paired.end){
 
 		## Create list of .bam files
 		flog.info("XenofilteR will analyze the following (unique) samples:",
@@ -129,20 +130,6 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 		Map_info<-matrix(data=0, ncol=8, nrow=length(uni.name))
 		row.names(Map_info)<-uni.name
 		colnames(Map_info)<-c("MM_mouse_F","MM_mouse_R","MM_human_F","MM_R_human", "Mq_mouse_F", "Mq_mouse_R", "Mq_human_F", "Mq_human_R")
-
-
-		######################################################
-		## Move functions to .private folder in R-package
-		## Function to check which reads are first in pair 
-		FirstInPair<-function(x){
-			intToBits(x)[7]=="01"
-		}
-	
-		## Function to check which reads are second in pair
-		SecondInPair<-function(x){
-			intToBits(x)[8]=="01"
-		}
-		######################################################
 	
 	
 		### Extensive data table with the number of mismatches (+ clips) and mapping quality.
@@ -193,7 +180,9 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 		cat("Finished writing",gsub(".bam","_Filtered.bam",Sample_list[i,1]), " ---  sample", i, "out of", nrow(Sample_list), "\n")
 
 	}
-
+   
+    to.log <- bplapply(i, destination.folder, Sample_list, is.paired.end, BPPARAM = bp.param)
+    lapply(to.log, flog.info)
 
 
 	## Calculation time etc. 
