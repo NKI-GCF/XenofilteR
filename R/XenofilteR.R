@@ -29,7 +29,8 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
                    "folder."))
     }
     
-     ## Create folder
+    
+    ## Create folder
     destination.folder <- file.path(destination.folder, "Filtered_bams")
     tryCatch({
         if (!file.exists(file.path(destination.folder))) {
@@ -67,12 +68,11 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 
 
 
-
 	###################
     ## Actual filter ##
     ###################
 
-    i <- c(seq_along(sample.paths))
+    i <- c(seq_along(Sample_list$Graft))
 	ActualFilter<-function(i, destination.folder, Sample_list, is.paired.end){
 
 		## Create list of .bam files
