@@ -1,8 +1,6 @@
 exportPattern("^[[:alpha:]]+")
 
 importFrom(BiocParallel, bplapply, bpworkers)
-importFrom(data.table, data.table)
-import(IRanges)
 import(Rsamtools)
 import(GenomicAlignments)
 import(GenomicRanges)
