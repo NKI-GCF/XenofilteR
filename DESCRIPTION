@@ -1,7 +1,7 @@
-Package: XenoFilteR
+Package: XenofilteR
 Type: Package
 Title: Filtering mouse reads from PDX sequencing
-Version: 0.0.99
+Version: 0.99.0
 Date: 2015-08-16
 Author: Oscar Krijgsman
 Maintainer: Oscar Krijgsman <o.krijgsman@nki.nl>
