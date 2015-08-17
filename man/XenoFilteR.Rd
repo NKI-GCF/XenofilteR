@@ -53,7 +53,7 @@ mouse_bams <- list.files(pattern = "mm10.bam$", full.names = TRUE)
 
 sample.list <- cbind(human_bams,mouse_bams)
 
-CopywriteR(sample.list = sample.list, destination.folder =
+XenofilteR(sample.list = sample.list, destination.folder =
         "/PATH/TO/DESTINATIONFOLDER/", ncpu = 1)
 }
 }
