@@ -19,7 +19,7 @@ our method outperforms existing methods.
 
 ## Bioconductor
 
-XenofilteR will be submit to Bioconductor.org. 
+XenofilteR will be submitted to Bioconductor.org. 
 
 
 ## Installation (not via Bioconductor)
@@ -28,12 +28,9 @@ Installation of XenofilteR should be performed as
 follows:
 
     > source("http://bioconductor.org/biocLite.R")
-    > biocLite(c("matrixStats", "gtools", "data.table", "S4Vectors", 
-                 "IRanges", "Rsamtools", "GenomicAlignments",
-                 "GenomicRanges", "GenomeInfoDb", "BiocParallel",
-                 "futile.logger"))
+    > biocLite(c("Rsamtools", "GenomicAlignments", "BiocParallel", "futile.logger"))
 
-As the last step in the installation process, the latest CopywriteR package can
+As the last step in the installation process, the latest XenofilteR package can
 be downloaded from the
 [XenoFilteR releases webpage](https://github.com/PeeperLab/XenoFilteR/releases)
 and installed using the following command:
@@ -44,7 +41,7 @@ Now you are all set to start your analysis.
 
 ## XenofilteR usage:
 
-Load the CopywriteR package in R using:
+Load the XenofilteR package in R using:
 
     > library("XenofilteR")
 

@@ -14,7 +14,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
     Sample_list <- apply(Sample_list, c(1, 2),
                             tools::file_path_as_absolute)
     Sample_list <- data.frame(Sample_list, stringsAsFactors = FALSE)
-    colnames(Sample_list) <- c("samples", "controls")
+    colnames(Sample_list) <- c("Graft", "Host")
     destination.folder <- tools::file_path_as_absolute(destination.folder)
 
     if (!file.exists(destination.folder)) {
@@ -48,6 +48,9 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
                    "script..."))
     })
 
+    ## Calculate the maximal number of CPUs to be used
+    ncpu <- bpworkers(bp.param)
+
 	## Provide output to log
     flog.appender(appender.file(file.path(destination.folder,
                                           "XenofilteR.log")))
@@ -56,7 +59,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
     flog.info(paste0("XenofilteR was run using the following commands:", "\n\n",
                      "XenofilteR(Sample_list = Sample_list, ",
                      "destination.folder = \"", dirname(destination.folder),
-                     "\", BPPARAM = bp.param"))
+                     "\", BPPARAM = bp.param", ")"))
     flog.info("The value of bp.param was:", getClass(bp.param), capture = TRUE)
     flog.info("The value of Sample_list was:", Sample_list,
               capture = TRUE)
