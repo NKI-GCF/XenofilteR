@@ -5,3 +5,75 @@
 %\VignetteEngine{utils::Sweave}
 
 \documentclass{article}
+
+\RequirePackage{/Users/o.krijgsman/Library/R/3.2/library/BiocStyle/resources/latex/Bioconductor}
+
+\AtBeginDocument{\bibliographystyle{/Users/o.krijgsman/Library/R/3.2/library/BiocStyle/resources/latex/unsrturl}}
+\newcommand{\exitem}[3]{%
+  \item \texttt{\textbackslash#1\{#2\}} #3 \csname#1\endcsname{#2}.%
+}
+
+\title{\bf XenofilteR: filter reads from xenograft sequencing.}
+\author{Oscar Krijgsman}
+
+\usepackage{Sweave}
+\begin{document}
+\input{XenofilteR-concordance}
+
+\maketitle
+
+\begin{center}
+  Department of Molecular Oncology \\*
+  Netherlands Cancer Institute \\*
+  The Netherlands \\*
+\end{center}
+
+\begin{center}
+  \email{o.krijgsman@nki.nl}
+\end{center}
+
+\tableofcontents
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Overview}
+
+Human tumor samples or cell lines grown in immuno-deficient mice are a common model used in cancer research. Despite its common use of these xenografts, genomic analysis of tumor material derived from xenografts is challenging. The sequenced sample not only contains reads that originate from the graft (e.g. human tumor or cell line) but also read derived from host (mouse) stroma. Here we show the large effects the host-derived sequence reads can have on downstream analysis of sequence data from xenografts and developed a method to overcome these challenges. 
+Our tool, XenofilteR, assesses for each sequence read whether it matches the graft or the host reference genome better, based on mapping quality together with multiple values that indicate the edit distance to the reference. XenofilteR output is a bam file with the reads that map to mouse removed. We validated XenofilteR on in-silico data and large sets of PDX samples, both DNA and RNA sequencing and show our method outperforms existing methods.
+
+
+\section{XenofilteR workflow}
+
+Xenofilter uses 2 bam files as input. The first of the reads mapped to the human reference, the second of the same reads maped to the mouse genome. Based on these 2 bam files XenofilteR assigns a read to either graft or host. To do this the following steps are performed:
+
+\begin{itemize}
+    \item Read read name, mapping quality, cigar string and number of mismatches from mouse bam file
+    \item Read read name, mapping quality, cigar string and number of mismatches from human bam file
+    \item Calculates the number of mismatches and adds these to the clips and inserts (from cigar)
+    \item Calculates the two MapScores for each reads (MapScore for mapping to human and mouse reference genome)
+    \item Assigns each read (or read-pair in case of PE experiments) to either human or mouse
+    \item The bam file of the reads mapped to teh human references is filtered for mouse reads
+\end{itemize}
+
+\section{Analysis workflow}
+
+The full analysis of xenograft data with XenofilteR includes a single step, \Rcode{Xenofilter()}. 
+
+In this analysis workflow we will use XenofilteR to filter patient derived xenograft exome sequencing data for mouse reads. The data is available through the European Genome-phenome Archive (EGA; http://www.ebi.ac.uk/ega/home; accession number EGAS00001000415). Here, we use only the reads that map to the gene NRAS in in hg19. The bam files, both mapped against human and mouse reference, are available within this r-package. We wil show teh usage of XenofilteR with these two pre-mapped files in this vignette. 
+
+In this example, CopywriteR will be applied to a bin size of 20 kb. We
+recommend to use a bin size of 20 kb when trying to analyze whole-exome
+sequencing data, while we would start analyzing at 50 kb resolution for targeted
+sequencing on smaller gene panels. As the .bam file contained in the
+\Biocpkg{SCLCBam} package is mapped to the mm10 reference genome, we run
+{\Rcode{preCopywriteR()} as follows:
+
+\begin{Schunk}
+\begin{Sinput}
+> library(XenofilteR)
+\end{Sinput}
+\end{Schunk}
+
+\begin{Schunk}
+\begin{Sinput}
+> XenofilteR()

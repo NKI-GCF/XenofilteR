@@ -1,6 +1,6 @@
 %\VignetteIndexEntry{XenofilteR}
 %\VignetteDepends{XenofilteR}
-%\VignetteKeywords{Filtering of Bam files for mouse derived DNA.}
+%\VignetteKeywords{Filtering of xenograft sequence data for reads that originate from the host.}
 %\VignettePackage{XenofilteR}
 %\VignetteEngine{utils::Sweave}
 
@@ -14,10 +14,11 @@ BiocStyle::latex()
   \item \texttt{\textbackslash#1\{#2\}} #3 \csname#1\endcsname{#2}.%
 }
 
-\title{\bf XenofilteR: filter raeds from xenograft sequencing.}
+\title{\bf XenofilteR: filter reads from xenograft sequencing.}
 \author{Oscar Krijgsman}
 
 \begin{document}
+\SweaveOpts{concordance=TRUE}
 
 \maketitle
 
@@ -37,17 +38,13 @@ BiocStyle::latex()
 
 \section{Overview}
 
-To extract copy number information from targeted sequencing data while
-circumventing problems related to the use of on-target reads, we developed
-the CopywriteR package. Unlike other currently available tools, CopywriteR is
-based on off-target reads. We have shown that this approach has several
-advantages relative to current approaches \cite{s13059-015-0617-1} and it
-constitutes a viable alternative for copy number detection from targeted
-sequencing data.
+Human tumor samples or cell lines grown in immuno-deficient mice are a common model used in cancer research. Despite its common use of these xenografts, genomic analysis of tumor material derived from xenografts is challenging. The sequenced sample not only contains reads that originate from the graft (e.g. human tumor or cell line) but also read derived from host (mouse) stroma. Here we show the large effects the host-derived sequence reads can have on downstream analysis of sequence data from xenografts and developed a method to overcome these challenges. 
+Our tool, XenofilteR, assesses for each sequence read whether it matches the graft or the host reference genome better, based on mapping quality together with multiple values that indicate the edit distance to the reference. XenofilteR output is a bam file with the reads that map to mouse removed. We validated XenofilteR on in-silico data and large sets of PDX samples, both DNA and RNA sequencing and show our method outperforms existing methods.
+
 
 \section{XenofilteR workflow}
 
-Xenofilter uses 2 bam files as input. The first of the reads mapped to the human reference, the second of the same reads maped to the mouse genome. Based on these 2 bam files XenofilteR assigns a read to either human or mouse. To do this the following steps are performed:
+Xenofilter uses 2 bam files as input. The first of the reads mapped to the human reference, the second of the same reads maped to the mouse genome. Based on these 2 bam files XenofilteR assigns a read to either graft or host. To do this the following steps are performed:
 
 \begin{itemize}
     \item Read read name, mapping quality, cigar string and number of mismatches from mouse bam file
@@ -60,31 +57,9 @@ Xenofilter uses 2 bam files as input. The first of the reads mapped to the human
 
 \section{Analysis workflow}
 
-The full analysis of xenograft data with CopywriteR includes a single step, \Rcode{Xenofilter()}. 
+The full analysis of xenograft data with XenofilteR includes a single step, \Rcode{Xenofilter()}. 
 
-In this analysis workflow, we will use CopywriteR to extract copy number
-information from whole-exome sequening data from a murine small-cell lung
-cancer. The complete dataset can be downloaded from the European Nucleotide
-Archive (\url{http://www.ebi.ac.uk/ena/home}) using the accession number
-PRJEB6954. In this vignette, only the sequence reads on chromosome 4 are used.
-The .bam file, which has been pre-filtered to minimize disk usage, is contained
-in the \Biocpkg{SCLCBam} package. Before starting the analysis, GC-content and
-mappability helper files need to be created for the desired bin size and
-reference genome. This is done using the \Rcode{preCopywriteR()} function.
-
-\subsection{\Rcode{preCopywriteR()}}
-
-CopywriteR uses binned read count data as a basis for copy number detection. We
-have pre-assembled 1 kb bin GC-content and mappability information for the hg18,
-hg19, hg38, mm9 and mm10 reference genomes in the \Biocpkg{CopyhelpeR} package.
-The \Rcode{preCopywriteR()} function allows to create the necessary helper
-files. These files can be created for any custom bin size that is a multiple of
-1000 bp, and for the above-mentioned reference genomes. The helper files are
-saved in a new folder that is names after the relevant reference genome, the bin
-size, and the prefix (all separated by '\symbol{95}'). The helper files are
-required to run CopywriteR. If previously created helper files for a specific
-bin size / reference genome / prefix combination are available, the
-{\Rcode{preCopywriteR()} step can be omitted.
+In this analysis workflow we will use XenofilteR to filter patient derived xenograft exome sequencing data for mouse reads. The data is available through the European Genome-phenome Archive (EGA; http://www.ebi.ac.uk/ega/home; accession number EGAS00001000415). Here, we use only the reads that map to the gene NRAS in in hg19. The bam files, both mapped against human and mouse reference, are available within this r-package. We wil show teh usage of XenofilteR with these two pre-mapped files in this vignette. 
 
 In this example, CopywriteR will be applied to a bin size of 20 kb. We
 recommend to use a bin size of 20 kb when trying to analyze whole-exome
@@ -97,14 +72,8 @@ sequencing on smaller gene panels. As the .bam file contained in the
 library(XenofilteR)
 @
 
-<<get.root.folder, print=FALSE, eval=TRUE>>=
-data.folder <- tools::file_path_as_absolute(file.path(getwd()))
-@
-
-<<preCopywriteR, print=FALSE, eval=TRUE>>=
-preCopywriteR(output.folder = file.path(data.folder),
-              bin.size = 20000,
-              ref.genome = "mm10_4")
+<<XenofilteR, print=FALSE, eval=TRUE>>=
+XenofilteR()
 @
 
 Please not that the "mm10\symbol{95}4" reference genome exclusively contains
