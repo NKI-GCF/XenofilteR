@@ -216,8 +216,8 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 		Map_info[,6]<-Mouse[[1]]$mapq[unlist(RR_mouse)][match(uni.name, Mouse[[1]]$qname[unlist(RR_mouse)])]
 
 		## Match for forward and reverse reads and get MM+I (human)
-		FR_human<-lapply(Human[[1]]$flag[set==TRUE], FirstInPair)
-		RR_human<-lapply(Human[[1]]$flag[set==TRUE], SecondInPair)
+		FR_human<-lapply(Human[[1]]$flag[set==TRUE], .FirstInPair)
+		RR_human<-lapply(Human[[1]]$flag[set==TRUE], .SecondInPair)
 	
 		## Fill dataframe with mismatches and mappin quality for human
 		Map_info[,3]<-MM_I_human_set[unlist(FR_human)][match(uni.name, Human_qname_set[unlist(FR_human)])]
