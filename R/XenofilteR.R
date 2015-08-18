@@ -128,8 +128,8 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
     is.paired.end <- bplapply(sample.paths, NumberPairedEndReads,
                               BPPARAM = bp.param)
     is.paired.end <- unlist(is.paired.end)
-    for (i in seq_along(sample.files)) {
-        flog.info(paste0("Paired-end sequencing for sample ", sample.files[i],
+    for (i in seq_along(sample.paths)) {
+        flog.info(paste0("Paired-end sequencing for sample ", sample.paths[i],
                          ": ", is.paired.end[i]))
     }
 
