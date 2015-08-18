@@ -18,3 +18,7 @@ SecondInPair<-function(x){
                                      exdent = 2), collapse = "\n")
     gsub(paste0(file.sep, " "), file.sep, splitted.pasted)
 }
+
+getPathBamFolder <- function() {
+    dir(system.file(package = "XenofilteR"), "extdata", full.names = TRUE)
+}

@@ -57,23 +57,57 @@ Xenofilter uses 2 bam files as input. The first of the reads mapped to the human
 
 \section{Analysis workflow}
 
-The full analysis of xenograft data with XenofilteR includes a single step, \Rcode{Xenofilter()}. 
+In this analysis workflow we will use XenofilteR to filter patient derived xenograft exome sequencing data for mouse reads. The data is available through the European Genome-phenome Archive (EGA; http://www.ebi.ac.uk/ega/home; accession number EGAS00001000415). Here, we use only the reads that map to the gene NRAS in in hg19. The bam files, both mapped against human and mouse reference, are available within this r-package. We wil show the usage of XenofilteR with these two pre-mapped files distributed with this package. 
 
-In this analysis workflow we will use XenofilteR to filter patient derived xenograft exome sequencing data for mouse reads. The data is available through the European Genome-phenome Archive (EGA; http://www.ebi.ac.uk/ega/home; accession number EGAS00001000415). Here, we use only the reads that map to the gene NRAS in in hg19. The bam files, both mapped against human and mouse reference, are available within this r-package. We wil show teh usage of XenofilteR with these two pre-mapped files in this vignette. 
 
-In this example, CopywriteR will be applied to a bin size of 20 kb. We
-recommend to use a bin size of 20 kb when trying to analyze whole-exome
-sequencing data, while we would start analyzing at 50 kb resolution for targeted
-sequencing on smaller gene panels. As the .bam file contained in the
-\Biocpkg{SCLCBam} package is mapped to the mm10 reference genome, we run
-{\Rcode{preCopywriteR()} as follows:
+XenofilteR requires a dataframe or matrix with in the first column the bam file names as mapped to the graft reference. The second contains the file names and paths to the bam files as mapped to teh host reference. Each row in Sample_list represents a single sample. 
+The XenofilteR package and data are loaded in the following way: 
 
 \begin{Schunk}
 \begin{Sinput}
 > library(XenofilteR)
+> path <- SCLCBam::getPathBamFolder()
+> samples <- list.files(path = path, pattern = ".bam$", full.names = TRUE)
+> Sample_list <- data.frame(samples[1], samples[2])
 \end{Sinput}
 \end{Schunk}
 
+\subsection{\Biocpkg{BiocParallel} for parallel computing}
+
+XenofilteR fully supports paralel computing and is implemented in such a way
+that every sample is processed on a single core. XenofilteR uses the
+\Biocpkg{BiocParallel} for parallel computing. This package requires the user to
+specify which parallel environment is used by creating an instance of
+\Rcode{BiocParallelParam}. In the example case, we are using the \Rcode{snow}
+environment and specify a \Rcode{SnowParam}:
+
 \begin{Schunk}
 \begin{Sinput}
-> XenofilteR()
+> bp.param <- SnowParam(workers = 1, type = "SOCK")
+> bp.param
+\end{Sinput}
+\begin{Soutput}
+class: SnowParam 
+bpworkers: 1 
+bptasks: 0 
+bpcatchErrors: TRUE 
+bpstopOnError: FALSE 
+bpisup: FALSE 
+bplog: FALSE 
+bpthreshold: INFO 
+bplogdir:  
+bpresultdir:  
+cluster type:  SOCK 
+\end{Soutput}
+\end{Schunk}
+
+For using other instances of the \Rcode{BiocParallelParam} parameter, please
+refer to the \Biocpkg{BiocParallel} package vignette. The bp.param parameter can
+now be passed on to \Rcode{XenofilteR()} to allow parallel computation.
+
+\subsection{\Rcode{XenofilteR()}}
+The full analysis of xenograft data with XenofilteR includes a single step, \Rcode{Xenofilter()}. 
+
+\begin{Schunk}
+\begin{Sinput}
+> XenofilteR(Sample_list, destination.folder = "./", bp.param = bp.param)
