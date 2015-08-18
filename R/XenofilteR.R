@@ -18,7 +18,11 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
     destination.folder <- tools::file_path_as_absolute(destination.folder)
 
     ## Create lists with graft bam files and paths
-    sample.paths <- unlist(Sample_list[,1])
+    sample.paths.graft <- unlist(Sample_list[,1])
+    sample.paths.graft <- unique(sample.paths.graft[!is.na(sample.paths.graft)])
+
+    ## Create lists with all bam files and paths
+    sample.paths <- unlist(Sample_list)
     sample.paths <- unique(sample.paths[!is.na(sample.paths)])
 
 
@@ -80,7 +84,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
     chr.sort.mode <- NULL
 
     tryCatch({
-        for (samp in sample.paths) {
+        for (samp in sample.paths.graft) {
             header <- scanBamHeader(samp)
             chr.sort.mode <- c(chr.sort.mode, list(header[[1]]$text$'@HD'))
         }
@@ -96,31 +100,50 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 
     if (any(chr.sort.mode == 0)) {
         stop(.wrap("The following .bam files are unsorted:"), "\n",
-             paste(sample.paths[which(chr.sort.mode == 0)],
+             paste(sample.paths.graft[which(chr.sort.mode == 0)],
              collapse = "\n"), "\n",
              "Please sort these .bam files based on coordinates")
     }
 
     ## Index graft .bam files
-    if (!all(file.exists(gsub("$", ".bai", sample.paths)))) {
+    if (!all(file.exists(gsub("$", ".bai", sample.paths.graft)))) {
         if (file.access(".", 2) == -1) {
             stop(.wrap("The .bam files are not indexed and you do not have",
                        "write permission in (one of) the folder(s) where the",
                        ".bam files are located."))
         }
-        IndexBam <- function(sample.paths) {
-            indexBam(sample.paths)
-            paste0("indexBam(\"", sample.paths, "\")")
+        IndexBam <- function(sample.paths.graft) {
+            indexBam(sample.paths.graft)
+            paste0("indexBam(\"", sample.paths.graft, "\")")
         }
-        to.log <- bplapply(sample.paths, IndexBam, BPPARAM = bp.param)
+        to.log <- bplapply(sample.paths.graft, IndexBam, BPPARAM = bp.param)
         lapply(to.log, flog.info)
     }
+
+    ## Check whether BAMs are paired-end
+    NumberPairedEndReads <- function(sample.paths) {
+    
+        bam <- open(BamFile(sample.paths, yieldSize = 1))
+        close(bam)
+        what <- c("flag")
+        param <- ScanBamParam(what = what)
+        bam <- readGAlignments(bam, param = param)
+        intToBits(mcols(bam)$flag)[1] == 01
+    }
+    is.paired.end <- bplapply(sample.paths, NumberPairedEndReads,
+                              BPPARAM = bp.param)
+    is.paired.end <- unlist(is.paired.end)
+    for (i in seq_along(sample.files)) {
+        flog.info(paste0("Paired-end sequencing for sample ", sample.files[i],
+                         ": ", is.paired.end[i]))
+    }
+
 
 	###################
     ## Actual filter ##
     ###################
 
-    i <- c(seq_along(Sample_list$Graft))
+    i <- c(seq_along(sample.paths))
 	ActualFilter<-function(i, destination.folder, Sample_list, is.paired.end){
 
 		## Create list of .bam files
@@ -130,7 +153,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 
 		## Read human data (all reads)
 		p4 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), flag=scanBamFlag(isUnmappedQuery=FALSE))
-		Human <- scanBam(paste(Sample_list[i,1]), param=p4)
+		Human <- scanBam(paste(sample.paths[i]]), param=p4)
 		cat("Finished reading human sample", Sample_list[i,1], "\n")
 	
 		# Filter Human data for 'Multi mappers'
@@ -143,11 +166,15 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 		cat("Finished reading mouse sample", Sample_list[i,2], "\n")
 
 		# Filter Mouse data for 'Multi mappers'
-
-		##### Still to do
+		
 
 		# Get human reads that also map to mouse (TRUE if reads also maps to mouse)
 		set<-Human[[1]]$qname%in%Mouse[[1]]$qname
+
+		## Check if overlap exists
+		if (sum(set)==0){
+			stop(.wrap("No reads names overlap between graft and host BAM. Either nothing maps to the host reference or the BAM files do not match. Execution stopped for this sample"))
+		}
 
 		# Table with the classification of each read (based on human bam)
 		Filter_table<-rep(0,length(Human[[1]]$qname))
