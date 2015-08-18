@@ -17,9 +17,10 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
     colnames(Sample_list) <- c("Graft", "Host")
     destination.folder <- tools::file_path_as_absolute(destination.folder)
 
-    ## Create lists with graft bam files and paths
+    ## Create lists with graft bam files, paths and names
     sample.paths.graft <- unlist(Sample_list[,1])
     sample.paths.graft <- unique(sample.paths.graft[!is.na(sample.paths.graft)])
+    sample.files.graft <- basename(sample.paths.graft)
 
     ## Create lists with all bam files and paths
     sample.paths <- unlist(Sample_list)
@@ -243,7 +244,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 		###########################################################################
 
 		filt <- list(setStart=function(x) x$qname %in% Filt)
-		filterBam(paste(Sample_list[i,1]), gsub(".bam","_Filtered.bam",Sample_list[i,1]), 
+		filterBam(paste(Sample_list[i,1]), paste0(destination.folder,"/", gsub(".bam","_Filtered.bam",sample.files.graft[i])), 
 			filter=FilterRules(filt))
 		cat("Finished writing",gsub(".bam","_Filtered.bam",Sample_list[i,1]), " ---  sample", i, "out of", nrow(Sample_list), "\n")
 
