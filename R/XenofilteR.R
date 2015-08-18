@@ -205,8 +205,8 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 		### final version of XenofilteR
  
 		## Match for forward and reverse reads and get MM+I (mouse)
-		FR_mouse<-lapply(Mouse[[1]]$flag, FirstInPair)
-		RR_mouse<-lapply(Mouse[[1]]$flag, SecondInPair)
+		FR_mouse<-lapply(Mouse[[1]]$flag, .FirstInPair)
+		RR_mouse<-lapply(Mouse[[1]]$flag, .SecondInPair)
 
 		## Fill dataframe with mismatches and mappin quality for mouse
 		Map_info[,1]<-MM_I_mouse[unlist(FR_mouse)][match(uni.name, Mouse[[1]]$qname[unlist(FR_mouse)])]

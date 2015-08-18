@@ -1,12 +1,9 @@
-.is.wholenumber <- function(x, tol = .Machine$double.eps^0.5) {
-    abs(x - round(x)) < tol
-}
 
-FirstInPair<-function(x){
+.FirstInPair<-function(x){
 	intToBits(x)[7]=="01"
 }
 
-SecondInPair<-function(x){
+.SecondInPair<-function(x){
 	intToBits(x)[8]=="01"
 }
 
@@ -19,6 +16,6 @@ SecondInPair<-function(x){
     gsub(paste0(file.sep, " "), file.sep, splitted.pasted)
 }
 
-getPathBamFolder <- function() {
+.getPathBamFolder <- function() {
     dir(system.file(package = "XenofilteR"), "extdata", full.names = TRUE)
 }
