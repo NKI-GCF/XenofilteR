@@ -1,14 +1,14 @@
-\name{XenoFilteR}
-\alias{XenoFilteR}
+\name{XenofilteR}
+\alias{XenofilteR}
 \alias{list.files}
 \title{
-XenoFilteR: filter reads from xenograft sequencing
+XenofilteR: filter reads from xenograft sequencing
 }
 \description{
 Xenograft filters DNA and RNA sequence data for reads that originate from the host in xenograft experiments. 
 }
 \usage{
-XenoFilteR(sample.list, destination.folder, bp.param)
+XenofilteR(sample.list, destination.folder, bp.param)
 }
 \arguments{
 \item{sample.list}{
