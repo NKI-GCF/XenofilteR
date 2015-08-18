@@ -17,6 +17,11 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
     colnames(Sample_list) <- c("Graft", "Host")
     destination.folder <- tools::file_path_as_absolute(destination.folder)
 
+    ## Create lists with graft bam files and paths
+    sample.paths <- unlist(Sample_list[,1])
+    sample.paths <- unique(sample.paths[!is.na(sample.paths)])
+
+
     if (!file.exists(destination.folder)) {
         stop(.wrap("The destination folder could not be found. Please change",
                    "the path specified in", sQuote(destination.folder)))
@@ -67,6 +72,49 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
     flog.info(paste("This analysis will be run on", ncpu, "cpus"))
 
 
+	## Check if graft bam files are sorted and index if not (.bai needed for filter step)
+
+    prefixes <- vector(mode = "character")
+    chr.names <- NULL
+    chr.lengths <- NULL
+    chr.sort.mode <- NULL
+
+    tryCatch({
+        for (samp in sample.paths) {
+            header <- scanBamHeader(samp)
+            chr.sort.mode <- c(chr.sort.mode, list(header[[1]]$text$'@HD'))
+        }
+    }, error = function(e) {
+        stop(.wrap("The BAM file header of file", sQuote(samp), "is corrupted",
+                   "or truncated. Please rebuild this BAM file or exclude it",
+                   "from analysis. Stopping execution of the remaining part of",
+                   "the script..."))
+    })
+	chr.sort.mode <- unlist(lapply(chr.sort.mode, function(x) {
+        length(grep("SO:coordinate", x))
+    }))
+
+    if (any(chr.sort.mode == 0)) {
+        stop(.wrap("The following .bam files are unsorted:"), "\n",
+             paste(sample.paths[which(chr.sort.mode == 0)],
+             collapse = "\n"), "\n",
+             "Please sort these .bam files based on coordinates")
+    }
+
+    ## Index graft .bam files
+    if (!all(file.exists(gsub("$", ".bai", sample.paths)))) {
+        if (file.access(".", 2) == -1) {
+            stop(.wrap("The .bam files are not indexed and you do not have",
+                       "write permission in (one of) the folder(s) where the",
+                       ".bam files are located."))
+        }
+        IndexBam <- function(sample.paths) {
+            indexBam(sample.paths)
+            paste0("indexBam(\"", sample.paths, "\")")
+        }
+        to.log <- bplapply(sample.paths, IndexBam, BPPARAM = bp.param)
+        lapply(to.log, flog.info)
+    }
 
 	###################
     ## Actual filter ##
