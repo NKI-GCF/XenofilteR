@@ -65,7 +65,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
     flog.appender(appender.file(file.path(destination.folder,
                                           "XenofilteR.log")))
     flog.info(paste("Running XenofilteR version",
-                    as(packageVersion("XenofilteR"), "character"), "..."))
+                as(packageVersion("XenofilteR"), "character"), "..."))
     flog.info(paste0("XenofilteR was run using the following commands:", "\n\n",
                      "XenofilteR(Sample_list = Sample_list, ",
                      "destination.folder = \"", dirname(destination.folder),
@@ -75,12 +75,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
               capture = TRUE)
     flog.info(paste("This analysis will be run on", ncpu, "cpus"))
 
-
 	## Check if graft bam files are sorted and index if not (.bai needed for filter step)
-
-    prefixes <- vector(mode = "character")
-    chr.names <- NULL
-    chr.lengths <- NULL
     chr.sort.mode <- NULL
 
     tryCatch({
@@ -146,14 +141,9 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
     i <- c(seq_along(sample.paths))
 	ActualFilter<-function(i, destination.folder, Sample_list, is.paired.end){
 
-		## Create list of .bam files
-		flog.info("XenofilteR will analyze the following (unique) samples:",
-				  Sample_list, capture = TRUE)
-
-
 		## Read human data (all reads)
 		p4 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), flag=scanBamFlag(isUnmappedQuery=FALSE))
-		Human <- scanBam(paste(sample.paths[i]]), param=p4)
+		Human <- scanBam(paste(sample.paths[i]), param=p4)
 		cat("Finished reading human sample", Sample_list[i,1], "\n")
 	
 		# Filter Human data for 'Multi mappers'
@@ -259,7 +249,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 
 	}
    
-    to.log <- bplapply(i, destination.folder, Sample_list, is.paired.end, BPPARAM = bp.param)
+    to.log <- bplapply(i, destination.folder, ActualFilter, Sample_list, is.paired.end, BPPARAM = bp.param)
     lapply(to.log, flog.info)
 
 
