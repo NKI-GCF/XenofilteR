@@ -45,9 +45,13 @@ Load the XenofilteR package in R using:
 
     > library("XenofilteR")
 
-XenofilteR contains a single main functions:
+XenofilteR requires a dataframe or matrix, named 'Samplelist', with in the first 
+column the bam file names as mapped to the graft reference. The second column contains the 
+file names and paths to the bam files as mapped to the host reference. Each row in 
+Sample_list represents a single sequence run or sample. 
+The XenofilteR package and data are loaded in the following way: 
 
-Explain how the main function works
+	> XenofilteR(Sample_list, destination.folder = "./", bp.param = bp.param)
 
 
 ## Contact
