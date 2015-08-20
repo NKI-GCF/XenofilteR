@@ -198,6 +198,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 			row.names(Map_info)<-uni.name
 			colnames(Map_info)<-c("MM_mouse_F","MM_mouse_R","MM_human_F","MM_R_human", "Mq_mouse_F", "Mq_mouse_R", "Mq_human_F", "Mq_human_R")
 	
+	flog.info(paste0("Test number 1", colnames(Map_info)))
 	
 			### Extensive data table with the number of mismatches (+ clips) and mapping quality.
 			### This table is usefull for de-buging and checking data, But should be remove in 
@@ -233,7 +234,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 			# Score human lower than mouse or no score for mouse at all (mapq==0)
 			BetterToHuman<-row.names(Map_info)[which(Score_human<Score_mouse | (is.na(Score_mouse)==TRUE & is.na(Score_human)==FALSE))]
 			HumanSet<-c(ToHumanOnly, BetterToHuman)
-
+	flog.info(paste0("Test number 1", head(HumanSet)))
 		}
 
 		## Filter for single end sequence data
