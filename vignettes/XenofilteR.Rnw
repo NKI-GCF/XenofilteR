@@ -57,10 +57,8 @@ Xenofilter uses 2 bam files as input. The first of the reads mapped to the human
 
 \section{Analysis workflow}
 
-In this analysis workflow we will use XenofilteR to filter patient derived xenograft exome sequencing data for mouse reads. The data is available through the European Genome-phenome Archive (EGA; http://www.ebi.ac.uk/ega/home; accession number EGAS00001000415). Here, we use only the reads that map to the gene NRAS in in hg19. The bam files, both mapped against human and mouse reference, are available within this r-package. We wil show the usage of XenofilteR with these two pre-mapped files distributed with this package. 
-
-
-XenofilteR requires a dataframe or matrix with in the first column the bam file names as mapped to the graft reference. The second contains the file names and paths to the bam files as mapped to teh host reference. Each row in Sample_list represents a single sample. 
+In this analysis workflow we will use XenofilteR to filter patient derived xenograft exome sequencing data for mouse reads. The data is available through the European Genome-phenome Archive (EGA website here,  accession number EGAS00001000415). Here, we use only the reads that map to the gene NRAS in in hg19. The bam files, both mapped against human and mouse reference, are available within this r-package. We wil show the usage of XenofilteR with these two premapped files distributed with this package. 
+XenofilteR requires a dataframe or matrix with in the first column the bam file names as mapped to the graft reference. The second contains the file names and paths to the bam files as mapped to the host reference. Each row in Samplelist represents a single sample. 
 The XenofilteR package and data are loaded in the following way: 
 
 <<load.XenofilteR, print=FALSE, eval=TRUE>>=
@@ -101,10 +99,6 @@ The destination.folder argument determines in which folder the output folder is
 going to be placed. XenofilteR will create a new folder named CNAprofiles in the directory specified
 by destination.folder. This folder contains the following files:
 
-<<CNAprofiles.folder.contents, print=FALSE, eval=TRUE>>=
-cat(list.files(path = file.path(data.folder, "Filtered_bams")), sep = "\n")
-@
-
 \section{Troubleshooting}
 
 We maintain a troubleshooting GitHub page where various issues are discussed
@@ -120,6 +114,5 @@ The version number of \R{} and packages loaded for generating the vignette were:
 toLatex(sessionInfo())
 @
 
-\bibliography{XenoFilteR}
 
 \end{document}

@@ -141,23 +141,25 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
                          ": ", is.paired.end[i]))
     }
 
+    flog.info(paste0("The value for paired-end ==", is.paired.end[i], "\n"))
 
 	###################
     ## Actual filter ##
     ###################
 
     i <- c(seq_along(sample.paths.graft))
+    flog.info(paste0("The value for i ==", i, "\n"))
 	ActualFilter<-function(i, destination.folder, Sample_list, is.paired.end){
 
 		## Read human data (all reads)
 		p4 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
 		Human <- scanBam(paste(sample.paths.graft[i]), param=p4)
-		cat("Finished reading human sample", Sample_list[i,1], "\n")
+		flog.info("Finished reading human sample", sample.paths.graft[i], "\n")
 		
 		## Read Mouse data (mapped only)
 		p5 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
 		Mouse <- scanBam(paste(sample.paths.host[i]), param=p5)
-		cat("Finished reading mouse sample", Sample_list[i,2], "\n")
+		flog.info("Finished reading mouse sample", sample.paths.host[i], "\n")
 
 		# Get human reads that also map to mouse (TRUE if reads also maps to mouse)
 		set<-Human[[1]]$qname%in%Mouse[[1]]$qname
@@ -189,7 +191,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 		Human_mapq_set<-Human[[1]]$mapq[set==TRUE]
 		MM_I_human_set<-MM_I_human[set==TRUE]
 
-		
+
 		## Filter for paired-end data
 		if (is.paired.end[i]==TRUE){
 		
@@ -197,9 +199,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 			Map_info<-matrix(data=0, ncol=8, nrow=length(uni.name))
 			row.names(Map_info)<-uni.name
 			colnames(Map_info)<-c("MM_mouse_F","MM_mouse_R","MM_human_F","MM_R_human", "Mq_mouse_F", "Mq_mouse_R", "Mq_human_F", "Mq_human_R")
-	
-	flog.info(paste0("Test number 1", colnames(Map_info)))
-	
+
 			### Extensive data table with the number of mismatches (+ clips) and mapping quality.
 			### This table is usefull for de-buging and checking data, But should be remove in 
 			### final version of XenofilteR
@@ -234,11 +234,8 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 			# Score human lower than mouse or no score for mouse at all (mapq==0)
 			BetterToHuman<-row.names(Map_info)[which(Score_human<Score_mouse | (is.na(Score_mouse)==TRUE & is.na(Score_human)==FALSE))]
 			HumanSet<-c(ToHumanOnly, BetterToHuman)
-	flog.info(paste0("Test number 1", head(HumanSet)))
-		}
 
-		## Filter for single end sequence data
-		else if(is.paired.end[i]==FALSE){
+		} else if(is.paired.end[i]==FALSE){
 
 			uni.name<-unique(Human_qname_set)
 			Map_info<-matrix(data=0, ncol=4, nrow=length(uni.name))
@@ -270,7 +267,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 		###########################################################################
 
 		filt <- list(setStart=function(x) x$qname %in% HumanSet)
-		filterBam(paste(Sample_list[i,1]), paste0(destination.folder,"/", gsub(".bam","_Filtered.bam",sample.files.graft[i])), 
+		filterBam(paste(sample.paths.graft[i]), paste0(destination.folder,"/", gsub(".bam","_Filtered.bam",sample.files.graft[i])), 
 			filter=FilterRules(filt))
 		cat("Finished writing",gsub(".bam","_Filtered.bam",Sample_list[i,1]), " ---  sample", i, "out of", nrow(Sample_list), "\n")
 
