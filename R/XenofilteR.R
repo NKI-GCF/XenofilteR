@@ -146,7 +146,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
     ## Actual filter ##
     ###################
 
-    i <- c(seq_along(sample.paths))
+    i <- c(seq_along(sample.paths.graft))
 	ActualFilter<-function(i, destination.folder, Sample_list, is.paired.end){
 
 		## Read human data (all reads)
