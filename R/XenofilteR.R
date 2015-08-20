@@ -22,9 +22,10 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
     sample.paths.graft <- unique(sample.paths.graft[!is.na(sample.paths.graft)])
     sample.files.graft <- basename(sample.paths.graft)
 
-    ## Create lists with all bam files and paths
-    sample.paths <- unlist(Sample_list)
-    sample.paths <- unique(sample.paths[!is.na(sample.paths)])
+    ## Create lists with graft bam files, paths and names
+    sample.paths.host <- unlist(Sample_list[,2])
+    sample.paths.host <- unique(sample.paths.host[!is.na(sample.paths.host)])
+    sample.files.host <- basename(sample.paths.host)
 
 
     if (!file.exists(destination.folder)) {
@@ -123,9 +124,9 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
     }
 
     ## Check whether BAMs are paired-end
-    NumberPairedEndReads <- function(sample.paths) {
+    NumberPairedEndReads <- function(sample.paths.graft) {
     
-        bam <- open(BamFile(sample.paths, yieldSize = 1))
+        bam <- open(BamFile(sample.paths.graft, yieldSize = 1))
         close(bam)
         what <- c("flag")
         param <- ScanBamParam(what = what)
@@ -150,12 +151,12 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 
 		## Read human data (all reads)
 		p4 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
-		Human <- scanBam(paste(sample.paths[i]), param=p4)
+		Human <- scanBam(paste(sample.paths.graft[i]), param=p4)
 		cat("Finished reading human sample", Sample_list[i,1], "\n")
 		
 		## Read Mouse data (mapped only)
 		p5 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
-		Mouse <- scanBam(paste(Sample_list[i,2]), param=p5)
+		Mouse <- scanBam(paste(sample.paths.host[i]), param=p5)
 		cat("Finished reading mouse sample", Sample_list[i,2], "\n")
 
 		# Get human reads that also map to mouse (TRUE if reads also maps to mouse)
