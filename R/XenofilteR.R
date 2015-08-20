@@ -160,12 +160,8 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 			stop(.wrap("No reads names overlap between graft and host BAM. Either nothing maps to the host reference or the BAM files do not match. Execution stopped for this sample"))
 		}
 
-		# Table with the classification of each read (based on human bam)
-		Filter_table<-rep(0,length(Human[[1]]$qname))
-	
-		## If not mapped to mouse set as 1
-		Filter_table[set==FALSE]<-1
-	
+		ToHumanOnly<-unique(Human[[1]]$qname[set==FALSE])
+
 		## Get the Clips + inserts + MisMatches (Mouse)
 		Cigar.matrix<-cigarOpTable(Mouse[[1]]$cigar)
 		Inserts<-Cigar.matrix[,colnames(Cigar.matrix)=="I"]
@@ -184,7 +180,6 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 		## Filter for human reads that also map to mouse
 		Human_qname_set<-Human[[1]]$qname[set==TRUE]
 		Human_mapq_set<-Human[[1]]$mapq[set==TRUE]
-		Filter_table_set<-Filter_table[set==TRUE]
 		MM_I_human_set<-MM_I_human[set==TRUE]
 
 
@@ -228,7 +223,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 		# Score human lower than mouse or no score for mouse at all (mapq==0)
 		BetterToHuman<-row.names(Map_info)[which(Score_human<Score_mouse | (is.na(Score_mouse)==TRUE & is.na(Score_human)==FALSE))]
 
-		Filt<-c(unique(Human[[1]]$qname[set==FALSE]), BetterToHuman)
+		Filt<-c(ToHumanOnly, BetterToHuman)
 
 		cat("Finished calculating which reads can be assigned to human - Start writing filtered Bam files", "\n")
 
