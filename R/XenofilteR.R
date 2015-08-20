@@ -257,7 +257,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 			HumanSet<-c(ToHumanOnly, BetterToHuman)
 		}
 		
-		## Statistics 
+		## Statistics on the number of filtered reads
 
 
 
