@@ -143,21 +143,14 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 	ActualFilter<-function(i, destination.folder, Sample_list, is.paired.end){
 
 		## Read human data (all reads)
-		p4 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), flag=scanBamFlag(isUnmappedQuery=FALSE))
+		p4 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE)))
 		Human <- scanBam(paste(sample.paths[i]), param=p4)
 		cat("Finished reading human sample", Sample_list[i,1], "\n")
-	
-		# Filter Human data for 'Multi mappers'
-	
-		##### Still to do
-	
+		
 		## Read Mouse data (mapped only)
-		p5 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), flag=scanBamFlag(isUnmappedQuery=FALSE))
+		p5 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
 		Mouse <- scanBam(paste(Sample_list[i,2]), param=p5)
 		cat("Finished reading mouse sample", Sample_list[i,2], "\n")
-
-		# Filter Mouse data for 'Multi mappers'
-		
 
 		# Get human reads that also map to mouse (TRUE if reads also maps to mouse)
 		set<-Human[[1]]$qname%in%Mouse[[1]]$qname
