@@ -162,6 +162,8 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 
 		ToHumanOnly<-unique(Human[[1]]$qname[set==FALSE])
 
+		
+
 		## Get the Clips + inserts + MisMatches (Mouse)
 		Cigar.matrix<-cigarOpTable(Mouse[[1]]$cigar)
 		Inserts<-Cigar.matrix[,colnames(Cigar.matrix)=="I"]
@@ -175,7 +177,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 		MM_I_human<-Clips+Inserts+Human[[1]]$tag$NM
 
 
-		## Check per read-pair where read-pair belongs (mouse or human)
+		## Generate 
 
 		## Filter for human reads that also map to mouse
 		Human_qname_set<-Human[[1]]$qname[set==TRUE]
@@ -197,7 +199,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 		FR_mouse<-lapply(Mouse[[1]]$flag, .FirstInPair)
 		RR_mouse<-lapply(Mouse[[1]]$flag, .SecondInPair)
 
-		## Fill dataframe with mismatches and mappin quality for mouse
+		## Fill dataframe with mismatches and mapping quality for mouse
 		Map_info[,1]<-MM_I_mouse[unlist(FR_mouse)][match(uni.name, Mouse[[1]]$qname[unlist(FR_mouse)])]
 		Map_info[,2]<-MM_I_mouse[unlist(RR_mouse)][match(uni.name, Mouse[[1]]$qname[unlist(RR_mouse)])]
 
