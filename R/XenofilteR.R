@@ -76,6 +76,12 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
               capture = TRUE)
     flog.info(paste("This analysis will be run on", ncpu, "cpus"))
 
+    cat(.wrap("The following samples will be analyzed:"), "\n")
+    cat(paste("graft:", Sample_list[,1], ";", "\t", "matching",
+               "host:", Sample_list[,2]), sep = "\n")
+    cat(.wrap("This analysis will be run on", ncpu, "cpus"), "\n")
+
+
 	## Check if graft bam files are sorted and index if not (.bai needed for filter step)
     chr.sort.mode <- NULL
 
@@ -143,7 +149,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 	ActualFilter<-function(i, destination.folder, Sample_list, is.paired.end){
 
 		## Read human data (all reads)
-		p4 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE)))
+		p4 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
 		Human <- scanBam(paste(sample.paths[i]), param=p4)
 		cat("Finished reading human sample", Sample_list[i,1], "\n")
 		
@@ -161,8 +167,6 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 		}
 
 		ToHumanOnly<-unique(Human[[1]]$qname[set==FALSE])
-
-		
 
 		## Get the Clips + inserts + MisMatches (Mouse)
 		Cigar.matrix<-cigarOpTable(Mouse[[1]]$cigar)
@@ -185,6 +189,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 		MM_I_human_set<-MM_I_human[set==TRUE]
 
 		
+		## Filter for paired-end data
 		if (is.paired.end[i]==TRUE){
 		
 			uni.name<-unique(Human_qname_set)
@@ -226,11 +231,12 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 			# Determine where reads fit better
 			# Score human lower than mouse or no score for mouse at all (mapq==0)
 			BetterToHuman<-row.names(Map_info)[which(Score_human<Score_mouse | (is.na(Score_mouse)==TRUE & is.na(Score_human)==FALSE))]
-
-			Filt<-c(ToHumanOnly, BetterToHuman)
+			HumanSet<-c(ToHumanOnly, BetterToHuman)
 
 		}
-		else if(is.paired.end[i]==FALSE)}
+
+		## Filter for single end sequence data
+		else if(is.paired.end[i]==FALSE){
 
 			uni.name<-unique(Human_qname_set)
 			Map_info<-matrix(data=0, ncol=4, nrow=length(uni.name))
@@ -248,24 +254,27 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 			# Determine where reads fit better
 			# Score human lower than mouse or no score for mouse at all (mapq==0)
 			BetterToHuman<-row.names(Map_info)[which(Score_human<Score_mouse | (is.na(Score_mouse)==TRUE & is.na(Score_human)==FALSE))]
-
-			Filt<-c(ToHumanOnly, BetterToHuman)
+			HumanSet<-c(ToHumanOnly, BetterToHuman)
 		}
 		
+		## Statistics 
+
+
+
 		cat("Finished calculating which reads can be assigned to human - Start writing filtered Bam files", "\n")
 
 		###########################################################################
 		############################ The actual filter ############################
 		###########################################################################
 
-		filt <- list(setStart=function(x) x$qname %in% Filt)
+		filt <- list(setStart=function(x) x$qname %in% HumanSet)
 		filterBam(paste(Sample_list[i,1]), paste0(destination.folder,"/", gsub(".bam","_Filtered.bam",sample.files.graft[i])), 
 			filter=FilterRules(filt))
 		cat("Finished writing",gsub(".bam","_Filtered.bam",Sample_list[i,1]), " ---  sample", i, "out of", nrow(Sample_list), "\n")
 
 	}
    
-    to.log <- bplapply(i, destination.folder, ActualFilter, Sample_list, is.paired.end, BPPARAM = bp.param)
+    to.log <- bplapply(i, ActualFilter, Sample_list, is.paired.end,destination.folder, BPPARAM = bp.param)
     lapply(to.log, flog.info)
 
 
