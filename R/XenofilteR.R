@@ -149,7 +149,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 
     i <- c(seq_along(sample.paths.graft))
     flog.info(paste0("The value for i ==", i, "\n"))
-	ActualFilter<-function(i, destination.folder, Sample_list, is.paired.end){
+	ActualFilter<-function(i, destination.folder, Sample_list, is.paired.end, sample.paths.graft, sample.paths.host, bp.param){
 
 		## Read human data (all reads)
 		p4 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
@@ -273,7 +273,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 
 	}
    
-    to.log <- bplapply(i, ActualFilter, Sample_list, is.paired.end,destination.folder, BPPARAM = bp.param)
+    to.log <- bplapply(i, ActualFilter, destination.folder, Sample_list, BPPARAM = bp.param, is.paired.end, sample.paths.graft, sample.paths.host)
     lapply(to.log, flog.info)
 
 
