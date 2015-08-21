@@ -1,4 +1,4 @@
-XenofilteR<-function(Sample_list, destination.folder, bp.param){
+XenofilteR<-function(sample.list, destination.folder, bp.param){
 
 	##########################
     ## Check and initialise ##
@@ -11,19 +11,19 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
     on.exit(setwd(wd.orig))
 
 	## Make folder paths absolute
-    Sample_list <- apply(Sample_list, c(1, 2),
+    sample.list <- apply(sample.list, c(1, 2),
                             tools::file_path_as_absolute)
-    Sample_list <- data.frame(Sample_list, stringsAsFactors = FALSE)
-    colnames(Sample_list) <- c("Graft", "Host")
+    sample.list <- data.frame(sample.list, stringsAsFactors = FALSE)
+    colnames(sample.list) <- c("Graft", "Host")
     destination.folder <- tools::file_path_as_absolute(destination.folder)
 
     ## Create lists with graft bam files, paths and names
-    sample.paths.graft <- unlist(Sample_list[,1])
+    sample.paths.graft <- unlist(sample.list[,1])
     sample.paths.graft <- unique(sample.paths.graft[!is.na(sample.paths.graft)])
     sample.files.graft <- basename(sample.paths.graft)
 
     ## Create lists with graft bam files, paths and names
-    sample.paths.host <- unlist(Sample_list[,2])
+    sample.paths.host <- unlist(sample.list[,2])
     sample.paths.host <- unique(sample.paths.host[!is.na(sample.paths.host)])
     sample.files.host <- basename(sample.paths.host)
 
@@ -69,17 +69,17 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
     flog.info(paste("Running XenofilteR version",
                 as(packageVersion("XenofilteR"), "character"), "..."))
     flog.info(paste0("XenofilteR was run using the following commands:", "\n\n",
-                     "XenofilteR(Sample_list = Sample_list, ",
+                     "XenofilteR(sample.list = sample.list, ",
                      "destination.folder = \"", dirname(destination.folder),
                      "\", BPPARAM = bp.param", ")"))
     flog.info("The value of bp.param was:", getClass(bp.param), capture = TRUE)
-    flog.info("The value of Sample_list was:", Sample_list,
+    flog.info("The value of sample.list was:", sample.list,
               capture = TRUE)
     flog.info(paste("This analysis will be run on", ncpu, "cpus"))
 
     cat(.wrap("The following samples will be analyzed:"), "\n")
-    cat(paste("graft:", Sample_list[,1], ";", "\t", "matching",
-               "host:", Sample_list[,2]), sep = "\n")
+    cat(paste("graft:", sample.list[,1], ";", "\t", "matching",
+               "host:", sample.list[,2]), sep = "\n")
     cat(.wrap("This analysis will be run on", ncpu, "cpus"), "\n")
 
 
@@ -149,7 +149,7 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 
     i <- c(seq_along(sample.paths.graft))
     flog.info(paste0("The value for i ==", i, "\n"))
-	ActualFilter<-function(i, destination.folder, Sample_list, is.paired.end, sample.paths.graft, sample.paths.host, bp.param){
+	ActualFilter<-function(i, destination.folder, sample.list, is.paired.end, sample.paths.graft, sample.paths.host, bp.param){
 
 		## Read human data (all reads)
 		p4 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
@@ -269,11 +269,11 @@ XenofilteR<-function(Sample_list, destination.folder, bp.param){
 		filt <- list(setStart=function(x) x$qname %in% HumanSet)
 		filterBam(paste(sample.paths.graft[i]), paste0(destination.folder,"/", gsub(".bam","_Filtered.bam",sample.files.graft[i])), 
 			filter=FilterRules(filt))
-		cat("Finished writing",gsub(".bam","_Filtered.bam",Sample_list[i,1]), " ---  sample", i, "out of", nrow(Sample_list), "\n")
+		cat("Finished writing",gsub(".bam","_Filtered.bam",sample.list[i,1]), " ---  sample", i, "out of", nrow(sample.list), "\n")
 
 	}
    
-    to.log <- bplapply(i, ActualFilter, destination.folder, Sample_list, BPPARAM = bp.param, is.paired.end, sample.paths.graft, sample.paths.host)
+    to.log <- bplapply(i, ActualFilter, destination.folder, sample.list, BPPARAM = bp.param, is.paired.end, sample.paths.graft, sample.paths.host)
     lapply(to.log, flog.info)
 
 
