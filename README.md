@@ -41,9 +41,21 @@ Now you are all set to start your analysis.
 
 ## XenofilteR usage:
 
+
 Load the XenofilteR package in R using:
 
     > library("XenofilteR")
+
+XenofilteR fully supports paralel computing and is implemented in such a way
+that every sample is processed on a single core. XenofilteR uses the
+BiocParallel for parallel computing. This package requires the user to
+specify which parallel environment is used by creating an instance of
+BiocParallelParam. Here, we use the 'snow' environment and specify a SnowParam. 
+The number of workers represents the number of CPUs used for the analysis and thereby 
+the number of samples analyses simultaneously. Hence, it is wise to keep the number of 
+CPUs low when analysing large samples as memory usage might be high. 
+
+	> bp.param <- SnowParam(workers = 1, type = "SOCK")
 
 XenofilteR requires a dataframe or matrix, named 'Samplelist', with in the first 
 column the bam file names as mapped to the graft reference. The second column contains the 
@@ -69,6 +81,8 @@ Peeper, Roel in the Genome Core Facility.
 
 ## Changes and additions we are currently working on
 ## 
-- [ ] Making XenofilteR into an R-package 
+- [ ] Improve the vignette
+- [ ] Make Xenofilter more efficient by only reading the sequence reads that map to graft and host
+- [x] Making XenofilteR into an R-package 
 - [x] Initial loop running the basic function of XenofilteR
 
