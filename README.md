@@ -81,6 +81,7 @@ Peeper, Roel in the Genome Core Facility.
 
 ## Changes and additions we are currently working on
 ## 
+- [ ] Add read-count statistics to the log file
 - [ ] Improve the vignette
 - [ ] Make Xenofilter more efficient by only reading the sequence reads that map to graft and host
 - [x] Making XenofilteR into an R-package 
