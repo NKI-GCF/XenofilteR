@@ -141,14 +141,11 @@ XenofilteR<-function(sample.list, destination.folder, bp.param){
                          ": ", is.paired.end[i]))
     }
 
-    flog.info(paste0("The value for paired-end ==", is.paired.end[i], "\n"))
-
 	###################
     ## Actual filter ##
     ###################
 
     i <- c(seq_along(sample.paths.graft))
-    flog.info(paste0("The value for i ==", i, "\n"))
 	ActualFilter<-function(i, destination.folder, sample.list, is.paired.end, sample.paths.graft, sample.paths.host, bp.param){
 
 		## Read human data (all reads)
@@ -267,7 +264,7 @@ XenofilteR<-function(sample.list, destination.folder, bp.param){
 		###########################################################################
 
 		filt <- list(setStart=function(x) x$qname %in% HumanSet)
-		filterBam(paste(sample.paths.graft[i]), paste0(destination.folder,"/", gsub(".bam","_Filtered.bam",sample.files.graft[i])), 
+		filterBam(paste(sample.paths.graft[i]), paste0(destination.folder,"/",i, "_", gsub(".bam","_Filtered.bam",sample.files.graft[i])), 
 			filter=FilterRules(filt))
 		cat("Finished writing",gsub(".bam","_Filtered.bam",sample.list[i,1]), " ---  sample", i, "out of", nrow(sample.list), "\n")
 
