@@ -60,10 +60,12 @@ CPUs low when analysing large samples as memory usage might be high.
 XenofilteR requires a dataframe or matrix, named 'Samplelist', with in the first 
 column the bam file names as mapped to the graft reference. The second column contains the 
 file names and paths to the bam files as mapped to the host reference. Each row in 
-Sample_list represents a single sequence run or sample. 
-The XenofilteR package and data are loaded in the following way: 
+Sample_list represents a single sequence run or sample. An optional list may be provided with 
+alternative names for output files. Especially for RNAseq samples aligned with for example 
+Tophat this may be convenient since all .bam files are named identical. 
+The XenofilteR package and data are run in the following way: 
 
-	> XenofilteR(Sample_list, destination.folder = "./", bp.param = bp.param)
+	> XenofilteR(Sample_list, destination.folder = "./", bp.param = bp.param, output.names)
 
 
 ## Contact
@@ -83,7 +85,8 @@ Peeper, Roel in the Genome Core Facility.
 ## 
 - [ ] Add read-count statistics to the log file
 - [ ] Improve the vignette
-- [ ] Make Xenofilter more efficient by only reading the sequence reads that map to graft and host
+- [ ] Make Xenofilter more efficient in memory usage
+- [x] Change output name and structure for RNAseq data
 - [x] Making XenofilteR into an R-package 
 - [x] Initial loop running the basic function of XenofilteR
 

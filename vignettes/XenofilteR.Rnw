@@ -92,12 +92,17 @@ now be passed on to \Rcode{XenofilteR()} to allow parallel computation.
 The full analysis of xenograft data with XenofilteR includes a single step, \Rcode{Xenofilter()}. 
 
 <<XenofilteR, print=FALSE, eval=TRUE>>=
-XenofilteR(Sample_list, destination.folder = "./", bp.param = bp.param)
+XenofilteR(Sample_list, destination.folder = "./", bp.param = bp.param, output.names=NULL)
 @
 
 The destination.folder argument determines in which folder the output folder is
 going to be placed. XenofilteR will create a new folder named CNAprofiles in the directory specified
 by destination.folder. This folder contains the following files:
+
+\begin{itemize}
+    \item Xenofilter log file
+    \item A filtered bam file for each Graft sample
+\end{itemize}
 
 \section{Troubleshooting}
 

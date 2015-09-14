@@ -1,4 +1,4 @@
-XenofilteR<-function(sample.list, destination.folder, bp.param){
+XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NULL){
 
 	##########################
     ## Check and initialise ##
@@ -26,8 +26,20 @@ XenofilteR<-function(sample.list, destination.folder, bp.param){
     sample.paths.host <- unlist(sample.list[,2])
     sample.paths.host <- unique(sample.paths.host[!is.na(sample.paths.host)])
     sample.files.host <- basename(sample.paths.host)
+    
+    ## Check length output.names and if unique
+    if (output.names!=NULL){
+    	if (length(output.names)!=length(sample.list["Graft"])){
+    		stop(.wrap("The number of provided names does not match the number of samples." 
+    			"Please correct the file names in:", sQuote(output.names)))
+    	}
+    	if (length(output.names)!=length(unique(output.names))){
+    		stop(.wrap("Identical samples names are used for multiple samples" 
+    			"Please correct the file names in:", sQuote(output.names)))
+    	}
+    }
 
-
+	## Check whether desitination folder exists
     if (!file.exists(destination.folder)) {
         stop(.wrap("The destination folder could not be found. Please change",
                    "the path specified in", sQuote(destination.folder)))
@@ -166,6 +178,7 @@ XenofilteR<-function(sample.list, destination.folder, bp.param){
 			stop(.wrap("No reads names overlap between graft and host BAM. Either nothing maps to the host reference or the BAM files do not match. Execution stopped for this sample"))
 		}
 
+		## Get read names mapped to human reference only
 		ToHumanOnly<-unique(Human[[1]]$qname[set==FALSE])
 
 		## Get the Clips + inserts + MisMatches (Mouse)
@@ -179,9 +192,6 @@ XenofilteR<-function(sample.list, destination.folder, bp.param){
 		Inserts<-Cigar.matrix[,colnames(Cigar.matrix)=="I"]
 		Clips<-Cigar.matrix[,colnames(Cigar.matrix)=="S"]
 		MM_I_human<-Clips+Inserts+Human[[1]]$tag$NM
-
-
-		## Generate 
 
 		## Filter for human reads that also map to mouse
 		Human_qname_set<-Human[[1]]$qname[set==TRUE]
@@ -255,6 +265,7 @@ XenofilteR<-function(sample.list, destination.folder, bp.param){
 		
 		## Statistics on the number of filtered reads
 
+		
 
 
 		cat("Finished calculating which reads can be assigned to human - Start writing filtered Bam files", "\n")
@@ -264,8 +275,16 @@ XenofilteR<-function(sample.list, destination.folder, bp.param){
 		###########################################################################
 
 		filt <- list(setStart=function(x) x$qname %in% HumanSet)
-		filterBam(paste(sample.paths.graft[i]), paste0(destination.folder,"/",i, "_", gsub(".bam","_Filtered.bam",sample.files.graft[i])), 
-			filter=FilterRules(filt))
+		
+		if (output.names==NULL){
+			filterBam(paste(sample.paths.graft[i]), paste0(destination.folder,"/",gsub(".bam","_Filtered.bam",sample.files.graft[i])), 
+				filter=FilterRules(filt))
+		}
+		if (output.names==NULL){
+			filterBam(paste(sample.paths.graft[i]), paste0(destination.folder,"/",output.names[i], ".bam"), 
+				filter=FilterRules(filt))
+		}			
+			
 		cat("Finished writing",gsub(".bam","_Filtered.bam",sample.list[i,1]), " ---  sample", i, "out of", nrow(sample.list), "\n")
 
 	}
