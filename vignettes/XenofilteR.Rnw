@@ -102,6 +102,7 @@ by destination.folder. This folder contains the following files:
 \begin{itemize}
     \item Xenofilter log file
     \item A filtered bam file for each Graft sample
+    \item An index file for each bam
 \end{itemize}
 
 \section{Troubleshooting}

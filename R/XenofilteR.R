@@ -85,9 +85,12 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
                      "destination.folder = \"", dirname(destination.folder),
                      "\", BPPARAM = bp.param", ")"))
     flog.info("The value of bp.param was:", getClass(bp.param), capture = TRUE)
-    flog.info("The value of sample.list was:", sample.list,
-              capture = TRUE)
     flog.info(paste("This analysis will be run on", ncpu, "cpus"))
+    flog.info("The value of sample.list was:", sample.list, capture = TRUE)
+	if (output.names!=NULL){
+		flog.info(paste("Alternative sample names are provided:", "\n", output.names, "\n"))
+	}
+
 
     cat(.wrap("The following samples will be analyzed:"), "\n")
     cat(paste("graft:", sample.list[,1], ";", "\t", "matching",
@@ -95,7 +98,7 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
     cat(.wrap("This analysis will be run on", ncpu, "cpus"), "\n")
 
 
-	## Check if graft bam files are sorted and index if not (.bai needed for filter step)
+	## Check if graft bam files are indexed (.bai needed for filter step)
     chr.sort.mode <- NULL
 
     tryCatch({
