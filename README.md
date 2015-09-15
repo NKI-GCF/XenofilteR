@@ -57,15 +57,15 @@ CPUs low when analysing large samples as memory usage might be high.
 
 	> bp.param <- SnowParam(workers = 1, type = "SOCK")
 
-XenofilteR requires a dataframe or matrix, named 'Samplelist', with in the first 
+XenofilteR requires a dataframe or matrix, named 'sample.list', with in the first 
 column the bam file names as mapped to the graft reference. The second column contains the 
 file names and paths to the bam files as mapped to the host reference. Each row in 
-Sample_list represents a single sequence run or sample. An optional list may be provided with 
-alternative names for output files. Especially for RNAseq samples aligned with for example 
+'sample.list' represents a single sequence run or sample. An optional list may be provided with 
+alternative names for output files, 'output.names'. Especially for RNAseq samples aligned with for example 
 Tophat this may be convenient since all .bam files are named identical. 
 The XenofilteR package and data are run in the following way: 
 
-	> XenofilteR(Sample_list, destination.folder = "./", bp.param = bp.param, output.names)
+	> XenofilteR(sample.list, destination.folder = "./", bp.param = bp.param, output.names)
 
 
 ## Contact
