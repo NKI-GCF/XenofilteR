@@ -153,30 +153,36 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
                          ": ", is.paired.end[i]))
     }
 
-	###################
-    ## Actual filter ##
-    ###################
+	##############################################
+    ## Assigning reads to either mouse or human ##
+    ##############################################
 
     i <- c(seq_along(sample.paths.graft))
-	ActualFilter<-function(i, destination.folder, sample.list, is.paired.end, sample.paths.graft, sample.paths.host, bp.param){
+	ActualFilter<-function(i, destination.folder, sample.list, is.paired.end, 
+		sample.paths.graft, sample.paths.host, bp.param){
 
 		## Read human data (all reads)
-		p4 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
+		p4 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), 
+			flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
 		Human <- scanBam(paste(sample.paths.graft[i]), param=p4)
 		flog.info("Finished reading human sample", sample.paths.graft[i], "\n")
 		
 		## Read Mouse data (mapped only)
-		p5 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
+		p5 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), 
+			flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
 		Mouse <- scanBam(paste(sample.paths.host[i]), param=p5)
-		flog.info("Finished reading mouse sample", sample.paths.host[i], "\n")
+		flog.info("Finished reading mouse sample", sample.paths.host[i], "\n", "\n")
 
 		# Get human reads that also map to mouse (TRUE if reads also maps to mouse)
 		set<-Human[[1]]$qname%in%Mouse[[1]]$qname
 
 		## Check if overlap exists
 		if (sum(set)==0){
-			stop(.wrap("No reads names overlap between graft and host BAM. Either nothing maps to the host reference or the BAM files do not match. Execution stopped for this sample"))
+			stop(.wrap("No reads names overlap between graft and host BAM.",
+			 "Either nothing maps to the host reference or the BAM files do not match.",
+			 " Please double check the bam files."))
 		}
+		
 
 		## Get read names mapped to human reference only
 		ToHumanOnly<-unique(Human[[1]]$qname[set==FALSE])
@@ -205,7 +211,8 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 			uni.name<-unique(Human_qname_set)
 			Map_info<-matrix(data=0, ncol=8, nrow=length(uni.name))
 			row.names(Map_info)<-uni.name
-			colnames(Map_info)<-c("MM_mouse_F","MM_mouse_R","MM_human_F","MM_R_human", "Mq_mouse_F", "Mq_mouse_R", "Mq_human_F", "Mq_human_R")
+			colnames(Map_info)<-c("MM_mouse_F","MM_mouse_R","MM_human_F","MM_R_human", 
+				"Mq_mouse_F", "Mq_mouse_R", "Mq_human_F", "Mq_human_R")
 
 			### Extensive data table with the number of mismatches (+ clips) and mapping quality.
 			### This table is usefull for de-buging and checking data, But should be remove in 
@@ -234,8 +241,10 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 			Map_info[,8]<-Human_mapq_set[unlist(RR_mouse)][match(uni.name, Human_qname_set[unlist(RR_mouse)])]
 
 			## Calculate average score for human and mouse reads	
-			Score_mouse<-rowMeans(cbind(Map_info[,"MM_mouse_F"]/Map_info[,"Mq_mouse_F"], Map_info[,"MM_mouse_R"]/Map_info[,"Mq_mouse_R"]), na.rm=T)
-			Score_human<-rowMeans(cbind(Map_info[,"MM_human_F"]/Map_info[,"Mq_human_F"], Map_info[,"MM_human_F"]/Map_info[,"Mq_human_F"]), na.rm=T)
+			Score_mouse<-rowMeans(cbind(Map_info[,"MM_mouse_F"]/Map_info[,"Mq_mouse_F"],
+				Map_info[,"MM_mouse_R"]/Map_info[,"Mq_mouse_R"]), na.rm=T)
+			Score_human<-rowMeans(cbind(Map_info[,"MM_human_F"]/Map_info[,"Mq_human_F"], 
+				Map_info[,"MM_human_F"]/Map_info[,"Mq_human_F"]), na.rm=T)
 	
 			# Determine where reads fit better
 			# Score human lower than mouse or no score for mouse at all (mapq==0)
@@ -270,9 +279,9 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 
 		cat("Finished calculating which reads can be assigned to human - Start writing filtered Bam files", "\n")
 
-		###########################################################################
-		############################ The actual filter ############################
-		###########################################################################
+		#######################
+		## The actual filter ##
+		#######################
 
 		filt <- list(setStart=function(x) x$qname %in% HumanSet)
 		
