@@ -83,6 +83,7 @@ Peeper, Roel in the Genome Core Facility.
 
 ## Changes and additions we are currently working on
 ## 
+- [ ] Optionally output bam file with mouse reads
 - [ ] Add read-count statistics to the log file
 - [ ] Improve the vignette
 - [ ] Make Xenofilter more efficient in memory usage
