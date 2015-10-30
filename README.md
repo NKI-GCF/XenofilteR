@@ -61,7 +61,7 @@ XenofilteR requires a dataframe or matrix, named 'sample.list', with in the firs
 column the bam file names as mapped to the graft reference. The second column contains the 
 file names and paths to the bam files as mapped to the host reference. Each row in 
 'sample.list' represents a single sequence run or sample. An optional list may be provided with 
-alternative names for output files, 'output.names'. Especially for RNAseq samples aligned with for example 
+alternative names for output files, 'output.names	'. Especially for RNAseq samples aligned with for example 
 Tophat this may be convenient since all .bam files are named identical. 
 The XenofilteR package and data are run in the following way: 
 
