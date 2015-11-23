@@ -27,17 +27,17 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
     sample.paths.host <- unique(sample.paths.host[!is.na(sample.paths.host)])
     sample.files.host <- basename(sample.paths.host)
     
-    ## Check length output.names and if unique
-    if (output.names!=NULL){
-    	if (length(output.names)!=length(sample.list["Graft"])){
-    		stop(.wrap("The number of provided names does not match the number of samples." 
-    			"Please correct the file names in:", sQuote(output.names)))
-    	}
-    	if (length(output.names)!=length(unique(output.names))){
-    		stop(.wrap("Identical samples names are used for multiple samples" 
-    			"Please correct the file names in:", sQuote(output.names)))
-    	}
-    }
+#    ## Check length output.names and if unique
+#    if (output.names!=NULL){
+#    	if (length(output.names)!=length(sample.list["Graft"])){
+#    		stop(.wrap("The number of provided names does not match the number of samples." 
+#    			"Please correct the file names in:", sQuote(output.names)))
+#    	}
+#    	if (length(output.names)!=length(unique(output.names))){
+#    		stop(.wrap("Identical samples names are used for multiple samples" 
+#    			"Please correct the file names in:", sQuote(output.names)))
+#    	}
+#    }
 
 	## Check whether desitination folder exists
     if (!file.exists(destination.folder)) {
@@ -87,9 +87,9 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
     flog.info("The value of bp.param was:", getClass(bp.param), capture = TRUE)
     flog.info(paste("This analysis will be run on", ncpu, "cpus"))
     flog.info("The value of sample.list was:", sample.list, capture = TRUE)
-	if (output.names!=NULL){
-		flog.info(paste("Alternative sample names are provided:", "\n", output.names, "\n"))
-	}
+#	if (output.names!=NULL){
+#		flog.info(paste("Alternative sample names are provided:", "\n", output.names, "\n"))
+#	}
 
 
     cat(.wrap("The following samples will be analyzed:"), "\n")
@@ -288,14 +288,14 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 
 		filt <- list(setStart=function(x) x$qname %in% HumanSet)
 		
-		if (output.names==NULL){
+#		if (output.names==NULL){
 			filterBam(paste(sample.paths.graft[i]), paste0(destination.folder,"/",gsub(".bam","_Filtered.bam",sample.files.graft[i])), 
 				filter=FilterRules(filt))
-		}
-		if (output.names==NULL){
-			filterBam(paste(sample.paths.graft[i]), paste0(destination.folder,"/",output.names[i], ".bam"), 
-				filter=FilterRules(filt))
-		}			
+#		}
+#		if (output.names==NULL){
+#			filterBam(paste(sample.paths.graft[i]), paste0(destination.folder,"/",output.names[i], ".bam"), 
+#				filter=FilterRules(filt))
+#		}			
 			
 		cat("Finished writing",gsub(".bam","_Filtered.bam",sample.list[i,1]), " ---  sample", i, "out of", nrow(sample.list), "\n")
 
