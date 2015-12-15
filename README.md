@@ -85,7 +85,7 @@ Peeper, Roel in the Genome Core Facility.
 ## 
 - [ ] Optionally output bam file with mouse reads
 - [ ] Improve the vignette
-- [ ] Make Xenofilter more efficient in memory usage
+- [ ] Make Xenofilter more efficient in memory usage	
 - [x] Add read-count statistics to the log file
 - [x] Change output name and structure for RNAseq data
 - [x] Making XenofilteR into an R-package 
