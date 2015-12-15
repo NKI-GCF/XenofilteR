@@ -27,17 +27,17 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
     sample.paths.host <- unique(sample.paths.host[!is.na(sample.paths.host)])
     sample.files.host <- basename(sample.paths.host)
     
-#    ## Check length output.names and if unique
-#    if (output.names!=NULL){
-#    	if (length(output.names)!=length(sample.list["Graft"])){
-#    		stop(.wrap("The number of provided names does not match the number of samples." 
-#    			"Please correct the file names in:", sQuote(output.names)))
-#    	}
-#    	if (length(output.names)!=length(unique(output.names))){
-#    		stop(.wrap("Identical samples names are used for multiple samples" 
-#    			"Please correct the file names in:", sQuote(output.names)))
-#    	}
-#    }
+    ## Check length output.names and if unique
+    if (output.names!=NULL){
+    	if (length(output.names)!=length(sample.list["Graft"])){
+    		stop(.wrap("The number of provided names does not match the number of samples." 
+    			"Please correct the file names in:", sQuote(output.names)))
+    	}
+    	if (length(output.names)!=length(unique(output.names))){
+    		stop(.wrap("Identical samples names are used for multiple samples" 
+    			"Please correct the file names in:", sQuote(output.names)))
+    	}
+    }
 
 	## Check whether desitination folder exists
     if (!file.exists(destination.folder)) {
@@ -87,9 +87,9 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
     flog.info("The value of bp.param was:", getClass(bp.param), capture = TRUE)
     flog.info(paste("This analysis will be run on", ncpu, "cpus"))
     flog.info("The value of sample.list was:", sample.list, capture = TRUE)
-#	if (output.names!=NULL){
-#		flog.info(paste("Alternative sample names are provided:", "\n", output.names, "\n"))
-#	}
+	if (output.names!=NULL){
+		flog.info(paste("Alternative sample names are provided:", "\n", output.names, "\n"))
+	}
 
 
     cat(.wrap("The following samples will be analyzed:"), "\n")
@@ -164,17 +164,18 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 	ActualFilter<-function(i, destination.folder, sample.list, is.paired.end, 
 		sample.paths.graft, sample.paths.host, bp.param){
 
-		## Read human data (all reads)
+		## Read human data (mapped only)
 		p4 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), 
 			flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
 		Human <- scanBam(paste(sample.paths.graft[i]), param=p4)
-		flog.info("Finished reading human sample", sample.paths.graft[i], "\n")
+
+		cat("Finished reading human sample", sample.paths.graft[i], "\n")
 		
 		## Read Mouse data (mapped only)
 		p5 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), 
 			flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
 		Mouse <- scanBam(paste(sample.paths.host[i]), param=p5)
-		flog.info("Finished reading mouse sample", sample.paths.host[i], "\n", "\n")
+		cat("Finished reading mouse sample", sample.paths.host[i], "\n", "\n")
 
 		# Get human reads that also map to mouse (TRUE if reads also maps to mouse)
 		set<-Human[[1]]$qname%in%Mouse[[1]]$qname
@@ -208,7 +209,7 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 		MM_I_human_set<-MM_I_human[set==TRUE]
 
 
-		## Filter for paired-end data
+		## For paired end data ##
 		if (is.paired.end[i]==TRUE){
 		
 			uni.name<-unique(Human_qname_set)
@@ -253,7 +254,19 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 			# Score human lower than mouse or no score for mouse at all (mapq==0)
 			BetterToHuman<-row.names(Map_info)[which(Score_human<Score_mouse | (is.na(Score_mouse)==TRUE & is.na(Score_human)==FALSE))]
 			HumanSet<-c(ToHumanOnly, BetterToHuman)
+			
+			# Statistics on read number assigned to either mouse or human
+			total.reads <- length(Human[[1]]$flag)
+			mouse.reads <- total.reads - (length(HumanSet)*2)
+			
+			## Provide output to log
+		    flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
+			flog.info(paste(basename(sample.paths.graft) , "\t"))
+			flog.info(paste("Filtered", mouse.reads,"reads out of", total.reads," - ",
+				(mouse.read/total.reads)*100,, "Percent" "\n"))
 
+
+		## For single end data ##
 		} else if(is.paired.end[i]==FALSE){
 
 			uni.name<-unique(Human_qname_set)
@@ -273,12 +286,18 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 			# Score human lower than mouse or no score for mouse at all (mapq==0)
 			BetterToHuman<-row.names(Map_info)[which(Score_human<Score_mouse | (is.na(Score_mouse)==TRUE & is.na(Score_human)==FALSE))]
 			HumanSet<-c(ToHumanOnly, BetterToHuman)
+			
+			# Statistics on read number assigned to either mouse or human
+			total.reads <- length(Human[[1]]$flag)
+			mouse.reads <- total.reads - length(HumanSet)
+			
+			## Provide output to log
+		    flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
+			flog.info(paste(basename(sample.paths.graft) , "\t"))
+			flog.info(paste("Filtered", mouse.reads,"reads out of", total.reads," - ",
+				(mouse.read/total.reads)*100, "Percent", "\n"))
+				
 		}
-		
-		## Statistics on the number of filtered reads
-
-		
-
 
 		cat("Finished calculating which reads can be assigned to human - Start writing filtered Bam files", "\n")
 
@@ -288,24 +307,28 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 
 		filt <- list(setStart=function(x) x$qname %in% HumanSet)
 		
-#		if (output.names==NULL){
+		if (output.names==NULL){
 			filterBam(paste(sample.paths.graft[i]), paste0(destination.folder,"/",gsub(".bam","_Filtered.bam",sample.files.graft[i])), 
 				filter=FilterRules(filt))
-#		}
-#		if (output.names==NULL){
-#			filterBam(paste(sample.paths.graft[i]), paste0(destination.folder,"/",output.names[i], ".bam"), 
-#				filter=FilterRules(filt))
-#		}			
+		}
+		if (output.names!=NULL){
+			filterBam(paste(sample.paths.graft[i]), paste0(destination.folder,"/",output.names[i], "_Filtered.bam"), 
+				filter=FilterRules(filt))
+		}			
 			
 		cat("Finished writing",gsub(".bam","_Filtered.bam",sample.list[i,1]), " ---  sample", i, "out of", nrow(sample.list), "\n")
 
 	}
    
+   	#############
+	## Wrap-up ##
+	#############
+	
     to.log <- bplapply(i, ActualFilter, destination.folder, sample.list, BPPARAM = bp.param, is.paired.end, sample.paths.graft, sample.paths.host)
     lapply(to.log, flog.info)
 
-
-	## Calculation time etc. 
+	## Report calculation time to log file
+	flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
  	flog.info(paste("Total calculation time of XenofilteR was",
                     round(difftime(Sys.time(), start.time, units = "hours"), 2),
                     "hours"))
