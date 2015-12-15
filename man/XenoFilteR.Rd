@@ -53,11 +53,11 @@ Roel Kluin (r.kluin@nki.nl)
 \examples{
 \dontrun{
 # 
-setwd("/PATH/TO/BAMFILES/")
-human_bams <- list.files(pattern = "hg19.bam$", full.names = TRUE)
-mouse_bams <- list.files(pattern = "mm10.bam$", full.names = TRUE)
+path <- dir(system.file(package = "XenofilteR"), "extdata", full.names = TRUE)
+samples <- list.files(path = path, pattern = ".bam$", full.names = TRUE)
 
-sample.list <- cbind(human_bams,mouse_bams)
+Sample_list <- data.frame(samples[1], samples[2])
+bp.param <- SnowParam(workers = 1, type = "SOCK")
 
 XenofilteR(sample.list = sample.list, destination.folder =
         "/PATH/TO/DESTINATIONFOLDER/", bp.param = bp.param, output.names = NULL)

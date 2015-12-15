@@ -155,6 +155,8 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
         flog.info(paste0("Paired-end sequencing for sample ", sample.paths.graft[i],
                          ": ", is.paired.end[i]))
     }
+    flog.info("\n")
+
 
 	##############################################
     ## Assigning reads to either mouse or human ##
@@ -261,9 +263,9 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 			
 			## Provide output to log
 		    flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
-			flog.info(paste(basename(sample.paths.graft) , "\t"))
-			flog.info(paste("Filtered", mouse.reads,"reads out of", total.reads," - ",
-				(mouse.read/total.reads)*100,, "Percent", "\n"))
+			flog.info(paste(basename(sample.paths.graft) , "\t",paste("Filtered", 
+			mouse.reads,"reads out of", total.reads,"reads - ",
+				round(((mouse.reads/total.reads)*100),1), "Percent", "\n")))
 
 
 		## For single end data ##
@@ -295,7 +297,7 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 		    flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
 			flog.info(paste(basename(sample.paths.graft) , "\t"))
 			flog.info(paste("Filtered", mouse.reads,"reads out of", total.reads," - ",
-				(mouse.read/total.reads)*100, "Percent", "\n"))
+				(mouse.reads/total.reads)*100, "Percent", "\n"))
 				
 		}
 
