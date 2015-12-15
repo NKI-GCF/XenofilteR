@@ -263,7 +263,7 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 		    flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
 			flog.info(paste(basename(sample.paths.graft) , "\t"))
 			flog.info(paste("Filtered", mouse.reads,"reads out of", total.reads," - ",
-				(mouse.read/total.reads)*100,, "Percent" "\n"))
+				(mouse.read/total.reads)*100,, "Percent", "\n"))
 
 
 		## For single end data ##
