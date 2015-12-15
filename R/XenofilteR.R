@@ -30,11 +30,11 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
     ## Check length output.names and if unique
     if (output.names!=NULL){
     	if (length(output.names)!=length(sample.list["Graft"])){
-    		stop(.wrap("The number of provided names does not match the number of samples." 
+    		stop(.wrap("The number of provided names does not match the number of samples.", 
     			"Please correct the file names in:", sQuote(output.names)))
     	}
     	if (length(output.names)!=length(unique(output.names))){
-    		stop(.wrap("Identical samples names are used for multiple samples" 
+    		stop(.wrap("Identical samples names are used for multiple samples", 
     			"Please correct the file names in:", sQuote(output.names)))
     	}
     }
