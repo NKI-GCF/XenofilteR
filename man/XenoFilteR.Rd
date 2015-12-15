@@ -43,11 +43,12 @@ log file of XenofilteR. This file also contains the statistics for each sample p
 }
 }
 \references{
-XenofilteR: DNA copy number detection from off-target sequence data. Roel Kluin, Oscar Krijgsman, et al. To be submitted for
+XenofilteR: seperate graft from host reads in xenograft sequencing. Roel Kluin, Oscar Krijgsman, et al. To be submitted for
 publication. 
 }
 \author{
 Oscar Krijgsman (o.krijgsman@nki.nl)
+Roel Kluin (r.kluin@nki.nl)
 }
 \examples{
 \dontrun{
@@ -59,6 +60,6 @@ mouse_bams <- list.files(pattern = "mm10.bam$", full.names = TRUE)
 sample.list <- cbind(human_bams,mouse_bams)
 
 XenofilteR(sample.list = sample.list, destination.folder =
-        "/PATH/TO/DESTINATIONFOLDER/", ncpu = 1, output.names = output.names)
+        "/PATH/TO/DESTINATIONFOLDER/", bp.param = bp.param, output.names = NULL)
 }
 }
