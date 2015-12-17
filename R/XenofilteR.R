@@ -88,9 +88,10 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
     flog.info(paste("This analysis will be run on", ncpu, "cpus"))
     flog.info("The value of sample.list was:", sample.list, capture = TRUE)
     if (length(output.names)!=0){
-		flog.info(paste("Alternative sample names are provided:", "\n", output.names, "\n"))
+   	 for (i in seq_along(output.names)) {
+			flog.info(paste0("Alternative sample name for",sample.files.graft[i],":", output.names[i]))
+		}
 	}
-
 
     cat(.wrap("The following samples will be analyzed:"), "\n")
     cat(paste("graft:", sample.list[,1], ";", "\t", "matching",
@@ -155,7 +156,6 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
         flog.info(paste0("Paired-end sequencing for sample ", sample.paths.graft[i],
                          ": ", is.paired.end[i]))
     }
-    flog.info("\n")
 
 
 	##############################################
@@ -265,7 +265,7 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 		    flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
 			flog.info(paste(basename(sample.paths.graft) , "\t",paste("Filtered", 
 			mouse.reads,"reads out of", total.reads,"reads - ",
-				round(((mouse.reads/total.reads)*100),1), "Percent", "\n")))
+				round(((mouse.reads/total.reads)*100),1), "Percent")))
 
 
 		## For single end data ##
