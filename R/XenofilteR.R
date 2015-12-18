@@ -170,14 +170,11 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 		p4 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), 
 			flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
 		Human <- scanBam(paste(sample.paths.graft[i]), param=p4)
-
-		cat("Finished reading human sample", sample.paths.graft[i], "\n")
 		
 		## Read Mouse data (mapped only)
 		p5 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), 
 			flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
 		Mouse <- scanBam(paste(sample.paths.host[i]), param=p5)
-		cat("Finished reading mouse sample", sample.paths.host[i], "\n", "\n")
 
 		# Get human reads that also map to mouse (TRUE if reads also maps to mouse)
 		set<-Human[[1]]$qname%in%Mouse[[1]]$qname
@@ -258,15 +255,14 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 			HumanSet<-c(ToHumanOnly, BetterToHuman)
 			
 			# Statistics on read number assigned to either mouse or human
-			total.reads <- length(Human[[1]]$flag)
-			mouse.reads <- total.reads - (length(HumanSet)*2)
+			total.reads <- length(unique(Human[[1]]$qname))
+			mouse.reads <- total.reads - length(unique(HumanSet))
 			
 			## Provide output to log
-		    flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
-			flog.info(paste(basename(sample.paths.graft) , "\t",paste("Filtered", 
-			mouse.reads,"reads out of", total.reads,"reads - ",
-				round(((mouse.reads/total.reads)*100),1), "Percent")))
-
+			output<-paste(basename(sample.paths.graft[i]) ," - Filtered", mouse.reads,"read pairs out of", total.reads," - ",
+				round((mouse.reads/total.reads)*100,2), "Percent")
+			flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
+			flog.info(print(output))
 
 		## For single end data ##
 		} else if(is.paired.end[i]==FALSE){
@@ -290,18 +286,15 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 			HumanSet<-c(ToHumanOnly, BetterToHuman)
 			
 			# Statistics on read number assigned to either mouse or human
-			total.reads <- length(Human[[1]]$flag)
-			mouse.reads <- total.reads - length(HumanSet)
+			total.reads <- length(unique(Human[[1]]$qname))
+			mouse.reads <- total.reads - length(unique(HumanSet))
 			
 			## Provide output to log
-		    flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
-			flog.info(paste(basename(sample.paths.graft) , "\t"))
-			flog.info(paste("Filtered", mouse.reads,"reads out of", total.reads," - ",
-				(mouse.reads/total.reads)*100, "Percent", "\n"))
-				
+			output<-paste(basename(sample.paths.graft[i]) ," - Filtered", mouse.reads,"reads out of", total.reads," - ",
+				round((mouse.reads/total.reads)*100,2), "Percent")
+			flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
+			flog.info(print(output))
 		}
-
-		cat("Finished calculating which reads can be assigned to human - Start writing filtered Bam files", "\n")
 
 		#######################
 		## The actual filter ##
@@ -316,9 +309,7 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 		if (length(output.names)!=0){
 			filterBam(paste(sample.paths.graft[i]), paste0(destination.folder,"/",output.names[i], "_Filtered.bam"), 
 				filter=FilterRules(filt))
-		}			
-			
-		cat("Finished writing",gsub(".bam","_Filtered.bam",sample.list[i,1]), " ---  sample", i, "out of", nrow(sample.list), "\n")
+		}
 
 	}
    
@@ -327,15 +318,15 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 	#############
 	
     to.log <- bplapply(i, ActualFilter, destination.folder, sample.list, BPPARAM = bp.param, is.paired.end, sample.paths.graft, sample.paths.host)
-    lapply(to.log, flog.info)
+  	flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
+    #lapply(to.log, flog.info)
 
 	## Report calculation time to log file
-	flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
  	flog.info(paste("Total calculation time of XenofilteR was",
                     round(difftime(Sys.time(), start.time, units = "hours"), 2),
                     "hours"))
     cat("Total calculation time of XenofilteR was: ",
-        Sys.time() - start.time, "\n\n")
+        round(difftime(Sys.time(), start.time, units = "hours"), 2), "\n\n")
 
 }
 

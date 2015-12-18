@@ -53,10 +53,11 @@ Roel Kluin (r.kluin@nki.nl)
 \examples{
 \dontrun{
 # 
+library(XenofilteR)
 path <- dir(system.file(package = "XenofilteR"), "extdata", full.names = TRUE)
 samples <- list.files(path = path, pattern = ".bam$", full.names = TRUE)
 
-Sample_list <- data.frame(samples[1], samples[2])
+sample.list <- data.frame(samples[1], samples[2])
 bp.param <- SnowParam(workers = 1, type = "SOCK")
 
 XenofilteR(sample.list = sample.list, destination.folder =
