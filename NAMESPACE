@@ -1,6 +1,6 @@
 exportPattern("^[[:alpha:]]+")
 
-importFrom(BiocParallel, bplapply, bpworkers)
+import(BiocParallel)
 import(Rsamtools)
 import(GenomicAlignments)
 import(GenomicRanges)

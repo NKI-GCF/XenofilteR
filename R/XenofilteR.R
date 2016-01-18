@@ -89,7 +89,7 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
     flog.info("The value of sample.list was:", sample.list, capture = TRUE)
     if (length(output.names)!=0){
    	 for (i in seq_along(output.names)) {
-			flog.info(paste0("Alternative sample name for",sample.files.graft[i],":", output.names[i]))
+			flog.info(paste0("Alternative sample name for ",sample.files.graft[i],":", output.names[i]))
 		}
 	}
 
@@ -273,9 +273,9 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 			colnames(Map_info)<-c("MM_mouse", "Mq_mouse", "MM_human", "Mq_human")
 	
 			Map_info[,"MM_mouse"] <- MM_I_mouse[match(uni.name, Mouse[[1]]$qname)]
-			Map_info[,"Mq_mouse"] <- Mouse[[1]]$mapq[match(uni.name, Mouse[[1]]$qname)]
+			Map_info[,"Mq_mouse"] <- Mouse[[1]]$mapq[match(uni.name, Mouse[[1]]$qname)]+1
 			Map_info[,"MM_human"] <- MM_I_human_set[match(uni.name, Human_qname_set)]
-			Map_info[,"Mq_human"] <- Human_mapq_set[match(uni.name, Human_qname_set)]
+			Map_info[,"Mq_human"] <- Human_mapq_set[match(uni.name, Human_qname_set)]+1
 
 			Score_human<-Map_info[,"MM_human"]/Map_info[,"Mq_human"]
 			Score_mouse<-Map_info[,"MM_mouse"]/Map_info[,"Mq_mouse"]
@@ -307,7 +307,7 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 				filter=FilterRules(filt))
 		}
 		if (length(output.names)!=0){
-			filterBam(paste(sample.paths.graft[i]), paste0(destination.folder,"/",output.names[i], "_Filtered.bam"), 
+			filterBam(paste(sample.paths.graft[i]), paste0(destination.folder,"/",output.names[i]), 
 				filter=FilterRules(filt))
 		}
 
