@@ -6,7 +6,7 @@ Date: 2016-01-19
 Author: Oscar Krijgsman
 Maintainer: Oscar Krijgsman <o.krijgsman@nki.nl>
 Imports: BiocParallel, Rsamtools, GenomicAlignments, GenomicRanges, futile.logger, IRanges
-Depends: R(>= 3.2), BiocParallel, Rsamtools, GenomicAlignments, GenomicRanges, futile.logger, IRanges
+Depends: R(>= 3.2), BiocParallel, Rsamtools
 Suggests: BiocStyle, snow
 URL: https://github.com/PeeperLab/XenofilteR
 Description: Newtool filters sequence reads in bam files for DNA from another organism (like mouse DNA in patient derived Xenografts). 

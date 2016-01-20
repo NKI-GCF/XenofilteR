@@ -166,15 +166,16 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 	ActualFilter<-function(i, destination.folder, sample.list, is.paired.end, 
 		sample.paths.graft, sample.paths.host, bp.param){
 
-		## Read human data (mapped only)
+		## Settings for scanBam
 		p4 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), 
 			flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
+
+		## Read human data (mapped and primary alignment only)
 		Human <- scanBam(paste(sample.paths.graft[i]), param=p4)
 		
-		## Read Mouse data (mapped only)
-		p5 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), 
-			flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
-		Mouse <- scanBam(paste(sample.paths.host[i]), param=p5)
+		## Read mouse data (mapped and primary alignment only)
+		Mouse <- scanBam(paste(sample.paths.host[i]), param=p4)
+
 
 		# Get human reads that also map to mouse (TRUE if reads also maps to mouse)
 		set<-Human[[1]]$qname%in%Mouse[[1]]$qname
@@ -214,7 +215,7 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 			uni.name<-unique(Human_qname_set)
 			Map_info<-matrix(data=0, ncol=8, nrow=length(uni.name))
 			row.names(Map_info)<-uni.name
-			colnames(Map_info)<-c("MM_mouse_F","MM_mouse_R","MM_human_F","MM_R_human", 
+			colnames(Map_info)<-c("MM_mouse_F","MM_mouse_R","MM_human_F","MM_human_R", 
 				"Mq_mouse_F", "Mq_mouse_R", "Mq_human_F", "Mq_human_R")
 
 			### Extensive data table with the number of mismatches (+ clips) and mapping quality.
@@ -226,28 +227,28 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 			RR_mouse<-lapply(Mouse[[1]]$flag, .SecondInPair)
 
 			## Fill dataframe with mismatches and mapping quality for mouse
-			Map_info[,1]<-MM_I_mouse[unlist(FR_mouse)][match(uni.name, Mouse[[1]]$qname[unlist(FR_mouse)])]
-			Map_info[,2]<-MM_I_mouse[unlist(RR_mouse)][match(uni.name, Mouse[[1]]$qname[unlist(RR_mouse)])]
+			Map_info[,"MM_mouse_F"]<-MM_I_mouse[unlist(FR_mouse)][match(uni.name, Mouse[[1]]$qname[unlist(FR_mouse)])]
+			Map_info[,"MM_mouse_R"]<-MM_I_mouse[unlist(RR_mouse)][match(uni.name, Mouse[[1]]$qname[unlist(RR_mouse)])]
 
-			Map_info[,5]<-Mouse[[1]]$mapq[unlist(FR_mouse)][match(uni.name, Mouse[[1]]$qname[unlist(FR_mouse)])]+1
-			Map_info[,6]<-Mouse[[1]]$mapq[unlist(RR_mouse)][match(uni.name, Mouse[[1]]$qname[unlist(RR_mouse)])]+1
+			Map_info[,"Mq_mouse_F"]<-Mouse[[1]]$mapq[unlist(FR_mouse)][match(uni.name, Mouse[[1]]$qname[unlist(FR_mouse)])]+1
+			Map_info[,"Mq_mouse_R"]<-Mouse[[1]]$mapq[unlist(RR_mouse)][match(uni.name, Mouse[[1]]$qname[unlist(RR_mouse)])]+1
 
 			## Match for forward and reverse reads and get MM+I (human)
 			FR_human<-lapply(Human[[1]]$flag[set==TRUE], .FirstInPair)
 			RR_human<-lapply(Human[[1]]$flag[set==TRUE], .SecondInPair)
 	
 			## Fill dataframe with mismatches and mapping quality for human
-			Map_info[,3]<-MM_I_human_set[unlist(FR_human)][match(uni.name, Human_qname_set[unlist(FR_human)])]
-			Map_info[,4]<-MM_I_human_set[unlist(RR_mouse)][match(uni.name, Human_qname_set[unlist(RR_mouse)])]
+			Map_info[,"MM_human_F"]<-MM_I_human_set[unlist(FR_human)][match(uni.name, Human_qname_set[unlist(FR_human)])]
+			Map_info[,"MM_human_R"]<-MM_I_human_set[unlist(RR_human)][match(uni.name, Human_qname_set[unlist(RR_human)])]
 
-			Map_info[,7]<-Human_mapq_set[unlist(FR_human)][match(uni.name, Human_qname_set[unlist(FR_human)])]+1
-			Map_info[,8]<-Human_mapq_set[unlist(RR_mouse)][match(uni.name, Human_qname_set[unlist(RR_mouse)])]+1
+			Map_info[,"Mq_human_F"]<-Human_mapq_set[unlist(FR_human)][match(uni.name, Human_qname_set[unlist(FR_human)])]+1
+			Map_info[,"Mq_human_R"]<-Human_mapq_set[unlist(RR_human)][match(uni.name, Human_qname_set[unlist(RR_human)])]+1
 
 			## Calculate average score for human and mouse reads	
 			Score_mouse<-rowMeans(cbind(Map_info[,"MM_mouse_F"]/Map_info[,"Mq_mouse_F"],
 				Map_info[,"MM_mouse_R"]/Map_info[,"Mq_mouse_R"]), na.rm=T)
 			Score_human<-rowMeans(cbind(Map_info[,"MM_human_F"]/Map_info[,"Mq_human_F"], 
-				Map_info[,"MM_human_F"]/Map_info[,"Mq_human_F"]), na.rm=T)
+				Map_info[,"MM_human_R"]/Map_info[,"Mq_human_R"]), na.rm=T)
 	
 			# Determine where reads fit better
 			# Score human lower than mouse or no score for mouse at all (mapq==0)
@@ -281,7 +282,7 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 			Score_mouse<-Map_info[,"MM_mouse"]/Map_info[,"Mq_mouse"]
 			
 			# Determine where reads fit better
-			# Score human lower than mouse or no score for mouse at all (mapq==0)
+			# Score human lower than mouse or no score for mouse at all (score==NA)
 			BetterToHuman<-row.names(Map_info)[which(Score_human<Score_mouse | (is.na(Score_mouse)==TRUE & is.na(Score_human)==FALSE))]
 			HumanSet<-c(ToHumanOnly, BetterToHuman)
 			
@@ -307,7 +308,7 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
 				filter=FilterRules(filt))
 		}
 		if (length(output.names)!=0){
-			filterBam(paste(sample.paths.graft[i]), paste0(destination.folder,"/",output.names[i]), 
+			filterBam(paste(sample.paths.graft[i]), paste0(destination.folder,"/",gsub(".bam", "_Filtered.bam",output.names[i]), 
 				filter=FilterRules(filt))
 		}
 
