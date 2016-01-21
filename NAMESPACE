@@ -1,7 +1,5 @@
 exportPattern("^[[:alpha:]]+")
 
-import(BiocParallel)
-import(Rsamtools)
 import(GenomicAlignments)
 import(GenomicRanges)
 import(futile.logger)
