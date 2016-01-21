@@ -2,49 +2,58 @@
 \alias{XenofilteR}
 \alias{list.files}
 \title{
-XenofilteR: filter reads from xenograft sequencing
+XenofilteR: excluding host reads from xenograft sequencing data
 }
 \description{
-Xenograft filters DNA and RNA sequence data for reads that originate from the host in xenograft experiments. 
+Excludes DNA or RNA sequence reads that originate from contaminating species
+(like the host in xenograft experiments. 
 }
 \usage{
 XenofilteR(sample.list, destination.folder, bp.param)
 }
 \arguments{
 \item{sample.list}{
-a data.frame or matrix that contains the path and name of the bam files of the reads alligned to the human reference (column 1) and the mouse reference (column 2).
+A data.frame or matrix that contains the full name of the bam files (including
+path) of the reads aligned to the human reference (column 1) and the mouse
+reference (column 2).
 }
 \item{destination.folder}{
 The path to the folder to which output should be written. The path can be
 either absolute or relative.
 }
 \item{bp.param}{
-a BiocParallelParam instance (see \code{BiocParallel} Bioconductor package)
+A BiocParallelParam instance (see \code{BiocParallel} Bioconductor package)
 that determines the settings used for parallel computing. Please refer to the
 vignette for more information.
 }
 \item{output.names}{
-Optional list with alternative samples names for the generated filtered bam file. 
-This might become useful when analysing RNAseq data. Bam files are often name identical and sample names are defined in the folder name, not in he bam file. 
-
+Optional list with alternative samples names for the generated filtered bam
+file. This might become useful when analysing RNAseq data. Bam files are often
+name identical and sample names are defined in the folder name, not in he bam
+file.
 }
 }
 \details{
-XenofilteR reads five parameters from the human and mouse bam file: 1) read name, 2) mapping quality 3) flag, 4) CIGAR and 5) mismatches (NM tag). Based on these parameters XenofilteR calculates two scores for each read, one for teh mapping against the human (graft) reference and a second for the mapping against teh mouse (host) reference. The read, or read-pair when performing paired-end experiments, is assigned to either derived from teh host or graft based on the score. 
-
+XenofilteR reads five parameters from the human and mouse bam file: 1) read
+name, 2) mapping quality, 3) flag, 4) CIGAR, and 5) mismatches (NM tag). Based
+on these parameters XenofilteR calculates two edit distances for each read, one
+for the mapping to the human (graft) reference and a second for the mapping to
+the mouse (host) reference. The read or read-pair is assigned to the host or
+graft .bam files based on these edit distances.
 }
 \value{
 \item{BamFiles}{
-a folder with the .bam files filtered for mouse derived reads that are created during
-the \code{XenofilteR}() run.
+A folder with the .bam files from which reads mapping to xenogemones have been
+removed.
 }
 \item{XenofilteR.log}{
-log file of XenofilteR. This file also contains the statistics for each sample processed. 
+Log file of XenofilteR. This file also contains the statistics for each sample
+processed. 
 }
 }
 \references{
-XenofilteR: seperate graft from host reads in xenograft sequencing. Roel Kluin, Oscar Krijgsman, et al. To be submitted for
-publication. 
+XenofilteR: seperate graft from host reads in xenograft sequencing. Roel Kluin,
+Oscar Krijgsman, et al. To be submitted for publication. 
 }
 \author{
 Oscar Krijgsman (o.krijgsman@nki.nl)
