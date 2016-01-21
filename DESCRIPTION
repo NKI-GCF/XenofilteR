@@ -1,6 +1,6 @@
 Package: XenofilteR
 Type: Package
-Title: Filtering mouse reads from PDX sequencing
+Title: Excluding host reads from xenograft sequencing data
 Version: 0.99.0
 Date: 2016-01-19
 Author: Oscar Krijgsman
@@ -9,7 +9,7 @@ Imports: BiocParallel, Rsamtools, GenomicAlignments, GenomicRanges, futile.logge
 Depends: R(>= 3.2), BiocParallel, Rsamtools
 Suggests: BiocStyle, snow
 URL: https://github.com/PeeperLab/XenofilteR
-Description: Newtool filters sequence reads in bam files for DNA from another organism (like mouse DNA in patient derived Xenografts). 
+Description: This tool allows to exclude sequence reads mapping to the host from next-generation sequencing data obtained from xenograft experiments.
 License: GPL-2
 biocViews: TargetedResequencing, ExomeSeq, Preprocessing, PDX
 NeedsCompilation: no

@@ -1,6 +1,6 @@
-XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NULL){
+XenofilteR <- function(sample.list, destination.folder, bp.param, output.names = NULL) {
 
-	##########################
+    ##########################
     ## Check and initialise ##
     ##########################
 
@@ -9,55 +9,53 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
     ## Restore work directory upon exit
     wd.orig <- getwd()
     on.exit(setwd(wd.orig))
-
-	## Make folder paths absolute
+  
+    ## Make folder paths absolute
     sample.list <- apply(sample.list, c(1, 2),
-                            tools::file_path_as_absolute)
+                         tools::file_path_as_absolute)
     sample.list <- data.frame(sample.list, stringsAsFactors = FALSE)
     colnames(sample.list) <- c("Graft", "Host")
     destination.folder <- tools::file_path_as_absolute(destination.folder)
 
     ## Create lists with graft bam files, paths and names
-    sample.paths.graft <- unlist(sample.list[,1])
+    sample.paths.graft <- unlist(sample.list[, 1])
     sample.paths.graft <- unique(sample.paths.graft[!is.na(sample.paths.graft)])
     sample.files.graft <- basename(sample.paths.graft)
 
     ## Create lists with graft bam files, paths and names
-    sample.paths.host <- unlist(sample.list[,2])
+    sample.paths.host <- unlist(sample.list[, 2])
     sample.paths.host <- unique(sample.paths.host[!is.na(sample.paths.host)])
     sample.files.host <- basename(sample.paths.host)
     
     ## Check length output.names and if unique
-    if (length(output.names)!=0){
+    if (length(output.names) != 0){
 
-		## All alternative output names should end with '.bam'
-    	output.names<-gsub(".bam","",output.names)
-    	output.names<-paste0(output.names, ".bam")
+				## All alternative output names should end with '.bam'
+				output.names <- gsub(".bam", "", output.names)
+				output.names <- paste0(output.names, ".bam")
 		
-    	if (length(output.names)!=nrow(sample.list["Graft"])){
-    		stop(.wrap("The number of provided names does not match the number of samples.", 
-    			"Please correct the file names in:", sQuote(output.names)))
-    	}
-    	
-    	if (length(output.names)!=length(unique(output.names))){
-    		stop(.wrap("Identical samples names are used for multiple samples", 
-    			"Please correct the file names in:", sQuote(output.names)))
-    	}
+				if (length(output.names) != nrow(sample.list["Graft"])){
+						stop(.wrap("The number of provided names does not match the number of samples.", 
+								       "Please correct the file names in:", sQuote(output.names)))
+				}
+			
+				if (length(output.names) != length(unique(output.names))){
+						stop(.wrap("Identical samples names are used for multiple samples", 
+					          	 "Please correct the file names in:", sQuote(output.names)))
+				}
     }
 
-	## Check whether destination folder exists
+    ## Check whether destination folder exists
     if (!file.exists(destination.folder)) {
         stop(.wrap("The destination folder could not be found. Please change",
                    "the path specified in", sQuote(destination.folder)))
     }
 
-
     ## Check for write permissions in the destination folder
     if (file.access(destination.folder, 2) == -1) {
         stop(.wrap("You do not have write permission in the destination",
                    "folder."))
-    }
-    
+    }    
     
     ## Create folder
     destination.folder <- file.path(destination.folder, "Filtered_bams")
@@ -81,11 +79,11 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
     ## Calculate the maximal number of CPUs to be used
     ncpu <- bpworkers(bp.param)
 
-	## Provide output to log
+    ## Provide output to log
     flog.appender(appender.file(file.path(destination.folder,
                                           "XenofilteR.log")))
     flog.info(paste("Running XenofilteR version",
-                as(packageVersion("XenofilteR"), "character"), "..."))
+                    as(packageVersion("XenofilteR"), "character"), "..."))
     flog.info(paste0("XenofilteR was run using the following commands:", "\n\n",
                      "XenofilteR(sample.list = sample.list, ",
                      "destination.folder = \"", dirname(destination.folder),
@@ -94,11 +92,11 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
     flog.info(paste("This analysis will be run on", ncpu, "cpus"))
     flog.info("The value of sample.list was:", sample.list, capture = TRUE)
     if (length(output.names)!=0){
-   	 for (i in seq_along(output.names)) {
-			flog.info(paste0("Alternative sample name for ",
-			sample.files.graft[i],":", output.names[i]))
-		}
-	}
+				for (i in seq_along(output.names)) {
+						flog.info(paste0("Alternative sample name for ",
+						sample.files.graft[i],":", output.names[i]))
+				}
+    }
 
     cat(.wrap("The following samples will be analyzed:"), "\n")
     cat(paste("graft:", sample.list[,1], ";", "\t", "matching",
@@ -106,7 +104,7 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
     cat(.wrap("This analysis will be run on", ncpu, "cpus"), "\n")
 
 
-	## Check if graft bam files are indexed (.bai needed for filter step)
+    ## Check if graft bam files are indexed (.bai needed for filter step)
     chr.sort.mode <- NULL
 
     tryCatch({
@@ -120,8 +118,8 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
                    "from analysis. Stopping execution of the remaining part of",
                    "the script..."))
     })
-	chr.sort.mode <- unlist(lapply(chr.sort.mode, function(x) {
-        length(grep("SO:coordinate", x))
+    chr.sort.mode <- unlist(lapply(chr.sort.mode, function(x) {
+				length(grep("SO:coordinate", x))
     }))
 
     if (any(chr.sort.mode == 0)) {
@@ -165,177 +163,177 @@ XenofilteR<-function(sample.list, destination.folder, bp.param, output.names=NUL
     }
 
 
-	##############################################
+    ##############################################
     ## Assigning reads to either mouse or human ##
     ##############################################
 
     i <- c(seq_along(sample.paths.graft))
-	ActualFilter<-function(i, destination.folder, sample.list, is.paired.end, 
-		sample.paths.graft, sample.paths.host, bp.param){
+    ActualFilter <- function(i, destination.folder, sample.list, is.paired.end, 
+                             sample.paths.graft, sample.paths.host, bp.param){
 
-		## Settings for scanBam
-		p4 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), 
-			flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
+				## Settings for scanBam
+				p4 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), 
+				flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
 
-		## Read human data (mapped and primary alignment only)
-		Human <- scanBam(paste(sample.paths.graft[i]), param=p4)
+				## Read human data (mapped and primary alignment only)
+				Human <- scanBam(paste(sample.paths.graft[i]), param=p4)
 		
-		## Read mouse data (mapped and primary alignment only)
-		Mouse <- scanBam(paste(sample.paths.host[i]), param=p4)
+				## Read mouse data (mapped and primary alignment only)
+				Mouse <- scanBam(paste(sample.paths.host[i]), param=p4)
 
 
-		# Get human reads that also map to mouse (TRUE if reads also maps to mouse)
-		set<-Human[[1]]$qname%in%Mouse[[1]]$qname
+				# Get human reads that also map to mouse (TRUE if reads also maps to mouse)
+				set <- Human[[1]]$qname %in% Mouse[[1]]$qname
 
-		## Check if overlap exists
-		if (sum(set)==0){
-			stop(.wrap("No reads names overlap between graft and host BAM.",
-			 "Either nothing maps to the host reference or the BAM files do not match.",
-			 " Please double check the bam files."))
-		}
+				## Check if overlap exists
+				if (sum(set)==0){
+						stop(.wrap("No reads names overlap between graft and host BAM.",
+						           "Either nothing maps to the host reference or the BAM files do not match.",
+						           " Please double check the bam files."))
+				}
 		
 
-		## Get read names mapped to human reference only
-		ToHumanOnly<-unique(Human[[1]]$qname[set==FALSE])
+				## Get read names mapped to human reference only
+				ToHumanOnly <- unique(Human[[1]]$qname[set==FALSE])
 
-		## Get the Clips + inserts + MisMatches (Mouse)
-		Cigar.matrix<-cigarOpTable(Mouse[[1]]$cigar)
-		Inserts<-Cigar.matrix[,colnames(Cigar.matrix)=="I"]
-		Clips<-Cigar.matrix[,colnames(Cigar.matrix)=="S"]
-		MM_I_mouse<-Clips+Inserts+Mouse[[1]]$tag$NM
+				## Get the Clips + inserts + MisMatches (Mouse)
+				Cigar.matrix <- cigarOpTable(Mouse[[1]]$cigar)
+				Inserts <- Cigar.matrix[,colnames(Cigar.matrix)=="I"]
+				Clips <- Cigar.matrix[,colnames(Cigar.matrix)=="S"]
+				MM_I_mouse <- Clips+Inserts+Mouse[[1]]$tag$NM
 
-		## Get the Clips + inserts + MisMatches (Human)
-		Cigar.matrix<-cigarOpTable(Human[[1]]$cigar)
-		Inserts<-Cigar.matrix[,colnames(Cigar.matrix)=="I"]
-		Clips<-Cigar.matrix[,colnames(Cigar.matrix)=="S"]
-		MM_I_human<-Clips+Inserts+Human[[1]]$tag$NM
+				## Get the Clips + inserts + MisMatches (Human)
+				Cigar.matrix <- cigarOpTable(Human[[1]]$cigar)
+				Inserts <- Cigar.matrix[,colnames(Cigar.matrix)=="I"]
+				Clips <- Cigar.matrix[,colnames(Cigar.matrix)=="S"]
+				MM_I_human <- Clips+Inserts+Human[[1]]$tag$NM
 
-		## Filter for human reads that also map to mouse
-		Human_qname_set<-Human[[1]]$qname[set==TRUE]
-		Human_mapq_set<-Human[[1]]$mapq[set==TRUE]
-		MM_I_human_set<-MM_I_human[set==TRUE]
+				## Filter for human reads that also map to mouse
+				Human_qname_set <- Human[[1]]$qname[set==TRUE]
+				Human_mapq_set <- Human[[1]]$mapq[set==TRUE]
+				MM_I_human_set <- MM_I_human[set==TRUE]
 
 
-		## For paired end data ##
-		if (is.paired.end[i]==TRUE){
+				## For paired end data ##
+				if (is.paired.end[i]==TRUE){
 		
-			uni.name<-unique(Human_qname_set)
-			Map_info<-matrix(data=0, ncol=8, nrow=length(uni.name))
-			row.names(Map_info)<-uni.name
-			colnames(Map_info)<-c("MM_mouse_F","MM_mouse_R","MM_human_F","MM_human_R", 
-				"Mq_mouse_F", "Mq_mouse_R", "Mq_human_F", "Mq_human_R")
+						uni.name <- unique(Human_qname_set)
+						Map_info <- matrix(data=0, ncol=8, nrow=length(uni.name))
+						row.names(Map_info) <- uni.name
+						colnames(Map_info) <- c("MM_mouse_F","MM_mouse_R","MM_human_F","MM_human_R", 
+																		"Mq_mouse_F", "Mq_mouse_R", "Mq_human_F", "Mq_human_R")
 
-			#############
-			## Section for reads mapped to mouse reference genome
+						#############
+						## Section for reads mapped to mouse reference genome
 				
-			## Match for forward and reverse reads and get MM+I (mouse)
-			FR_mouse<-unlist(lapply(Mouse[[1]]$flag, .FirstInPair))
-			RR_mouse<-unlist(lapply(Mouse[[1]]$flag, .SecondInPair))
+						## Match for forward and reverse reads and get MM+I (mouse)
+						FR_mouse <- unlist(lapply(Mouse[[1]]$flag, .FirstInPair))
+						RR_mouse <- unlist(lapply(Mouse[[1]]$flag, .SecondInPair))
 
-			## Fill dataframe with mismatches and mapping quality for mouse
-			Map_info[,"MM_mouse_F"]<-MM_I_mouse[FR_mouse][match(uni.name, Mouse[[1]]$qname[FR_mouse])]
-			Map_info[,"MM_mouse_R"]<-MM_I_mouse[RR_mouse][match(uni.name, Mouse[[1]]$qname[RR_mouse])]
+						## Fill dataframe with mismatches and mapping quality for mouse
+						Map_info[,"MM_mouse_F"] <- MM_I_mouse[FR_mouse][match(uni.name, Mouse[[1]]$qname[FR_mouse])]
+						Map_info[,"MM_mouse_R"] <- MM_I_mouse[RR_mouse][match(uni.name, Mouse[[1]]$qname[RR_mouse])]
 
-			Map_info[,"Mq_mouse_F"]<-Mouse[[1]]$mapq[FR_mouse][match(uni.name, Mouse[[1]]$qname[FR_mouse])]+1
-			Map_info[,"Mq_mouse_R"]<-Mouse[[1]]$mapq[RR_mouse][match(uni.name, Mouse[[1]]$qname[RR_mouse])]+1
+						Map_info[,"Mq_mouse_F"] <- Mouse[[1]]$mapq[FR_mouse][match(uni.name, Mouse[[1]]$qname[FR_mouse])]+1
+						Map_info[,"Mq_mouse_R"] <- Mouse[[1]]$mapq[RR_mouse][match(uni.name, Mouse[[1]]$qname[RR_mouse])]+1
 
-			#############
-			## Section for reads mapped to human reference genome
+						#############
+						## Section for reads mapped to human reference genome
 			
-			## Match for forward and reverse reads and get MM+I (human)
-			FR_human<-unlist(lapply(Human[[1]]$flag[set==TRUE], .FirstInPair))
-			RR_human<-unlist(lapply(Human[[1]]$flag[set==TRUE], .SecondInPair))
+						## Match for forward and reverse reads and get MM+I (human)
+						FR_human <- unlist(lapply(Human[[1]]$flag[set==TRUE], .FirstInPair))
+						RR_human <- unlist(lapply(Human[[1]]$flag[set==TRUE], .SecondInPair))
 	
-			## Fill dataframe with mismatches and mapping quality for human
-			Map_info[,"MM_human_F"]<-MM_I_human_set[FR_human][match(uni.name, Human_qname_set[FR_human])]
-			Map_info[,"MM_human_R"]<-MM_I_human_set[RR_human][match(uni.name, Human_qname_set[RR_human])]
+						## Fill dataframe with mismatches and mapping quality for human
+						Map_info[,"MM_human_F"] <- MM_I_human_set[FR_human][match(uni.name, Human_qname_set[FR_human])]
+						Map_info[,"MM_human_R"] <- MM_I_human_set[RR_human][match(uni.name, Human_qname_set[RR_human])]
 
-			Map_info[,"Mq_human_F"]<-Human_mapq_set[FR_human][match(uni.name, Human_qname_set[FR_human])]+1
-			Map_info[,"Mq_human_R"]<-Human_mapq_set[RR_human][match(uni.name, Human_qname_set[RR_human])]+1
+						Map_info[,"Mq_human_F"] <- Human_mapq_set[FR_human][match(uni.name, Human_qname_set[FR_human])]+1
+						Map_info[,"Mq_human_R"] <- Human_mapq_set[RR_human][match(uni.name, Human_qname_set[RR_human])]+1
 
 			
-			#############
-			## Calculate 'Score' for each read to mouse and human reference
+						#############
+						## Calculate 'Score' for each read to mouse and human reference
 				
-			Score_mouse<-rowMeans(cbind(Map_info[,"MM_mouse_F"]/Map_info[,"Mq_mouse_F"],
-				Map_info[,"MM_mouse_R"]/Map_info[,"Mq_mouse_R"]), na.rm=T)
-			Score_human<-rowMeans(cbind(Map_info[,"MM_human_F"]/Map_info[,"Mq_human_F"], 
-				Map_info[,"MM_human_R"]/Map_info[,"Mq_human_R"]), na.rm=T)
+						Score_mouse <- rowMeans(cbind(Map_info[,"MM_mouse_F"]/Map_info[,"Mq_mouse_F"],
+																					Map_info[,"MM_mouse_R"]/Map_info[,"Mq_mouse_R"]), na.rm=T)
+						Score_human <- rowMeans(cbind(Map_info[,"MM_human_F"]/Map_info[,"Mq_human_F"], 
+																					Map_info[,"MM_human_R"]/Map_info[,"Mq_human_R"]), na.rm=T)
 	
-			# Determine where reads fit better (read is asigned to mapping with lowest score)
-			BetterToHuman<-row.names(Map_info)[which(Score_human<Score_mouse | (is.na(Score_mouse)==TRUE & is.na(Score_human)==FALSE))]
-			HumanSet<-c(ToHumanOnly, BetterToHuman)
+						# Determine where reads fit better (read is asigned to mapping with lowest score)
+						BetterToHuman <- row.names(Map_info)[which(Score_human<Score_mouse | (is.na(Score_mouse)==TRUE & is.na(Score_human)==FALSE))]
+						HumanSet <- c(ToHumanOnly, BetterToHuman)
 			
-			# Statistics on read number assigned to either mouse or human
-			total.reads <- length(unique(Human[[1]]$qname))
-			mouse.reads <- total.reads - length(unique(HumanSet))
+						# Statistics on read number assigned to either mouse or human
+						total.reads <- length(unique(Human[[1]]$qname))
+						mouse.reads <- total.reads - length(unique(HumanSet))
 			
-			## Provide output to log
-			output<-paste(basename(sample.paths.graft[i]) ," - Filtered", mouse.reads,
-			"read pairs out of", total.reads," - ", round((mouse.reads/total.reads)*100,2), "Percent")
-			flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
-			flog.info(print(output))
+						## Provide output to log
+						output <- paste(basename(sample.paths.graft[i]) ," - Filtered", mouse.reads,
+						"read pairs out of", total.reads," - ", round((mouse.reads/total.reads)*100,2), "Percent")
+						flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
+						flog.info(print(output))
 
-		## For single end data ##
-		} else if(is.paired.end[i]==FALSE){
+				## For single end data ##
+				} else if(is.paired.end[i]==FALSE){
 
-			uni.name<-unique(Human_qname_set)
-			Map_info<-matrix(data=0, ncol=4, nrow=length(uni.name))
-			row.names(Map_info)<-uni.name
-			colnames(Map_info)<-c("MM_mouse", "Mq_mouse", "MM_human", "Mq_human")
+						uni.name <- unique(Human_qname_set)
+						Map_info <- matrix(data=0, ncol=4, nrow=length(uni.name))
+						row.names(Map_info) <- uni.name
+						colnames(Map_info) <- c("MM_mouse", "Mq_mouse", "MM_human", "Mq_human")
 	
-			Map_info[,"MM_mouse"] <- MM_I_mouse[match(uni.name, Mouse[[1]]$qname)]
-			Map_info[,"Mq_mouse"] <- Mouse[[1]]$mapq[match(uni.name, Mouse[[1]]$qname)]+1
-			Map_info[,"MM_human"] <- MM_I_human_set[match(uni.name, Human_qname_set)]
-			Map_info[,"Mq_human"] <- Human_mapq_set[match(uni.name, Human_qname_set)]+1
+						Map_info[,"MM_mouse"] <- MM_I_mouse[match(uni.name, Mouse[[1]]$qname)]
+						Map_info[,"Mq_mouse"] <- Mouse[[1]]$mapq[match(uni.name, Mouse[[1]]$qname)]+1
+						Map_info[,"MM_human"] <- MM_I_human_set[match(uni.name, Human_qname_set)]
+						Map_info[,"Mq_human"] <- Human_mapq_set[match(uni.name, Human_qname_set)]+1
 
-			Score_mouse<-Map_info[,"MM_mouse"]/Map_info[,"Mq_mouse"]
-			Score_human<-Map_info[,"MM_human"]/Map_info[,"Mq_human"]
+						Score_mouse <- Map_info[,"MM_mouse"]/Map_info[,"Mq_mouse"]
+						Score_human <- Map_info[,"MM_human"]/Map_info[,"Mq_human"]
 			
-			# Determine where reads fit better
-			# Score human lower than mouse or no score for mouse at all (score==NA)
-			BetterToHuman<-row.names(Map_info)[which(Score_human<Score_mouse | (is.na(Score_mouse)==TRUE & is.na(Score_human)==FALSE))]
-			HumanSet<-c(ToHumanOnly, BetterToHuman)
+						# Determine where reads fit better
+						# Score human lower than mouse or no score for mouse at all (score==NA)
+						BetterToHuman <- row.names(Map_info)[which(Score_human<Score_mouse | (is.na(Score_mouse)==TRUE & is.na(Score_human)==FALSE))]
+						HumanSet <- c(ToHumanOnly, BetterToHuman)
 			
-			# Statistics on read number assigned to either mouse or human
-			total.reads <- length(unique(Human[[1]]$qname))
-			mouse.reads <- total.reads - length(unique(HumanSet))
+						# Statistics on read number assigned to either mouse or human
+						total.reads <- length(unique(Human[[1]]$qname))
+						mouse.reads <- total.reads - length(unique(HumanSet))
 			
-			## Provide output to log
-			output<-paste(basename(sample.paths.graft[i]) ," - Filtered", mouse.reads,
-				"reads out of", total.reads," - ", round((mouse.reads/total.reads)*100,2), "Percent")
-			flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
-			flog.info(print(output))
-		}
+						## Provide output to log
+						output <- paste(basename(sample.paths.graft[i]) ," - Filtered", mouse.reads,
+							"reads out of", total.reads," - ", round((mouse.reads/total.reads)*100,2), "Percent")
+						flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
+						flog.info(print(output))
+				}
 
-		#######################
-		## The actual filter ##
-		#######################
+				#######################
+				## The actual filter ##
+				#######################
 
-		filt <- list(setStart=function(x) x$qname %in% HumanSet)
+				filt <- list(setStart=function(x) x$qname %in% HumanSet)
 		
-		if (length(output.names)==0){
-			filterBam(paste(sample.paths.graft[i]), paste0(destination.folder,"/",
-				gsub(".bam","_Filtered.bam",sample.files.graft[i])), filter=FilterRules(filt))
-		}
-		if (length(output.names)!=0){
-			filterBam(paste(sample.paths.graft[i]), paste0(destination.folder,"/",
-				gsub(".bam", "_Filtered.bam",output.names[i])), filter=FilterRules(filt))
-		}
+				if (length(output.names)==0){
+						filterBam(paste(sample.paths.graft[i]), file.path(destination.folder,
+							gsub(".bam","_Filtered.bam",sample.files.graft[i])), filter=FilterRules(filt))
+				}
+				if (length(output.names)!=0){
+						filterBam(paste(sample.paths.graft[i]), file.path(destination.folder,
+							gsub(".bam", "_Filtered.bam",output.names[i])), filter=FilterRules(filt))
+				}
 
-	}
+    }
    
-   	#############
-	## Wrap-up ##
-	#############
-	
+     #############
+     ## Wrap-up ##
+     #############
+  
     to.log <- bplapply(i, ActualFilter, destination.folder, sample.list, BPPARAM = bp.param, 
-    	is.paired.end, sample.paths.graft, sample.paths.host)
-  	flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
+                       is.paired.end, sample.paths.graft, sample.paths.host)
+    flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
     #lapply(to.log, flog.info)
 
-	## Report calculation time to log file
- 	flog.info(paste("Total calculation time of XenofilteR was",
+    ## Report calculation time to log file
+   flog.info(paste("Total calculation time of XenofilteR was",
                     round(difftime(Sys.time(), start.time, units = "hours"), 2),
                     "hours"))
     cat("Total calculation time of XenofilteR was: ",
