@@ -1,5 +1,6 @@
 exportPattern("^[[:alpha:]]+")
 
+import(Rsamtools)
 import(GenomicAlignments)
 import(GenomicRanges)
 import(futile.logger)

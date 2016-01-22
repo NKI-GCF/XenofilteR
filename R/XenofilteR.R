@@ -218,7 +218,7 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
 				if (is.paired.end[i]==TRUE){
 		
 						uni.name <- unique(Human_qname_set)
-						Map_info <- matrix(data=0, ncol=8, nrow=length(uni.name))
+						Map_info <- matrix(data=0, ncol=4, nrow=length(uni.name))
 						row.names(Map_info) <- uni.name
 						colnames(Map_info) <- c("MM_mouse_F","MM_mouse_R","MM_human_F","MM_human_R")
 
