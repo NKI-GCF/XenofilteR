@@ -172,7 +172,7 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
                              sample.paths.graft, sample.paths.host, bp.param){
 
 				## Settings for scanBam
-				p4 <- ScanBamParam(tag=c("NM"), what=c("qname", "mapq", "flag", "cigar"), 
+				p4 <- ScanBamParam(tag=c("NM"), what=c("qname", "flag", "cigar"), 
 				flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
 
 				## Read human data (mapped and primary alignment only)
@@ -220,8 +220,7 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
 						uni.name <- unique(Human_qname_set)
 						Map_info <- matrix(data=0, ncol=8, nrow=length(uni.name))
 						row.names(Map_info) <- uni.name
-						colnames(Map_info) <- c("MM_mouse_F","MM_mouse_R","MM_human_F","MM_human_R", 
-																		"Mq_mouse_F", "Mq_mouse_R", "Mq_human_F", "Mq_human_R")
+						colnames(Map_info) <- c("MM_mouse_F","MM_mouse_R","MM_human_F","MM_human_R")
 
 						#############
 						## Section for reads mapped to mouse reference genome
@@ -234,9 +233,6 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
 						Map_info[,"MM_mouse_F"] <- MM_I_mouse[FR_mouse][match(uni.name, Mouse[[1]]$qname[FR_mouse])]
 						Map_info[,"MM_mouse_R"] <- MM_I_mouse[RR_mouse][match(uni.name, Mouse[[1]]$qname[RR_mouse])]
 
-						Map_info[,"Mq_mouse_F"] <- Mouse[[1]]$mapq[FR_mouse][match(uni.name, Mouse[[1]]$qname[FR_mouse])]+1
-						Map_info[,"Mq_mouse_R"] <- Mouse[[1]]$mapq[RR_mouse][match(uni.name, Mouse[[1]]$qname[RR_mouse])]+1
-
 						#############
 						## Section for reads mapped to human reference genome
 			
@@ -248,17 +244,11 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
 						Map_info[,"MM_human_F"] <- MM_I_human_set[FR_human][match(uni.name, Human_qname_set[FR_human])]
 						Map_info[,"MM_human_R"] <- MM_I_human_set[RR_human][match(uni.name, Human_qname_set[RR_human])]
 
-						Map_info[,"Mq_human_F"] <- Human_mapq_set[FR_human][match(uni.name, Human_qname_set[FR_human])]+1
-						Map_info[,"Mq_human_R"] <- Human_mapq_set[RR_human][match(uni.name, Human_qname_set[RR_human])]+1
-
-			
 						#############
 						## Calculate 'Score' for each read to mouse and human reference
 				
-						Score_mouse <- rowMeans(cbind(Map_info[,"MM_mouse_F"]/Map_info[,"Mq_mouse_F"],
-																					Map_info[,"MM_mouse_R"]/Map_info[,"Mq_mouse_R"]), na.rm=T)
-						Score_human <- rowMeans(cbind(Map_info[,"MM_human_F"]/Map_info[,"Mq_human_F"], 
-																					Map_info[,"MM_human_R"]/Map_info[,"Mq_human_R"]), na.rm=T)
+						Score_mouse <- rowMeans(cbind(Map_info[,"MM_mouse_F"], Map_info[,"MM_mouse_R"]), na.rm=T)
+						Score_human <- rowMeans(cbind(Map_info[,"MM_human_F"], Map_info[,"MM_human_R"]), na.rm=T)
 	
 						# Determine where reads fit better (read is asigned to mapping with lowest score)
 						BetterToHuman <- row.names(Map_info)[which(Score_human<Score_mouse | (is.na(Score_mouse)==TRUE & is.na(Score_human)==FALSE))]
@@ -278,18 +268,10 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
 				} else if(is.paired.end[i]==FALSE){
 
 						uni.name <- unique(Human_qname_set)
-						Map_info <- matrix(data=0, ncol=4, nrow=length(uni.name))
-						row.names(Map_info) <- uni.name
-						colnames(Map_info) <- c("MM_mouse", "Mq_mouse", "MM_human", "Mq_human")
 	
-						Map_info[,"MM_mouse"] <- MM_I_mouse[match(uni.name, Mouse[[1]]$qname)]
-						Map_info[,"Mq_mouse"] <- Mouse[[1]]$mapq[match(uni.name, Mouse[[1]]$qname)]+1
-						Map_info[,"MM_human"] <- MM_I_human_set[match(uni.name, Human_qname_set)]
-						Map_info[,"Mq_human"] <- Human_mapq_set[match(uni.name, Human_qname_set)]+1
+						Score_mouse <- MM_I_mouse[match(uni.name, Mouse[[1]]$qname)]
+						Score_human <- MM_I_human_set[match(uni.name, Human_qname_set)]
 
-						Score_mouse <- Map_info[,"MM_mouse"]/Map_info[,"Mq_mouse"]
-						Score_human <- Map_info[,"MM_human"]/Map_info[,"Mq_human"]
-			
 						# Determine where reads fit better
 						# Score human lower than mouse or no score for mouse at all (score==NA)
 						BetterToHuman <- row.names(Map_info)[which(Score_human<Score_mouse | (is.na(Score_mouse)==TRUE & is.na(Score_human)==FALSE))]
