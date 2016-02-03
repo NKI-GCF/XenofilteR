@@ -274,7 +274,7 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
 
 						# Determine where reads fit better
 						# Score human lower than mouse or no score for mouse at all (score==NA)
-						BetterToHuman <- row.names(Map_info)[which(Score_human<Score_mouse | (is.na(Score_mouse)==TRUE & is.na(Score_human)==FALSE))]
+						BetterToHuman <- uni.name[which(Score_human<Score_mouse | (is.na(Score_mouse)==TRUE & is.na(Score_human)==FALSE))]
 						HumanSet <- c(ToHumanOnly, BetterToHuman)
 			
 						# Statistics on read number assigned to either mouse or human
@@ -320,6 +320,8 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
                     "hours"))
     cat("Total calculation time of XenofilteR was: ",
         round(difftime(Sys.time(), start.time, units = "hours"), 2), "\n\n")
+        
+    flog.info(paste(sessionInfo()))
 
 }
 
