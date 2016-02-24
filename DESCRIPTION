@@ -1,8 +1,8 @@
 Package: XenofilteR
 Type: Package
-Title: Excluding host reads from xenograft sequencing data
-Version: 0.99.0
-Date: 2016-01-19
+Title: Excluding host reads from xenograft sequencing data - Strict filtering version for manuscript
+Version: 99.0
+Date: 2016-02-24
 Author: Oscar Krijgsman
 Maintainer: Oscar Krijgsman <o.krijgsman@nki.nl>
 Imports: BiocParallel, Rsamtools, GenomicAlignments, GenomicRanges, futile.logger, IRanges
@@ -13,4 +13,3 @@ Description: This tool allows to exclude sequence reads mapping to the host from
 License: GPL-2
 biocViews: TargetedResequencing, ExomeSeq, Preprocessing, PDX
 NeedsCompilation: no
-Packaged: 2015-12-15 20:01:28 UTC; o.krijgsman

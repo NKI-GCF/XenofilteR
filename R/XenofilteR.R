@@ -194,99 +194,8 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
 		
 
 				## Get read names mapped to human reference only
-				ToHumanOnly <- unique(Human[[1]]$qname[set==FALSE])
-
-				## Get the Clips + inserts + MisMatches (Mouse)
-				Cigar.matrix <- cigarOpTable(Mouse[[1]]$cigar)
-				Inserts <- Cigar.matrix[,colnames(Cigar.matrix)=="I"]
-				Clips <- Cigar.matrix[,colnames(Cigar.matrix)=="S"]
-				MM_I_mouse <- Clips+Inserts+Mouse[[1]]$tag$NM
-
-				## Get the Clips + inserts + MisMatches (Human)
-				Cigar.matrix <- cigarOpTable(Human[[1]]$cigar)
-				Inserts <- Cigar.matrix[,colnames(Cigar.matrix)=="I"]
-				Clips <- Cigar.matrix[,colnames(Cigar.matrix)=="S"]
-				MM_I_human <- Clips+Inserts+Human[[1]]$tag$NM
-
-				## Filter for human reads that also map to mouse
-				Human_qname_set <- Human[[1]]$qname[set==TRUE]
-				Human_mapq_set <- Human[[1]]$mapq[set==TRUE]
-				MM_I_human_set <- MM_I_human[set==TRUE]
-
-
-				## For paired end data ##
-				if (is.paired.end[i]==TRUE){
-		
-						uni.name <- unique(Human_qname_set)
-						Map_info <- matrix(data=0, ncol=4, nrow=length(uni.name))
-						row.names(Map_info) <- uni.name
-						colnames(Map_info) <- c("MM_mouse_F","MM_mouse_R","MM_human_F","MM_human_R")
-
-						#############
-						## Section for reads mapped to mouse reference genome
+				HumanSet <- unique(Human[[1]]$qname[set==FALSE])
 				
-						## Match for forward and reverse reads and get MM+I (mouse)
-						FR_mouse <- unlist(lapply(Mouse[[1]]$flag, .FirstInPair))
-						RR_mouse <- unlist(lapply(Mouse[[1]]$flag, .SecondInPair))
-
-						## Fill dataframe with mismatches and mapping quality for mouse
-						Map_info[,"MM_mouse_F"] <- MM_I_mouse[FR_mouse][match(uni.name, Mouse[[1]]$qname[FR_mouse])]
-						Map_info[,"MM_mouse_R"] <- MM_I_mouse[RR_mouse][match(uni.name, Mouse[[1]]$qname[RR_mouse])]
-
-						#############
-						## Section for reads mapped to human reference genome
-			
-						## Match for forward and reverse reads and get MM+I (human)
-						FR_human <- unlist(lapply(Human[[1]]$flag[set==TRUE], .FirstInPair))
-						RR_human <- unlist(lapply(Human[[1]]$flag[set==TRUE], .SecondInPair))
-	
-						## Fill dataframe with mismatches and mapping quality for human
-						Map_info[,"MM_human_F"] <- MM_I_human_set[FR_human][match(uni.name, Human_qname_set[FR_human])]
-						Map_info[,"MM_human_R"] <- MM_I_human_set[RR_human][match(uni.name, Human_qname_set[RR_human])]
-
-						#############
-						## Calculate 'Score' for each read to mouse and human reference
-				
-						Score_mouse <- rowMeans(cbind(Map_info[,"MM_mouse_F"], Map_info[,"MM_mouse_R"]), na.rm=T)
-						Score_human <- rowMeans(cbind(Map_info[,"MM_human_F"], Map_info[,"MM_human_R"]), na.rm=T)
-	
-						# Determine where reads fit better (read is asigned to mapping with lowest score)
-						BetterToHuman <- row.names(Map_info)[which(Score_human<Score_mouse | (is.na(Score_mouse)==TRUE & is.na(Score_human)==FALSE))]
-						HumanSet <- c(ToHumanOnly, BetterToHuman)
-			
-						# Statistics on read number assigned to either mouse or human
-						total.reads <- length(unique(Human[[1]]$qname))
-						mouse.reads <- total.reads - length(unique(HumanSet))
-			
-						## Provide output to log
-						output <- paste(basename(sample.paths.graft[i]) ," - Filtered", mouse.reads,
-						"read pairs out of", total.reads," - ", round((mouse.reads/total.reads)*100,2), "Percent")
-						flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
-						flog.info(print(output))
-
-				## For single end data ##
-				} else if(is.paired.end[i]==FALSE){
-
-						uni.name <- unique(Human_qname_set)
-	
-						Score_mouse <- MM_I_mouse[match(uni.name, Mouse[[1]]$qname)]
-						Score_human <- MM_I_human_set[match(uni.name, Human_qname_set)]
-
-						# Determine where reads fit better
-						# Score human lower than mouse or no score for mouse at all (score==NA)
-						BetterToHuman <- uni.name[which(Score_human<Score_mouse | (is.na(Score_mouse)==TRUE & is.na(Score_human)==FALSE))]
-						HumanSet <- c(ToHumanOnly, BetterToHuman)
-			
-						# Statistics on read number assigned to either mouse or human
-						total.reads <- length(unique(Human[[1]]$qname))
-						mouse.reads <- total.reads - length(unique(HumanSet))
-			
-						## Provide output to log
-						output <- paste(basename(sample.paths.graft[i]) ," - Filtered", mouse.reads,
-							"reads out of", total.reads," - ", round((mouse.reads/total.reads)*100,2), "Percent")
-						flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
-						flog.info(print(output))
-				}
 
 				#######################
 				## The actual filter ##
@@ -296,11 +205,11 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
 		
 				if (length(output.names)==0){
 						filterBam(paste(sample.paths.graft[i]), file.path(destination.folder,
-							gsub(".bam","_Filtered.bam",sample.files.graft[i])), filter=FilterRules(filt))
+							gsub(".bam","_Strict_Filtered.bam",sample.files.graft[i])), filter=FilterRules(filt))
 				}
 				if (length(output.names)!=0){
 						filterBam(paste(sample.paths.graft[i]), file.path(destination.folder,
-							gsub(".bam", "_Filtered.bam",output.names[i])), filter=FilterRules(filt))
+							gsub(".bam", "_Strict_Filtered.bam",output.names[i])), filter=FilterRules(filt))
 				}
 
     }
