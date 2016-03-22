@@ -1,21 +1,14 @@
 # XenofilteR
 Filtering of PDX samples for mouse derived reads
 
-Human tumor samples, or cell lines, grown in immuno-deficient mice,
-named xenografts, are a common model used in cancer research. Despite
-its common use, genomic analysis of tumor material derived from
-xenografts is challenging. The sequenced sample not only contains reads
-that originate from the graft (human tumor or cell line) but also read
-derived from host (mouse) stroma. Here we show the large effects the
-host-derived sequence reads can have on downstream analysis of sequence
-data from xenografts and developed a method to overcome these
-challenges. Our tool, XenofilteR, assesses for each sequence read
-whether it matches the graft or the host reference genome better, based
-on mapping quality together with multiple values that indicate the edit
-distance to the reference. XenofilteR output is a bam file with the
-reads that map to mouse removed. We validated XenofilteR on in-silico
-data and large sets of PDX samples, both DNA and RNA sequencing and show
-our method outperforms existing methods.
+Human tumour samples or cancer cell lines, transplanted into mice are widely used as a 
+model to study cancer. However, genomic analysis of tumour material derived from these 
+xenografts is challenging. The sequence data not only contains reads that originate from 
+the graft (human tumour or cell line) but also reads from host (mouse). We developed 
+XenofilteR, an R-package for filtering host from graft reads in next generation sequence 
+data. XenofilteR is a novel method that utilizes the edit distance of each read for 
+classification. XenofilteR outperforms existing methods as validated on artificially 
+mixed mouse/human samples and sets of patient derived xenograft samples. 
 
 ## Bioconductor
 
