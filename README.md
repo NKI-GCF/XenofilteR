@@ -1,5 +1,5 @@
 # XenofilteR
-Filtering of PDX samples for mouse derived reads
+XenofilteR: separate graft from host reads in xenograft sequencing
 
 Human tumour samples or cancer cell lines, transplanted into mice are widely used as a 
 model to study cancer. However, genomic analysis of tumour material derived from these 
