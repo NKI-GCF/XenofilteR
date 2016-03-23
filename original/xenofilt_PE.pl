@@ -70,18 +70,18 @@ HOSTLINE: while (<HOST>) {
 	$e[0] =~ s/^HWI-[^:]++:[0-9]++:[^:]++://;
 	my $rd = $e[1] & 128 ? 1 : 0;
 
-	# sum mismatches (NM plus clips) and divide by quality
-	if (($e[4] == 0) || ($e[5] eq '*')) { # entire fail is 1000 * readlength
-		$h{$e[0]}->[$rd] = length($e[9]) * 1000;
+	# sum mismatches (NM plus clips plus inserts)
+	if (($e[4] == 0) || ($e[5] eq '*')) { # entire fail is readlength
+		$h{$e[0]}->[$rd] = length($e[9]);
 	} else {
 		my $i = $#e;
 		$i-- while (($i > 10) && ($e[$i] !~ /^NM:i:([0-9]+)$/));
 		if ($i != 10) {
 			$i = $1;
-			while ($e[5] =~ s/([0-9]++)S//o) { $i += $1; }
-			$h{$e[0]}->[$rd] = $i * 1000 / $e[4]; # matches * 1000 / read_quality
+			while ($e[5] =~ s/([0-9]++)[SI]//o) { $i += $1; }
+			$h{$e[0]}->[$rd] = $i; # matches
 		} else { # entire fail
-			$h{$e[0]}->[$rd] = length($e[9]) * 1000;
+			$h{$e[0]}->[$rd] = length($e[9]);
 		}
 	}
 }
@@ -99,7 +99,7 @@ while ($L) {
 	die unless $e->[0] =~ m/^HWI-[^:]++:[0-9]++:[^:]++:(.*)/;
 	if (exists $h{$1}) {
 		my ($id, $rd) = ($1, $e->[1] & 128 ? 1 : 0);
-		if ($e->[1] & 256) { # non primary, unused but printed along if others evaluated matchin xeno
+		if ($e->[1] & 256) { # non primary, unused but printed along if others evaluated matchin graft
 			if ((not exists $pair{$id}) || (ref($pair{$id}) eq 'ARRAY')) {
 				push @{$alt{$id}}, $e;
 			} elsif ($pair{$id} == 1) {
@@ -108,37 +108,37 @@ while ($L) {
 			next;
 		}
 
-		# subtract HG19 mismatches (NM plus clips) divided by quality
+		# subtract HG19 mismatches (NM plus clips plus inserts)
 		if (($e->[4] == 0) || ($e->[5] eq '*')) {
-			$h{$id}->[$rd] -= length($e->[9]) * 1000;
+			$h{$id}->[$rd] -= length($e->[9]);
 		} else {
 			my $i = $#$e;
 			$i-- while (($i > 10) && ($e->[$i] !~ /^NM:i:([0-9]+)$/));
 			if ($i != 10) {
 				$i = $1;
 				my $cig = $e->[5];
-				while ($cig =~ s/([0-9]++)S//o) { $i += $1; }
-				$h{$id}->[$rd] -= $i * 1000 / $e->[4];
+				while ($cig =~ s/([0-9]++)[SI]//o) { $i += $1; }
+				$h{$id}->[$rd] -= $i;
 			} else {
-				$h{$id}->[$rd] -= length($e->[9]) * 1000;
+				$h{$id}->[$rd] -= length($e->[9]);
 			}
 		}
 		if (exists $pair{$id}) {
 			if (ref($pair{$id}) eq 'ARRAY') {
 				my $balance = $h{$id};
 				if (($balance->[0] > 0) && ($balance->[1] > 0)) { # both say it's more likely human
-					$stats{matches_xeno_better}++;
+					$stats{matches_graft_better}++;
 					if (exists $alt{$id}) {
 						print join("\t", @{$_})."\n" foreach @{$alt{$id}};
 						delete $alt{$id};
 					}
 					print join("\t", @{$pair{$id}})."\n$L\n";
 					$pair{$id} = 1;
-				} elsif ($balance->[0] < 0 and $balance->[1] < 0) {
+				} elsif (($balance->[0] < 0) && ($balance->[1] < 0) {
 					$stats{matches_host_better}++;
 					$pair{$id} = 0;
 				} elsif ($balance->[0] + $balance->[1] > 0) {
-					$stats{read_comb_matches_xeno_better}++;
+					$stats{read_comb_matches_graft_better}++;
 					if (exists $alt{$id}) {
 						print join("\t", @{$_})."\n" foreach @{$alt{$id}};
 						delete $alt{$id};
@@ -160,7 +160,7 @@ while ($L) {
 		}
 	} else { # not mapped on host
 		print "$L\n";
-		$stats{xeno_mapct}++;
+		$stats{graft_mapct}++;
 	}
 } continue {
 	$L = <SAMP>;
