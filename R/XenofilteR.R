@@ -321,7 +321,7 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
     cat("Total calculation time of XenofilteR was: ",
         round(difftime(Sys.time(), start.time, units = "hours"), 2), "\n\n")
         
-    flog.info(paste(sessionInfo()))
+    #flog.info(paste(sessionInfo()))
 
 }
 

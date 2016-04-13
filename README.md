@@ -70,8 +70,8 @@ want to report any bugs, please do not hesitate and contact:
 - [Oscar Krijgsman](mailto:o.krijgsman@nki.nl) 
 - [Roel Kluin](mailto:r.kluin@nki.nl)
 
-Oscar and Roel both work at the NKI, Oscar in the lab of Prof. Daniel
-Peeper, Roel in the Genome Core Facility.
+Oscar and Roel both work at the NKI, Oscar as a postdoc in the lab of Prof. Daniel
+Peeper, Roel as bioinformatician in the Genome Core Facility.
 
 
 ## Changes and additions we are currently working on
