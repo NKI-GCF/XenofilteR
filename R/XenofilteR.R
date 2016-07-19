@@ -1,4 +1,4 @@
-XenofilteR <- function(sample.list, destination.folder, bp.param, output.names = NULL) {
+XenofilteR <- function(sample.list, destination.folder, bp.param, output.names = NULL, MM_threshold = 5, Unmapped_penalty = 4) {
 
     ##########################
     ## Check and initialise ##
@@ -90,6 +90,8 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
                      "\", BPPARAM = bp.param", ")"))
     flog.info("The value of bp.param was:", getClass(bp.param), capture = TRUE)
     flog.info(paste("This analysis will be run on", ncpu, "cpus"))
+    flog.info(paste("The value for MM_threshold was:", MM_threshold))
+    flog.info(paste("The value for Unmapped_penalty was:", Unmapped_penalty))
     flog.info("The value of sample.list was:", sample.list, capture = TRUE)
     if (length(output.names)!=0){
 				for (i in seq_along(output.names)) {
@@ -162,14 +164,13 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
                          ": ", is.paired.end[i]))
     }
 
-
     ##############################################
     ## Assigning reads to either mouse or human ##
     ##############################################
 
     i <- c(seq_along(sample.paths.graft))
     ActualFilter <- function(i, destination.folder, sample.list, is.paired.end, 
-                             sample.paths.graft, sample.paths.host, bp.param){
+                             sample.paths.graft, sample.paths.host, Unmapped_penalty, MM_threshold, bp.param){
 
 				## Settings for scanBam
 				p4 <- ScanBamParam(tag=c("NM"), what=c("qname", "flag", "cigar"), 
@@ -193,9 +194,6 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
 				}
 		
 
-				## Get read names mapped to human reference only
-				ToHumanOnly <- unique(Human[[1]]$qname[set==FALSE])
-
 				## Get the Clips + inserts + MisMatches (Mouse)
 				Cigar.matrix <- cigarOpTable(Mouse[[1]]$cigar)
 				Inserts <- Cigar.matrix[,colnames(Cigar.matrix)=="I"]
@@ -212,6 +210,11 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
 				Human_qname_set <- Human[[1]]$qname[set==TRUE]
 				Human_mapq_set <- Human[[1]]$mapq[set==TRUE]
 				MM_I_human_set <- MM_I_human[set==TRUE]
+
+
+				## Get read names mapped to human reference only with a MM_score
+				## below set threshold. Default = 5
+				ToHumanOnly <- unique(Human[[1]]$qname[set==FALSE & MM_I_human<MM_threshold])
 
 
 				## For paired end data ##
@@ -244,14 +247,22 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
 						Map_info[,"MM_human_F"] <- MM_I_human_set[FR_human][match(uni.name, Human_qname_set[FR_human])]
 						Map_info[,"MM_human_R"] <- MM_I_human_set[RR_human][match(uni.name, Human_qname_set[RR_human])]
 
+						## Reads that are not mapped get a score set by the Unmapped_penalty
+						## Default == 7
+						Map_info[which(is.na(Map_info)==TRUE)]<-Unmapped_penalty
+
 						#############
 						## Calculate 'Score' for each read to mouse and human reference
 				
 						Score_mouse <- rowMeans(cbind(Map_info[,"MM_mouse_F"], Map_info[,"MM_mouse_R"]), na.rm=T)
 						Score_human <- rowMeans(cbind(Map_info[,"MM_human_F"], Map_info[,"MM_human_R"]), na.rm=T)
 	
-						# Determine where reads fit better (read is asigned to mapping with lowest score)
-						BetterToHuman <- row.names(Map_info)[which(Score_human<Score_mouse | (is.na(Score_mouse)==TRUE & is.na(Score_human)==FALSE))]
+	
+						## Determine where reads fit better (read is asigned to mapping with lowest score)
+						## Reads have to have a score lower than the MM_threshold
+						Above_Threshold<-(Map_info[,"MM_human_F"]<MM_threshold & Map_info[,"MM_human_R"]<MM_threshold)
+						BetterToHuman <- row.names(Map_info)[(which(Score_human<Score_mouse & Above_Threshold==TRUE))]
+			
 						HumanSet <- c(ToHumanOnly, BetterToHuman)
 			
 						# Statistics on read number assigned to either mouse or human
@@ -274,7 +285,8 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
 
 						# Determine where reads fit better
 						# Score human lower than mouse or no score for mouse at all (score==NA)
-						BetterToHuman <- uni.name[which(Score_human<Score_mouse | (is.na(Score_mouse)==TRUE & is.na(Score_human)==FALSE))]
+
+						BetterToHuman <- uni.name[(which(Score_human<Score_mouse & Score_human<MM_threshold)	]
 						HumanSet <- c(ToHumanOnly, BetterToHuman)
 			
 						# Statistics on read number assigned to either mouse or human
@@ -308,20 +320,21 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
      #############
      ## Wrap-up ##
      #############
-  
-    to.log <- bplapply(i, ActualFilter, destination.folder, sample.list, BPPARAM = bp.param, 
-                       is.paired.end, sample.paths.graft, sample.paths.host)
+
+    to.log <- bplapply(i, ActualFilter, destination.folder, sample.list, is.paired.end, 
+    sample.paths.graft, sample.paths.host, Unmapped_penalty, MM_threshold, BPPARAM = bp.param)
+
     flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
     #lapply(to.log, flog.info)
 
     ## Report calculation time to log file
-   flog.info(paste("Total calculation time of XenofilteR was",
+    flog.info(paste("Total calculation time of XenofilteR was",
                     round(difftime(Sys.time(), start.time, units = "hours"), 2),
                     "hours"))
     cat("Total calculation time of XenofilteR was: ",
         round(difftime(Sys.time(), start.time, units = "hours"), 2), "\n\n")
         
-    #flog.info(paste(sessionInfo()))
+    flog.info(paste(sessionInfo()))
 
 }
 

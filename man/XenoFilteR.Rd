@@ -9,7 +9,7 @@ Excludes DNA or RNA sequence reads that originate from contaminating species
 (like the host in xenograft experiments. 
 }
 \usage{
-XenofilteR(sample.list, destination.folder, bp.param)
+XenofilteR(sample.list, destination.folder, bp.param, output.names, MM_threshold)
 }
 \arguments{
 \item{sample.list}{
@@ -32,10 +32,18 @@ file. This might become useful when analysing RNAseq data. Bam files are often
 name identical and sample names are defined in the folder name, not in he bam
 file.
 }
+\item{MM_threshold}{
+The edit distance of reads that map to the human reference only should be below 
+this threshold. Default = 5.
+}
+\item{Unmapped_penalty}{
+Only applicable for paired-end sequence data. If one of the reads of a pair is
+not mapped the edit distance for that read is set to this value.  Default = 4.
+}
 }
 \details{
-XenofilteR reads five parameters from the human and mouse bam file: 1) read
-name, 2) mapping quality, 3) flag, 4) CIGAR, and 5) mismatches (NM tag). Based
+XenofilteR reads four parameters from the human and mouse bam file: 1) read
+name, 2) mapping quality, 3) CIGAR, and 4) mismatches (NM tag). Based
 on these parameters XenofilteR calculates two edit distances for each read, one
 for the mapping to the human (graft) reference and a second for the mapping to
 the mouse (host) reference. The read or read-pair is assigned to the host or
@@ -70,6 +78,6 @@ sample.list <- data.frame(samples[1], samples[2])
 bp.param <- SnowParam(workers = 1, type = "SOCK")
 
 XenofilteR(sample.list = sample.list, destination.folder =
-        "/PATH/TO/DESTINATIONFOLDER/", bp.param = bp.param, output.names = NULL)
+        "/PATH/TO/DESTINATIONFOLDER/", bp.param = bp.param, output.names = NULL, MM_threshold=5)
 }
 }

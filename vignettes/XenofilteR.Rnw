@@ -111,6 +111,12 @@ For using other instances of the \Rcode{BiocParallelParam} parameter, please
 refer to the \Biocpkg{BiocParallel} package vignette. The bp.param parameter can
 now be passed on to \Rcode{XenofilteR()} to allow parallel computation.
 
+
+As great differences between mouse reference genomes and inbred strains exist 
+an additional filter can be applied. This threshold is set on reads that only map 
+to the human reference genome and not to the mouse reference genome. Only reads with 
+an edit distance below this threshold will be classified as human reads. 
+
 \subsection{\Rcode{XenofilteR()}}
 The full analysis of xenograft data with XenofilteR includes a single step,
 \Rcode{Xenofilter()}. 
