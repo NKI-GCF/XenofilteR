@@ -9,7 +9,7 @@ Excludes DNA or RNA sequence reads that originate from contaminating species
 (like the host in xenograft experiments. 
 }
 \usage{
-XenofilteR(sample.list, destination.folder, bp.param, output.names, MM_threshold)
+XenofilteR(sample.list, destination.folder, bp.param, output.names, MM_threshold, Unmapped_penalty)
 }
 \arguments{
 \item{sample.list}{
@@ -34,11 +34,11 @@ file.
 }
 \item{MM_threshold}{
 The edit distance of reads that map to the human reference only should be below 
-this threshold. Default = 5.
+this threshold. Default = 4.
 }
 \item{Unmapped_penalty}{
 Only applicable for paired-end sequence data. If one of the reads of a pair is
-not mapped the edit distance for that read is set to this value.  Default = 4.
+not mapped the edit distance for that read is set to this value.  Default = 8.
 }
 }
 \details{
@@ -78,6 +78,6 @@ sample.list <- data.frame(samples[1], samples[2])
 bp.param <- SnowParam(workers = 1, type = "SOCK")
 
 XenofilteR(sample.list = sample.list, destination.folder =
-        "/PATH/TO/DESTINATIONFOLDER/", bp.param = bp.param, output.names = NULL, MM_threshold=5)
+        "/PATH/TO/DESTINATIONFOLDER/", bp.param = bp.param, output.names = NULL, MM_threshold=4, Unmapped_penalty = 8))
 }
 }

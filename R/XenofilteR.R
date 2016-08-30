@@ -1,4 +1,4 @@
-XenofilteR <- function(sample.list, destination.folder, bp.param, output.names = NULL, MM_threshold = 5, Unmapped_penalty = 4) {
+XenofilteR <- function(sample.list, destination.folder, bp.param, output.names = NULL, MM_threshold = 4, Unmapped_penalty = 8) {
 
     ##########################
     ## Check and initialise ##
@@ -286,7 +286,7 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
 						# Determine where reads fit better
 						# Score human lower than mouse or no score for mouse at all (score==NA)
 
-						BetterToHuman <- uni.name[(which(Score_human<Score_mouse & Score_human<MM_threshold)	]
+						BetterToHuman <- uni.name[(which(Score_human<Score_mouse & Score_human<MM_threshold))]
 						HumanSet <- c(ToHumanOnly, BetterToHuman)
 			
 						# Statistics on read number assigned to either mouse or human

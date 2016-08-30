@@ -67,7 +67,7 @@ the following steps are performed:
     \item Calculates the number of mismatches and adds these to the clips and inserts (from cigar)
     \item Calculates the two MapScores for each reads (MapScore for mapping to human and mouse reference genome)
     \item Assigns each read (or read-pair in case of PE experiments) to either human or mouse
-    \item The bam file of the reads mapped to teh human references is filtered for mouse reads
+    \item The bam file of the reads mapped to the human references is filtered for mouse reads
 \end{itemize}
 
 \section{Analysis workflow}
