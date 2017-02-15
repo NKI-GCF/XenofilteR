@@ -31,6 +31,7 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
     if (length(output.names) != 0){
 
 				## All alternative output names should end with '.bam'
+				output.names <-  basename(output.names)
 				output.names <- gsub(".bam", "", output.names)
 				output.names <- paste0(output.names, ".bam")
 		
