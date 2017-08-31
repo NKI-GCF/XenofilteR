@@ -69,7 +69,9 @@ Please add the following to your STAR command when mapping to teh human as well 
 
 --outSAMattributes NM
 
-See also the [STAR manual] (https://github.com/alexdobin/STAR/blob/master/doc/STARmanual.pdf) (section 9.11)
+See also the 
+[STAR manual] (https://github.com/alexdobin/STAR/blob/master/doc/STARmanual.pdf)
+(section 9.11)
 
 
 ## Contact
