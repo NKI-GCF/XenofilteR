@@ -10,12 +10,8 @@ data. XenofilteR is a novel method that utilizes the edit distance of each read 
 classification. XenofilteR outperforms existing methods as validated on artificially 
 mixed mouse/human samples and sets of patient derived xenograft samples. 
 
-## Bioconductor
 
-XenofilteR will be submitted to Bioconductor.org. 
-
-
-## Installation (not via Bioconductor)
+## Installation
 
 Installation of XenofilteR should be performed as
 follows:
@@ -90,7 +86,7 @@ Peeper, Roel as bioinformatician in the Genome Core Facility.
 ## Changes and additions we are currently working on
 ## 
 - [ ] Catch STAR mapped samples missing the 'NM'-tag
-- [ ] Optionally output bam file with mouse reads
+- [ ] Optional output bam file with mouse reads
 - [ ] Improve the vignette	
 - [x] Add read-count statistics to the log file
 - [x] Change output name and structure for RNAseq data
