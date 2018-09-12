@@ -1,0 +1,12 @@
+[package]
+name = "xenofilter"
+version = "0.1.0"
+authors = ["Roel Kluin <r.kluin@nki.nl>"]
+
+[dependencies]
+clap = "~2.27.0"
+nom = "^4.0"
+
+[[bin]]
+build = "src/xenofilter.rs"
+name = "xenofilter"
