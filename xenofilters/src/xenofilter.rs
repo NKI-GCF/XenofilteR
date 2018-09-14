@@ -49,10 +49,10 @@ struct SamRec {
 }
 
 impl SamRec {
-    pub fn new(matches: &clap::ArgMatches, n: &str) -> Self {
+    pub fn new(n: &str) -> Self {
         SamRec {
             n: n.to_string(),
-            spec: BufReader::new(File::open(matches.value_of(n).expect(n)).expect(n)),
+            spec: BufReader::new(File::open(n).expect(n)),
             v: Vec::new(),
         }
     }
@@ -65,15 +65,19 @@ fn is_coord_sorted(v: &[String]) -> bool {
 fn main() -> io::Result<()> {
     let matches = App::new("xenofilters").version("0.01").author("Roel Kluin <r.kluin@nki.nl>")
         .about("Filter host reads from xenografts")
-        .arg(Arg::with_name("Graft")
-             .help("Graft alignments, reads must be in same order, and all accounted for in Host alignment, all identical readnames consecutive (e.g. name sorted).")
-             .required(true).index(1))
-        .arg(Arg::with_name("Host")
-             .help("Host alignments, reads must be present in same order as Graft alignment, all identical readnames consecutive (e.g. name sorted).")
-             .required(true).index(2))
+        .arg(
+                Arg::with_name("alignments")
+                    .help("Alignments, reads must be in same order, and all accounted for, all identical readnames consecutive (e.g. name sorted). Only the reads attributed to the last alignment are written to stdout.")
+                    .required(true)
+                    .multiple(true)
+                    .number_of_values(1),
+            )
         .get_matches();
 
-    let mut spec = [SamRec::new(&matches, "Host"), SamRec::new(&matches, "Graft")];
+    let mut spec: Vec<SamRec> = vec![];
+    for f in matches.values_of("alignments").unwrap().collect::<Vec<_>>() {
+        spec.push(SamRec::new(&f));
+    }
 
     let mm_threshold = 4; // applies to MM_I_human
     let unmapped_penalty = 8; // applies to paired-end unampped mate
@@ -94,7 +98,7 @@ fn main() -> io::Result<()> {
                     panic!("{}", e);
                 }
             }
-        } else if i == 0 {
+        } else if i != spec.len() - 1 {
             i += 1;
         } else {
             //println!("{}", line);
@@ -106,7 +110,7 @@ fn main() -> io::Result<()> {
     let mut graftlines: Vec<u8> = vec![];
     let mut last = false;
     while !last {
-        let is_host = i == 0;
+        let is_graft = i == spec.len() - 1;
         let flag = spec[i].v[1].to_string().parse::<u64>().unwrap();
         if (flag & 256) == 0 { //primary alignments only
             let mism = match cigar_sum(&spec[i].v[5]) {
@@ -121,7 +125,7 @@ fn main() -> io::Result<()> {
                     unmapped_penalty
                 }
             };
-            if is_host {
+            if !is_graft {
                 score += mism; // more mismatches in host is better.
             } else if mism <= mm_threshold {
                 score -= mism;
@@ -137,7 +141,7 @@ fn main() -> io::Result<()> {
         let same_readname = match spec[i].spec.read_line(&mut line) {
             Err(e) => panic!("{}", e),
             Ok(0) => {
-                if !is_host {
+                if is_graft {
                     last = true;
                 }
                 false
@@ -147,9 +151,9 @@ fn main() -> io::Result<()> {
                 spec[0].v[0] == spec[1].v[0]
             },
         };
-        if (is_host && !same_readname) || (same_readname && !is_host) {
-            i = if is_host {
-                1
+        if (!is_graft && !same_readname) || (same_readname && is_graft) {
+            i = if !is_graft {
+                i + 1
             } else {
                 if score > 0 {
                     if let Err(e) = io::stdout().write(&graftlines) {
