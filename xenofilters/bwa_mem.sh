@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-host="$1"; shift;
 graft="$1"; shift;
+host="$1"; shift;
 bam="$1"; shift;
 fq1="$1"; shift;
 
@@ -18,7 +18,7 @@ cat << EOF 1>&2
 
 bwa=/path/to/bwa \\
 samtools=/path/to/samtools \\
-$0 /path/to/host_reference.fa /path/to/graft_reference.fa \$bam \$fq1 [\$fq2] [bwa arguments.. (default $DEFAULT_BWA_ARGS)]
+$0 /path/to/graft_reference.fa /path/to/host_reference.fa \$bam \$fq1 [\$fq2] [bwa arguments.. (default $DEFAULT_BWA_ARGS)]
 
 Error: $1
 
@@ -29,11 +29,11 @@ EOF
 BWA_ARGS="$@"
 [ -z "$BWA_ARGS" ] && BWA_ARGS="$DEFAULT_BWA_ARGS"
 
-[ -e "$host" ] || die "'$host' (host reference):No such file"
-[ -e "${host}.pac" ] || die "$host (host reference):Not bwa indexed (hint: consider running 'bwa index $host' first)"
-
 [ -e "$graft" ] || die "'$graft' (graft reference):No such file"
 [ -e "${graft}.pac" ] || die "$graft (graft reference):Not bwa indexed (hint: consider running 'bwa index $graft' first)"
+
+[ -e "$host" ] || die "'$host' (host reference):No such file"
+[ -e "${host}.pac" ] || die "$host (host reference):Not bwa indexed (hint: consider running 'bwa index $host' first)"
 
 [ -n "$bam" ] || die "'$bam' (bam): requires filename"
 [ ! -e "$bam" ] || die "$bam (bam):Already exists"
@@ -50,8 +50,8 @@ BWA_ARGS="$@"
 BN="${bam%.bam}"
 
 rg="@RG\tID:$(mktemp -u | cut -d '.' -f 2)\tCN:$(whoami)\tPL:ILLUMINA\tSM:$BN\tLB:$BN"
-target/release/xenofilter <($bwa mem $BWA_ARGS $host $fq1 $fq2) \
-<($bwa mem $BWA_ARGS -R "$rg" $graft $fq1 $fq2) |
+target/release/xenofilter <($bwa mem $BWA_ARGS -R "$rg" $graft $fq1 $fq2) \
+<($bwa mem $BWA_ARGS $host $fq1 $fq2) |
 $samtools view -Sbu - | $samtools sort -m 1294967296 -@2 - -o $bam &&
 $samtools index $bam
 
