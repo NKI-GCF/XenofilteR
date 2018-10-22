@@ -1,5 +1,5 @@
 # XenofilteR
-XenofilteR: separate graft from host reads in xenograft sequencing
+XenofilteR: computational deconvolution of mouse and human reads in tumor xenograft sequence data
 
 Human tumour samples or cancer cell lines, transplanted into mice are widely used as a 
 model to study cancer. However, genomic analysis of tumour material derived from these 
@@ -9,6 +9,11 @@ XenofilteR, an R-package for filtering host from graft reads in next generation 
 data. XenofilteR is a novel method that utilizes the edit distance of each read for 
 classification. XenofilteR outperforms existing methods as validated on artificially 
 mixed mouse/human samples and sets of patient derived xenograft samples. 
+
+The paper that accompanies XenofilteR has been published in BMC Bioinformatics:
+[XenoFilteR paper] (https://bmcbioinformatics.biomedcentral.com/articles/10.1186/s12859-018-2353-5)
+
+Kluin, R. J. C. et al. XenofilteR: computational deconvolution of mouse and human reads in tumor xenograft sequence data. BMC Bioinformatics 19, 366 (2018).
 
 
 ## Installation
