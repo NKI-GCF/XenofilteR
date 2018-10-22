@@ -1,6 +1,6 @@
 %\VignetteIndexEntry{XenofilteR}
 %\VignetteDepends{XenofilteR}
-%\VignetteKeywords{Filtering of xenograft sequence data for reads that originate from the host.}
+%\VignetteKeywords{Computational deconvolution of mouse and human reads in PDX.}
 %\VignettePackage{XenofilteR}
 %\VignetteEngine{utils::Sweave}
 
@@ -14,7 +14,7 @@ BiocStyle::latex()
   \item \texttt{\textbackslash#1\{#2\}} #3 \csname#1\endcsname{#2}.%
 }
 
-\title{\bf XenofilteR: filter reads from xenograft sequencing.}
+\title{\bf XenofilteR: computational deconvolution of mouse and human reads in tumor xenograft sequence data.}
 \author{Oscar Krijgsman}
 
 \begin{document}
@@ -23,7 +23,7 @@ BiocStyle::latex()
 \maketitle
 
 \begin{center}
-  Department of Molecular Oncology \\*
+  Department of Molecular Oncology and Immunology \\*
   Netherlands Cancer Institute \\*
   The Netherlands \\*
 \end{center}
