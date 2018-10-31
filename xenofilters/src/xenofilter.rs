@@ -1,8 +1,11 @@
 #[macro_use]
 extern crate nom;
+#[macro_use]
+extern crate derive_new;
 extern crate clap;
+extern crate core;
 use clap::{Arg, App};
-use std::io::{self, BufReader, stderr};
+use std::io::{self, BufReader};
 use std::io::prelude::*;
 use std::fs::File;
 use nom::digit;
@@ -20,13 +23,15 @@ use std::collections::{HashMap,VecDeque};
 // cargo rustc -- -Z trace-macros
 // cargo +nightly clippy
 
-const PENDING: u32 = 0x4000_0000;
-const DO_WRITE: u32 = 0xc000_0000;
+const PENDING: u32 =    0x4000_0000;
+const DO_WRITE: u32 =   0xc000_0000;
 const SKIP_WRITE: u32 = 0x8000_0000;
 const SCORE_MASK: u32 = 0x3fff_ffff;
 
-const SAMFLAG_PAIRED: u64 = 0x1;
-const SAMFLAG_PRIMARY: u64 = 0x100;
+const SAMFLAG_PAIRED: u32 = 1;
+const SAMFLAG_UNMAPPED: u32 = 4;
+const SAMFLAG_MATE_UNMAPPED: u32 = 8;
+const SAMFLAG_NON_PRIMARY: u32 = 256;
 
 named!(uint32 <&str, u32>, map_res!(digit, FromStr::from_str));
 
@@ -61,11 +66,18 @@ struct SamRec {
     pub w: Option<std::io::Stdout>,
 }
 
+#[derive(new)]
+struct XFOpt {
+    mm_threshold: u32,
+    unmapped_penalty: u32,
+    graft_weight: u32,
+}
+
 impl SamRec {
     pub fn new(n: &str) -> Self {
         SamRec {
             n: n.to_string(),
-            s: BufReader::new(File::open(n).expect(n)),
+            s: BufReader::new(File::open(n).unwrap_or_else(|e| panic!(e))),
             v: Vec::new(),
             w: None,
         }
@@ -117,153 +129,176 @@ fn handle_headers(record: &mut Vec<SamRec>) -> bool {
     hashing_required
 }
 
-/// if read is mapped returns tuple: nr-mismatches, nr-clipped
-fn get_mismatches(v: &[String], unmapped_penalty: u32) -> (u32, u32) {
-    match cigar_sum(&v[5]) {
-        Ok((_, t)) => {
-            let nm = &v[v.iter().rposition(|ref x| x.starts_with("NM:i:")).unwrap()];
-            (u32::from_str(nm.get(5..).unwrap()).unwrap(), t)
-        },
-        Err(e) => {
-            if e != nom::Err::Error(nom::Context::Code("*", nom::ErrorKind::Many1)) {
-                panic!("{}, {}", e, v[5]);
-            }
-            (unmapped_penalty, 0)
-        }
-    }
-}
+fn progress_mark(r: &mut SamRec, xf_opt: &XFOpt, mark: u32) -> u32 {
 
-fn read_line(s: &mut BufReader<File>, line: &mut String) -> bool {
-    match s.read_line(line) {
-        Err(e) => panic!("{}", e),
-        Ok(i) => i > 0,
-    }
-}
-
-/// requires host and graft reads to be retrieved from alignments for all readnames in the same order.
-fn line_by_line_filter(record: &mut Vec<SamRec>, mm_threshold: u32, unmapped_penalty: u32) -> bool {
-    let graft = record.len() - 1;
-    let mut i = 0;
-    let mut score: u32 = 0;
-    let mut graft_lines: Vec<u8> = vec![];
-    let mut last = false;
-
-    while !last {
-        let flag = record[i].v[1].to_string().parse::<u64>().unwrap();
-
-        if (flag & SAMFLAG_PRIMARY) == 0 {
-            let mism = get_mismatches(&record[i].v, unmapped_penalty);
-            // one added to score, to ensure it cannot be 0, which means skip.
-            score = if i != graft {
-                score + mism.0 + mism.1 + 1 // mismatches in host, higher score, means more likely graft.
-            } else if mism.0 <= mm_threshold {
-                if score > mism.0 + mism.1 + 1 {
-                    graft_lines.extend_from_slice(&record[i].v.join("\t").into_bytes());
-                    score - mism.0 - mism.1 - 1
-                } else {0}
-            } else {0};
+    let flag = r.v[1].to_string().parse::<u32>().unwrap();
+    let mate_unmapped = (flag & SAMFLAG_MATE_UNMAPPED) != 0;
+    if mark == DO_WRITE || mark == SKIP_WRITE {
+        mark
+    } else if (flag & SAMFLAG_UNMAPPED) != 0 {
+        if mate_unmapped {
+            if r.w.is_none() {DO_WRITE} else {SKIP_WRITE}
         } else {
-            // FIXME: also write non-primaries if graft in favor?
+            mark // Unchanged: penalty for an unmapped read is already included when its mapped mate is processed.
         }
+    } else if (flag & SAMFLAG_NON_PRIMARY) == 0 {
 
-        let mut line = String::new();
-        let same_readname = if read_line(&mut record[i].s, &mut line) {
-            record[i].v = line.split('\t').map(|x| x.to_string()).collect();
-            record[i].v[0] == record[if i == 0 {graft} else {0}].v[0]
-        } else {
-            if i == graft {
-                last = true;
-            }
-            false
-        };
-        if i != graft && !same_readname || same_readname && i == graft {
-            if i != graft {
-                i += 1;
-            } else {
-                if score > 0 {
-                    write_record(&mut record[i], &graft_lines);
+        let nm = r.v[r.v.iter().rposition(|ref x| x.starts_with("NM:i:")).unwrap()]
+            .get(5..).map(u32::from_str).unwrap().unwrap();
+
+        // if read is mapped: nr-mismatches, nr-clipped
+        match cigar_sum(&r.v[5]) {
+            Ok((_, clips_indels)) => {
+                let sum = nm + clips_indels + if mate_unmapped {xf_opt.unmapped_penalty} else {0};
+                // one added to score, to ensure it cannot be 0, which means skip.
+                if r.w.is_none() { // host
+                    mark + sum // mismatches in host, higher score, means more likely graft.
+                } else if (mark == SKIP_WRITE) || (nm > xf_opt.mm_threshold) || (sum > (mark & SCORE_MASK)) {
+                    SKIP_WRITE
+                } else if (flag & SAMFLAG_PAIRED) == 0 || (mark & PENDING) != 0 || mate_unmapped {
+                    // if mate_unmapped and here we can still write it, don't wait for mate.
+                    DO_WRITE
+                } else {
+                    (mark - sum) | PENDING
                 }
-                graft_lines.clear();
-                score = 0;
-                i = 0;
-            };
+            },
+            Err(e) => panic!("{}, {}", e, r.v[5]),
         }
+    } else {
+        mark
     }
-    true
 }
 
-fn hashmap_filter(record: &mut Vec<SamRec>, mm_threshold: u32, unmapped_penalty: u32) {
+
+
+fn hashmap_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
     let mut readscore: HashMap<String, u32> = HashMap::new();
     let mut pending: VecDeque<Vec<String>> = VecDeque::new();
     let mut line;
 
-    for rec in record {
-        let is_host = rec.w.is_none();
-        let mut got_line = true; // first read is already retrieved at end of header.
-
-        while got_line {
-
-            let flag = rec.v[1].to_string().parse::<u64>().unwrap();
-
-            if (flag & SAMFLAG_PRIMARY) == 0 {
-
-                let mism = get_mismatches(&rec.v, unmapped_penalty);
-                let sum = mism.0 + mism.1;
-                if is_host {
-                    if !readscore.contains_key(&rec.v[0]) {
-                        readscore.insert(rec.v[0].clone(), sum);
-                        line = String::new();
-                        got_line = read_line(&mut rec.s, &mut line);
-                        rec.v = line.split('\t').map(|x| x.to_string()).collect();
-                        continue;
-                    }
-                    if let Some(x) = readscore.get_mut(&rec.v[0]) {
-                        *x += sum;
-                    }
-                } else if let Some(x) = readscore.get_mut(&rec.v[0]) {
-                    let score = *x & SCORE_MASK;
-                    if *x == SKIP_WRITE || mism.0 > mm_threshold || sum > score {
-                        *x = SKIP_WRITE;
-                    } else if (flag & SAMFLAG_PAIRED) == 0 || (*x & PENDING) != 0 {
-                        *x = DO_WRITE; // single or 2nd in pair
-                    } else {
-                        *x = (score - sum) | PENDING;
-                    }
+    for mut rec in record {
+        while rec.v[0] != "" {
+            {
+                let x = readscore.entry(rec.v[0].clone()).or_insert(xf_opt.graft_weight);
+                if rec.w.is_some() {
+                    let mut tot = (*x as u64) << 32;
+                    *x = progress_mark(&mut rec, xf_opt, *x);
+                    tot |= *x as u64;
+                    let flag = rec.v[1].to_string().parse::<u32>().unwrap();
+                    assert!((*x & !SCORE_MASK) != 0 || (flag & SAMFLAG_NON_PRIMARY) != 0 || (flag & SAMFLAG_UNMAPPED) != 0, "{}", rec.v.join("\t"));
                 } else {
-                    panic!("Read {} with flag {:x} in graft but not in host?", rec.v[0], flag);
+                    *x = progress_mark(&mut rec, xf_opt, *x);
+                    assert!((*x & !SCORE_MASK) != SKIP_WRITE);
                 }
             }
-            if !is_host {
+            if rec.w.is_some() {
+                let do_process = pending.front().map_or(true, |f| f[0] == rec.v[0]);
                 pending.push_back(rec.v.drain(..).collect());
-                if pending.front().map_or(false, |f| f[0] == rec.v[0]) {
-
-                    while let Some(&score) = pending.front().map_or(None,|f| readscore.get(&f[0]))
-                        .filter(|&&score| score == SKIP_WRITE || score == DO_WRITE) {
-                            let f = pending.pop_front().unwrap();
-                            if score == DO_WRITE {
-                                write_record(rec, &f.join("\t").into_bytes());
-                            }
+                if do_process {
+                    loop {
+                        let do_write = match pending.front().and_then(|f| readscore.get(&f[0])) {
+                            Some(&score) => {
+                                match score {
+                                    DO_WRITE => true,
+                                    SKIP_WRITE => false,
+                                    _ => break
+                                }
+                            },
+                            _ => break,
+                        };
+                        let f = pending.pop_front().unwrap();
+                        if do_write {
+                            write_record(&mut rec, &f.join("\t").into_bytes());
+                        }
                     }
                 }
             }
             line = String::new();
-            got_line = read_line(&mut rec.s, &mut line);
+            let _ = rec.s.read_line(&mut line).map_err(|e| panic!("{}", e)).ok().unwrap();
             rec.v = line.split('\t').map(|x| x.to_string()).collect();
         }
-        if let Some(f) = pending.pop_front() {
-            panic!("pending reads, front with score {:x} is:\n{}", readscore.get(&f[0]).unwrap(), &f.join("\t"));
+    }
+    eprintln!("Observed {} unique readnames..", readscore.len());
+    if let Some(f) = pending.pop_front() {
+        panic!("pending reads, front with score {:x} is:\n{}", &readscore[&f[0]], &f.join("\t"));
+    }
+}
+
+/// requires host and graft reads to be retrieved from alignments for all readnames in the same order.
+fn line_by_line_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
+    let mut i = 0;
+    let mut mark: u32 = xf_opt.graft_weight;
+    let mut graft_lines: Vec<u8> = vec![];
+    let graft = record.len() - 1;
+
+    while i <= graft {
+        mark = progress_mark(&mut record[i], xf_opt, mark);
+        if i == graft && mark != SKIP_WRITE {
+            graft_lines.extend_from_slice(&record[i].v.join("\t").into_bytes());
         }
-        let _ = stderr().flush();
+        let mut line = String::new();
+        let nr_read = record[i].s.read_line(&mut line).map_err(|e| panic!("{}", e)).unwrap();
+        if nr_read != 0 {
+            record[i].v = line.split('\t').map(|x| x.to_string()).collect();
+            if record[i].v[0] == record[if i == graft {0} else {graft}].v[0] {
+                if i == graft {
+                    if mark == DO_WRITE {
+                        write_record(&mut record[i], &graft_lines);
+                    }
+                    graft_lines.clear();
+                    i = 0;
+                    mark = xf_opt.graft_weight;
+                }
+                continue;
+            } else if i == graft {
+                continue;
+            }
+        } else {
+            // the last record is tricky, we insert an empty record marked as primary to ensure
+            // record[host].v[0] is not the same as record[graft].v[0], and it won't be counted
+            // either.
+            record[i].v = vec!["".to_string(), "256".to_string()];
+        }
+        i += 1;
+    }
+    if mark == DO_WRITE {
+        write_record(&mut record[graft], &graft_lines);
     }
 }
 
 
 fn main() {
-    let matches = App::new("xenofilters").version("0.01").author("Roel Kluin <r.kluin@nki.nl>")
-        .about("Filter host reads from xenografts")
+    let app = App::new("xenofilters");
+    let matches = app.version("0.01").author("Roel Kluin <r.kluin@nki.nl>")
+        .about("Filter reads n multiple alignments. Only reads mapping best in an alignment that is written remain after filtering.")
+        .arg(
+                Arg::with_name("mm_threshold")
+                    .help("Number of mismatches allowed in the second alignment.")
+                    .long("mismatch-threshold")
+                    .short("m")
+                    .value_name("INT")
+                    .required(false)
+                    .takes_value(true),
+            )
+        .arg(
+                Arg::with_name("unmapped_penalty")
+                    .help("Penalty given to unmapped reads in favor of the alternative alignment.")
+                    .short("u")
+                    .value_name("INT")
+                    .long("unmapped-penalty")
+                    .required(false)
+                    .takes_value(true),
+            )
+        .arg(
+                Arg::with_name("favor_last")
+                    .help("On equal alignment score, consider read to be the last alignment")
+                    .long("favor-last-alignment")
+                    .short("f")
+                    .required(false)
+            )
         .arg(
                 Arg::with_name("alignments")
-                    .help("Alignments, reads must be in same order, and all accounted for, all identical readnames consecutive (e.g. name sorted). Only the reads mapping best in the last alignment are written to stdout.")
+                    .help("Alignments, 2 at least required. If reads - readnames of alignments - are consecutive and in the same order for all alignment inputs, a low memory non-hashing strategy is adopted.")
                     .required(true)
                     .multiple(true)
                     .number_of_values(1),
@@ -274,21 +309,25 @@ fn main() {
     for f in matches.values_of("alignments").unwrap().collect::<Vec<_>>() {
         record.push(SamRec::new(&f));
     }
-    let graft = record.len() - 1;
-    record[graft].w = Some(io::stdout());
+    if record.len() > 1 {
+        let graft = record.len() - 1;
+        record[graft].w = Some(io::stdout());
 
-    let mm_threshold = 4; // applies to MM_I_human
-    let unmapped_penalty = 8; // applies to paired-end unampped mate
+        // mm_threshold and unmapped_penalty: TODO parse from commandline
+        let xf_opt = XFOpt::new(matches.value_of("mm_threshold").map_or(4, |s| s.parse::<u32>().unwrap()),
+            matches.value_of("unmapped_penalty").map_or(8, |s| s.parse::<u32>().unwrap()),
+            if matches.is_present("favor_last_alignment") {1} else {0});
 
-    let mut use_hashmap = handle_headers(&mut record) && ensure_same_reads(&mut record);
-    if !use_hashmap {
-        eprintln!("Attempting to use line-by-line processing. Requires readnames to be retrieved consecutive and in the same order for host and graft.");
-        use_hashmap = !line_by_line_filter(&mut record, mm_threshold, unmapped_penalty);
-    }
-    if use_hashmap {
-        eprintln!("Coordinate sorted input or reads not in same order, falling back to hashmap lookup for read names.");
-        let _ = stderr().flush();
-        hashmap_filter(&mut record, mm_threshold, unmapped_penalty)
+        let use_hashmap = handle_headers(&mut record) && ensure_same_reads(&mut record);
+        if use_hashmap {
+            eprintln!("Coordinate sorted input or reads not in same order, falling back to hashmap lookup for read names.");
+            hashmap_filter(&mut record, &xf_opt);
+        } else {
+            eprintln!("Attempting to use line-by-line processing. Requires readnames to be retrieved consecutive and in the same order for host and graft.");
+            line_by_line_filter(&mut record, &xf_opt);
+        }
+    } else {
+        eprintln!("At least two alignments required as input");
     }
 }
 

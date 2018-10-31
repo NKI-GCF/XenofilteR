@@ -6,6 +6,7 @@ authors = ["Roel Kluin <r.kluin@nki.nl>"]
 [dependencies]
 clap = "~2.27.0"
 nom = "^4.0"
+derive-new = "0.5"
 
 [[bin]]
 build = "src/xenofilter.rs"
