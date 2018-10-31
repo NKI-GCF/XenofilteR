@@ -96,14 +96,14 @@ fn write_record(r: &mut SamRec, buf: &[u8]) {
     }
 }
 
-fn ensure_same_reads(record: &mut Vec<SamRec>) -> bool {
+fn all_same_readname(record: &mut Vec<SamRec>) -> bool {
     let rn = record[0].v[0].clone();
     for rec in record {
         if rec.v[0] != rn {
-            return true;
+            return false;
         }
     }
-    false
+    true
 }
 
 fn handle_headers(record: &mut Vec<SamRec>) -> bool {
@@ -318,7 +318,7 @@ fn main() {
             matches.value_of("unmapped_penalty").map_or(8, |s| s.parse::<u32>().unwrap()),
             if matches.is_present("favor_last_alignment") {1} else {0});
 
-        let use_hashmap = handle_headers(&mut record) && ensure_same_reads(&mut record);
+        let use_hashmap = handle_headers(&mut record) || !all_same_readname(&mut record);
         if use_hashmap {
             eprintln!("Coordinate sorted input or reads not in same order, falling back to hashmap lookup for read names.");
             hashmap_filter(&mut record, &xf_opt);
