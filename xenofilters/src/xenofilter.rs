@@ -202,13 +202,14 @@ fn progress_mark(r: &mut SamRec, xf_opt: &XFOpt, mark: u32) -> u32 {
                 } else if mark >= SKIP_FILTERED {
                     mark
                 } else if (flag & SAMFLAG_PAIRED) == 0 || (mark & PENDING) != 0 || mate_unmapped {
-                    if nm > xf_opt.mm_threshold || tot(sum) + xf_opt.graft_weight > tot(mark & !PENDING) {
+                    if nm > xf_opt.mm_threshold || tot(sum) > tot(mark & !PENDING) - xf_opt.graft_weight {
                         // mark kan DO_WRITE zijn maar dan komt de som er ook niet aan.
                         if r.excluded_out.is_some() {SKIP_FILTERED} else {SKIP_WRITE}
                     } else {
                         DO_WRITE
                     }
-                } else if nm > xf_opt.mm_threshold || tot(sum) + xf_opt.graft_weight > tot(mark & !PENDING) {
+                } /*else if r.v[8].to_owned().parse::<i64>().unwrap() + (r.v[9].len() as i64) < 0 {
+                }*/ else if nm > xf_opt.mm_threshold || tot(sum) > tot(mark & !PENDING) - xf_opt.graft_weight {
                     if r.excluded_out.is_some() {SKIP_FILTERED} else {SKIP_WRITE}
                 } else {
                     sub(mark, sum) | PENDING
@@ -224,7 +225,8 @@ fn progress_mark(r: &mut SamRec, xf_opt: &XFOpt, mark: u32) -> u32 {
 /// requires host and graft reads to be retrieved from alignments for all readnames in the same order.
 fn line_by_line_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
     let mut i = 0;
-    let mut mark: u32 = 0;
+    let default_insert = xf_opt.graft_weight | (xf_opt.graft_weight << 16);
+    let mut mark: u32 = default_insert;
     let mut graft_lines: Vec<u8> = vec![];
     let graft = record.len() - 1;
 
@@ -248,7 +250,7 @@ fn line_by_line_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
                     }
                     graft_lines.clear();
                     i = 0;
-                    mark = 0;
+                    mark = default_insert;
                 }
                 continue;
             } else if i == graft {
@@ -300,13 +302,14 @@ fn hashmap_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
     let mut readscore: HashMap<String, u32> = HashMap::new();
     let mut pending: VecDeque<Vec<String>> = VecDeque::new();
     let mut line;
+    let default_insert = xf_opt.graft_weight | (xf_opt.graft_weight << 16);
 
     for i in 0..record.len() {
         while record[i].v[0] != "" {
             let flag = record[i].v[1].to_owned().parse::<u32>().unwrap();
             if (flag & SAMFLAG_NON_PRIMARY) == 0 || !xf_opt.skip_non_primary {
                 {
-                    let x = readscore.entry(record[i].v[0].clone()).or_insert(0);
+                    let x = readscore.entry(record[i].v[0].clone()).or_insert(default_insert);
                     *x = progress_mark(&mut record[i], xf_opt, *x);
                 }
                 if record[i].w.is_some() {
@@ -396,11 +399,11 @@ fn main() {
                     .short("p")
                     .required(false)
             )
-
         .arg(
                 Arg::with_name("output")
                     .help("Write reads kept from last alignment to this file (unless specified, default is stdout).")
                     .required(false)
+                    .long("output")
                     .short("o")
                     .value_name("FILE")
                     .number_of_values(1),
@@ -409,11 +412,18 @@ fn main() {
                 Arg::with_name("filtered_reads")
                     .help("Write mapping reads, excluded from last alignment to this file.")
                     .required(false)
+                    .long("filtered-reads")
                     .short("f")
                     .value_name("FILE")
                     .number_of_values(1),
             )
-
+        .arg(
+                Arg::with_name("use_hashing")
+                    .help("Enforce hashing algorithm.")
+                    .required(false)
+                    .long("use-hashing")
+                    .short("H")
+            )
         .arg(
                 Arg::with_name("alignments")
                     .help("Alignments, 2 at least required. If reads - readnames of alignments - are consecutive and in the same order for all alignment inputs, a low memory non-hashing strategy is adopted.")
@@ -430,7 +440,7 @@ fn main() {
     }
     if record.len() > 1 {
         let graft = record.len() - 1;
-        record[graft].w = match matches.value_of("mm_threshold") {
+        record[graft].w = match matches.value_of("output") {
             Some(ref f) => Some(Box::new(File::create(&Path::new(f)).unwrap())),
             None => Some(Box::new(io::stdout())),
         };
@@ -438,13 +448,12 @@ fn main() {
             record[graft].excluded_out = Some(Box::new(File::create(&Path::new(f)).unwrap()));
         }
 
-        // mm_threshold and unmapped_penalty: TODO parse from commandline
         let xf_opt = XFOpt::new(matches.value_of("mm_threshold").map_or(4, |s| s.parse::<u32>().unwrap()),
             matches.value_of("unmapped_penalty").map_or(8, |s| s.parse::<u32>().unwrap()),
             if matches.is_present("favor_last_alignment") {1} else {0},
             matches.is_present("skip_non_primary"));
 
-        let use_hashmap = handle_headers(&mut record) || !all_same_readname(&mut record);
+        let use_hashmap = matches.is_present("use_hashing") || handle_headers(&mut record) || !all_same_readname(&mut record);
         if use_hashmap {
             eprintln!("Coordinate sorted input or reads not in same order, falling back to hashmap lookup for read names.");
             hashmap_filter(&mut record, &xf_opt);
