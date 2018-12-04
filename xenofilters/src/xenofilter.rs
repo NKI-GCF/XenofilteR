@@ -60,10 +60,12 @@ struct XFOpt {
     mm_threshold: u32,
     unmapped_penalty: u32,
     graft_weight: u32,
-    skip_non_primary: bool
+    skip_non_primary: bool,
+    ignore_clips_beyond_contig: bool
 }
 
 struct SamRec {
+    contig_len: HashMap<String, u32>,
     n: String,
     s: BufReader<File>,
     v: Vec<String>,
@@ -75,6 +77,7 @@ struct SamRec {
 impl SamRec {
     pub fn new(n: &str) -> Self {
         SamRec {
+            contig_len: HashMap::new(),
             n: n.to_owned(),
             s: BufReader::new(File::open(n).unwrap_or_else(|e| panic!(e))),
             v: Vec::new(),
@@ -112,7 +115,7 @@ fn all_same_readname(record: &mut Vec<SamRec>) -> bool {
 
 /// proceses in both input streams the sam header, evaluates whether hashing is required.
 /// first sam read record for both alignment is tab split after this function.
-fn handle_headers(record: &mut Vec<SamRec>) -> bool {
+fn handle_headers(record: &mut Vec<SamRec>, xf_opt: &XFOpt) -> bool {
     let mut hashing_required = false;
     let mut line;
     for rec in record {
@@ -129,6 +132,10 @@ fn handle_headers(record: &mut Vec<SamRec>) -> bool {
                 hashing_required = true;
                 rec.coord_sorted = true;
             }
+            if xf_opt.ignore_clips_beyond_contig && rec.v[0] == "@SQ" {
+                rec.contig_len.insert(rec.v[1].chars().skip(3).collect::<String>(),
+                    rec.v[2].trim().chars().skip(3).collect::<String>().parse::<u32>().unwrap());
+            }
             let buf = &rec.v.join("\t").into_bytes();
             write_record(&mut rec.w, buf);
             write_record(&mut rec.excluded_out, buf);
@@ -138,15 +145,14 @@ fn handle_headers(record: &mut Vec<SamRec>) -> bool {
 }
 
 
-fn tot(mark: u32) -> u32 {
-    ((mark & 0xffff_0000) >> 16) | (mark & 0xffff)
+fn tot(x: u32) -> u32 {
+    ((x & 0xffff_0000) >> 16) | (x & 0xffff)
 }
 
-fn sub(mark: u32, sum: u32) -> u32 {
-    // tot(sum) > tot(mark) is already covered.
-    let mut fst = mark & 0xffff;
+fn sub(score: u32, sum: u32) -> u32 {
+    let mut fst = score & 0xffff;
     let sub_fst = sum & 0xffff;
-    let mut snd = (mark & 0xffff_0000) >> 16;
+    let mut snd = (score & 0xffff_0000) >> 16;
     let sub_snd = (sum & 0xffff_0000) >> 16;
 
     if fst < sub_fst {
@@ -162,18 +168,24 @@ fn sub(mark: u32, sum: u32) -> u32 {
     (snd << 16) | fst
 }
 
-fn progress_mark(r: &mut SamRec, xf_opt: &XFOpt, mark: u32) -> u32 {
+fn get_start_clipped<T: FromStr>(v: &[String]) -> Option<T> {
+    v[5].find('S').and_then(|n| v[5].split_at(n).0.parse::<T>().ok())
+}
+
+fn is_pending(score) -> bool {(score & PENDING) != 0 && score != DO_WRITE}
+
+fn progress_score(r: &mut SamRec, xf_opt: &XFOpt, score: u32) -> u32 {
 
     let flag = r.v[1].to_owned().parse::<u32>().unwrap();
     let mate_unmapped = (flag & SAMFLAG_MATE_UNMAPPED) != 0;
-    if mark >= SKIP_FILTERED || (flag & SAMFLAG_NON_PRIMARY) != 0 {
-        mark
+    if score >= SKIP_FILTERED || (flag & SAMFLAG_NON_PRIMARY) != 0 {
+        score
     } else if (flag & SAMFLAG_UNMAPPED) != 0 {
         if mate_unmapped {
             // do skip if graft unmapped pair.
             if r.w.is_none() {DO_WRITE} else {SKIP_WRITE}
         } else {
-            mark // Unchanged: penalty for an unmapped read is already evaluated when the mapped mate occurrs.
+            score // Unchanged: penalty for an unmapped read is already evaluated when the mapped mate occurrs.
         }
     } else {
         let is_first_in_pair = (flag & SAMFLAG_1ST_IN_PAIR) != 0;
@@ -184,35 +196,48 @@ fn progress_mark(r: &mut SamRec, xf_opt: &XFOpt, mark: u32) -> u32 {
         match cigar_sum(&r.v[5]) {
             Ok((_, clips_indels)) => {
                 // preserve per read info, sum later.
-                let mut sum = nm + clips_indels;
+                let mut mismatches = nm + clips_indels;
+                if xf_opt.ignore_clips_beyond_contig {
+                    let pos = r.v[3].to_owned().parse::<u32>().unwrap() - 1;
+                    if let Some(p) = get_start_clipped::<u32>(&r.v).filter(|&p| p > pos) {
+                        mismatches -= p - pos;
+                    } else if r.v[5].ends_with('S') {
+                        let readlen = r.v[9].len() as u32;
+                        let beyond_contig = r.contig_len[&r.v[2]];
+                        if pos + readlen > beyond_contig {
+                            mismatches -= pos + readlen - beyond_contig;
+                        }
+                    }
+                }
                 if is_first_in_pair {
+                    // mismatches are counted in lower half, for mate in higher
                     if mate_unmapped {
-                        sum |= xf_opt.unmapped_penalty << 16;
+                        mismatches += xf_opt.unmapped_penalty << 16;
                     }
                 } else {
-                    sum <<= 16;
+                    // mismatches in higher half, for mate in lower.
+                    mismatches <<= 16;
                     if mate_unmapped {
-                        sum |= xf_opt.unmapped_penalty;
+                        mismatches += xf_opt.unmapped_penalty;
                     }
                 }
 
                 // one added to score, to ensure it cannot be 0, which means skip.
                 if r.w.is_none() { // host
-                    mark | sum // mismatches in host, higher score, means more likely graft.
-                } else if mark >= SKIP_FILTERED {
-                    mark
-                } else if (flag & SAMFLAG_PAIRED) == 0 || (mark & PENDING) != 0 || mate_unmapped {
-                    if nm > xf_opt.mm_threshold || tot(sum) > tot(mark & !PENDING) - xf_opt.graft_weight {
-                        // mark kan DO_WRITE zijn maar dan komt de som er ook niet aan.
+                    score + mismatches // mismatches in host, higher score, means more likely graft.
+                } else if score >= SKIP_FILTERED {
+                    score
+                } else if (flag & SAMFLAG_PAIRED) == 0 || is_pending(score) || mate_unmapped {
+                    if nm > xf_opt.mm_threshold || tot(mismatches) + xf_opt.graft_weight > tot(score & !PENDING) {
                         if r.excluded_out.is_some() {SKIP_FILTERED} else {SKIP_WRITE}
                     } else {
                         DO_WRITE
                     }
                 } /*else if r.v[8].to_owned().parse::<i64>().unwrap() + (r.v[9].len() as i64) < 0 {
-                }*/ else if nm > xf_opt.mm_threshold || tot(sum) > tot(mark & !PENDING) - xf_opt.graft_weight {
+                }*/ else if nm > xf_opt.mm_threshold {
                     if r.excluded_out.is_some() {SKIP_FILTERED} else {SKIP_WRITE}
                 } else {
-                    sub(mark, sum) | PENDING
+                    sub(score, mismatches) | PENDING
                 }
             },
             Err(e) => panic!("{}, {}", e, r.v[5]),
@@ -226,14 +251,14 @@ fn progress_mark(r: &mut SamRec, xf_opt: &XFOpt, mark: u32) -> u32 {
 fn line_by_line_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
     let mut i = 0;
     let default_insert = xf_opt.graft_weight | (xf_opt.graft_weight << 16);
-    let mut mark: u32 = default_insert;
+    let mut score: u32 = default_insert;
     let mut graft_lines: Vec<u8> = vec![];
     let graft = record.len() - 1;
 
     while i <= graft {
-        mark = progress_mark(&mut record[i], xf_opt, mark);
+        score = progress_score(&mut record[i], xf_opt, score);
         let flag = record[i].v[1].to_owned().parse::<u32>().unwrap();
-        if i == graft && mark != SKIP_WRITE && ((flag & SAMFLAG_NON_PRIMARY) == 0 || !xf_opt.skip_non_primary) {
+        if i == graft && score != SKIP_WRITE && ((flag & SAMFLAG_NON_PRIMARY) == 0 || !xf_opt.skip_non_primary) {
             graft_lines.extend_from_slice(&record[i].v.join("\t").into_bytes());
         }
         let mut line = String::new();
@@ -243,14 +268,14 @@ fn line_by_line_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
             let alt = if i == graft {0} else {graft};
             if record[i].v[0] == record[alt].v[0] {
                 if i == graft {
-                    if mark == DO_WRITE {
+                    if score == DO_WRITE {
                         write_record(&mut record[i].w, &graft_lines);
-                    } else if record[i].excluded_out.is_some() && mark == SKIP_FILTERED {
+                    } else if record[i].excluded_out.is_some() && score == SKIP_FILTERED {
                         write_record(&mut record[i].excluded_out, &graft_lines);
                     }
                     graft_lines.clear();
                     i = 0;
-                    mark = default_insert;
+                    score = default_insert;
                 }
                 continue;
             } else if i == graft {
@@ -264,22 +289,23 @@ fn line_by_line_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
         }
         i += 1;
     }
-    if mark == DO_WRITE {
+    if score == DO_WRITE {
         write_record(&mut record[graft].w, &graft_lines);
-    } else if record[graft].excluded_out.is_some() && mark == SKIP_FILTERED {
+    } else if record[graft].excluded_out.is_some() && score == SKIP_FILTERED {
         write_record(&mut record[graft].excluded_out, &graft_lines);
     }
 }
 
 /// return whether to continue iterating
-fn lookup_and_eval_write(rec: &mut SamRec, f: &[String], val: u32) -> bool {
+fn lookup_and_eval_write(rec: &mut SamRec, f: &[String], val: u32, original_score: u32) -> bool {
     match val {
         DO_WRITE => {
             write_record(&mut rec.w, &f.join("\t").into_bytes());
             true
         },
         SKIP_FILTERED => {
-            write_record(&mut rec.excluded_out, &f.join("\t").into_bytes());
+            write_record(&mut rec.excluded_out, f.join("\t").trim().as_bytes());
+            write_record(&mut rec.excluded_out, &format!("\tXf:H:{:08X}\n", original_score).into_bytes());
             true
         }
         SKIP_WRITE => true,
@@ -287,13 +313,15 @@ fn lookup_and_eval_write(rec: &mut SamRec, f: &[String], val: u32) -> bool {
     }
 }
 
-fn is_surpassed(f: &[String], v: &[String]) -> bool {
+fn is_surpassed(f: &[String], tid: &str, pos: i64) -> bool {
     let tlen = f[8].to_owned().parse::<i64>().unwrap();
-    let ln = f[9].len() as i64;
-    if f[2] != v[2] || tlen <= 0 { //next contig, unmapped or 2nd in pair.
+    //    - (v[9].len() as i64) + get_start_clipped::<i64>(v).unwrap_or(0)
+    //    - (f[9].len() as i64) + get_start_clipped::<i64>(f).unwrap_or(0);
+
+    if f[2] != tid || tlen <= 0 { //next contig, unmapped or 2nd in pair.
         true
     } else { // test whether past pso + tlen
-        f[3].to_owned().parse::<i64>().unwrap() + tlen + 2 * ln < v[3].to_owned().parse::<i64>().unwrap()
+        f[3].to_owned().parse::<i64>().unwrap() + tlen < pos
     }
 }
 
@@ -304,56 +332,73 @@ fn hashmap_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
     let mut line;
     let default_insert = xf_opt.graft_weight | (xf_opt.graft_weight << 16);
 
-    for i in 0..record.len() {
-        while record[i].v[0] != "" {
-            let flag = record[i].v[1].to_owned().parse::<u32>().unwrap();
+    for mut rec in record.iter_mut() {
+        while rec.v[0] != "" {
+            let flag = rec.v[1].to_owned().parse::<u32>().unwrap();
             if (flag & SAMFLAG_NON_PRIMARY) == 0 || !xf_opt.skip_non_primary {
                 {
-                    let x = readscore.entry(record[i].v[0].clone()).or_insert(default_insert);
-                    *x = progress_mark(&mut record[i], xf_opt, *x);
+                    let x = readscore.entry(rec.v[0].clone()).or_insert(default_insert);
+                    *x = progress_score(&mut rec, xf_opt, *x);
                 }
-                if record[i].w.is_some() {
-                    let is_passed = if let Some(f) = pending.front() {
-                        if f[0] == record[i].v[0] {
+                if rec.w.is_some() {
+                    let mut is_partial = false;
+                    let tid = &rec.v[2].to_string();
+                    let pos = rec.v[3].to_owned().parse::<i64>().unwrap();
+                    let do_process = if let Some(f) = pending.front() {
+                        if f[0] == rec.v[0] {
                             true
-                        } else if record[i].coord_sorted && is_surpassed(&f, &record[i].v) {
-                            //assert!(false, "{}\n{}", f.join("\t"), record[i].v.join("\t"));
+                        } else if rec.coord_sorted && is_surpassed(&f, tid, pos) {
+                            is_partial = true;
                             true
                         } else {false}
                     } else {true};
-                    pending.push_back(record[i].v.drain(..).collect());
-                    if is_passed {
+                    pending.push_back(rec.v.drain(..).collect());
+                    if do_process {
                         while pending.front().map_or(false, |f| {
-                            let mut score = *readscore.get(&f[0]).expect(&f[0]);
-
-                            lookup_and_eval_write(&mut record[i], &f, score)
+                            let mut score = readscore[&f[0]];
+                            let originalscore = score;
+                            if score < SKIP_FILTERED && is_partial {
+                                // mismatches were already subtracted in progress_score()
+                                let f_flag = f[1].to_owned().parse::<u32>().unwrap();
+                                let is_first_in_pair = (f_flag & SAMFLAG_1ST_IN_PAIR) != 0;
+                                if score == DO_WRITE || (score & if is_first_in_pair {0xffff} else {0x7fff_0000}) > 0 {
+                                    score = DO_WRITE
+                                } else {
+                                    score = if rec.excluded_out.is_some() {SKIP_FILTERED} else {SKIP_WRITE}
+                                }
+                            }
+                            lookup_and_eval_write(&mut rec, &f, score, originalscore)
                         }) {
                             let _ = pending.pop_front().unwrap();
+                            if let Some(f) = pending.front() {
+                                is_partial = rec.coord_sorted && is_surpassed(&f, tid, pos);
+                            }
                         }
                     }
                 }
             }
             line = String::new();
-            let _ = record[i].s.read_line(&mut line).map_err(|e| panic!("{}", e)).ok().unwrap();
-            record[i].v = line.split('\t').map(|x| x.to_owned()).collect();
+            let _ = rec.s.read_line(&mut line).map_err(|e| panic!("{}", e)).ok().unwrap();
+            rec.v = line.split('\t').map(|x| x.to_owned()).collect();
         }
     }
-    if pending.len() != 0 {
+    if !pending.is_empty() {
         eprintln!("processing {} pending reads..", pending.len());
         let graft = record.len() - 1;
         while pending.front().map_or(false, |f| {
-            let mut score = *readscore.get(&f[0]).expect(&f[0]);
-            if (score & PENDING) != 0 {
-                // mismatches were already subtracted in progress_mark()
+            let mut score = readscore[&f[0]];
+            let originalscore = score;
+            if is_pending(score) {
+                // mismatches were already subtracted in progress_score()
                 let f_flag = f[1].to_owned().parse::<u32>().unwrap();
                 let is_first_in_pair = (f_flag & SAMFLAG_1ST_IN_PAIR) != 0;
-                if (score & if is_first_in_pair {0x7fff_0000} else {0xffff}) > 0 {
+                if (score & if is_first_in_pair {0xffff} else {0x7fff_0000}) > 0 {
                     score = DO_WRITE
                 } else {
                     score = if record[graft].excluded_out.is_some() {SKIP_FILTERED} else {SKIP_WRITE}
                 }
             }
-            lookup_and_eval_write(&mut record[graft], &f, score)
+            lookup_and_eval_write(&mut record[graft], &f, score, originalscore)
         }) {
             let _ = pending.pop_front().unwrap();
         }
@@ -425,6 +470,13 @@ fn main() {
                     .short("H")
             )
         .arg(
+                Arg::with_name("ignore_clips_beyond_contig")
+                    .help("Ignore clips in reads before start of contig.")
+                    .required(false)
+                    .long("ignore-clips-beyond-contig")
+                    .short("C")
+            )
+        .arg(
                 Arg::with_name("alignments")
                     .help("Alignments, 2 at least required. If reads - readnames of alignments - are consecutive and in the same order for all alignment inputs, a low memory non-hashing strategy is adopted.")
                     .required(true)
@@ -433,6 +485,7 @@ fn main() {
             )
 
         .get_matches();
+    // hla: --favor-last-alignment --ignore-clips-beyond-contig -m 5 -u 0
 
     let mut record: Vec<SamRec> = vec![];
     for f in matches.values_of("alignments").unwrap().collect::<Vec<_>>() {
@@ -448,12 +501,14 @@ fn main() {
             record[graft].excluded_out = Some(Box::new(File::create(&Path::new(f)).unwrap()));
         }
 
-        let xf_opt = XFOpt::new(matches.value_of("mm_threshold").map_or(4, |s| s.parse::<u32>().unwrap()),
+        let xf_opt = XFOpt::new(
+            matches.value_of("mm_threshold").map_or(4, |s| s.parse::<u32>().unwrap()),
             matches.value_of("unmapped_penalty").map_or(8, |s| s.parse::<u32>().unwrap()),
             if matches.is_present("favor_last") {1} else {0},
-            matches.is_present("skip_non_primary"));
+            matches.is_present("skip_non_primary"),
+            matches.is_present("ignore_clips_beyond_contig"));
 
-        let use_hashmap = matches.is_present("use_hashing") || handle_headers(&mut record) || !all_same_readname(&mut record);
+        let use_hashmap = handle_headers(&mut record, &xf_opt) || !all_same_readname(&mut record) || matches.is_present("use_hashing");
         if use_hashmap {
             eprintln!("Coordinate sorted input or reads not in same order, falling back to hashmap lookup for read names.");
             hashmap_filter(&mut record, &xf_opt);
