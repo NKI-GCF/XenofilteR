@@ -450,7 +450,7 @@ fn main() {
 
         let xf_opt = XFOpt::new(matches.value_of("mm_threshold").map_or(4, |s| s.parse::<u32>().unwrap()),
             matches.value_of("unmapped_penalty").map_or(8, |s| s.parse::<u32>().unwrap()),
-            if matches.is_present("favor_last_alignment") {1} else {0},
+            if matches.is_present("favor_last") {1} else {0},
             matches.is_present("skip_non_primary"));
 
         let use_hashmap = matches.is_present("use_hashing") || handle_headers(&mut record) || !all_same_readname(&mut record);
