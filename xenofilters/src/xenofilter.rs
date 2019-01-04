@@ -172,16 +172,17 @@ fn get_start_clipped<T: FromStr>(v: &[String]) -> Option<T> {
     v[5].find('S').and_then(|n| v[5].split_at(n).0.parse::<T>().ok())
 }
 
-fn is_pending(score) -> bool {(score & PENDING) != 0 && score != DO_WRITE}
+fn is_pending(score: u32) -> bool {(score & PENDING) != 0 && score != DO_WRITE}
 
 fn progress_score(r: &mut SamRec, xf_opt: &XFOpt, score: u32) -> u32 {
 
     let flag = r.v[1].to_owned().parse::<u32>().unwrap();
+    let paired = (flag & SAMFLAG_PAIRED) != 0;
     let mate_unmapped = (flag & SAMFLAG_MATE_UNMAPPED) != 0;
     if score >= SKIP_FILTERED || (flag & SAMFLAG_NON_PRIMARY) != 0 {
         score
     } else if (flag & SAMFLAG_UNMAPPED) != 0 {
-        if mate_unmapped {
+        if !paired || mate_unmapped {
             // do skip if graft unmapped pair.
             if r.w.is_none() {DO_WRITE} else {SKIP_WRITE}
         } else {
@@ -209,16 +210,18 @@ fn progress_score(r: &mut SamRec, xf_opt: &XFOpt, score: u32) -> u32 {
                         }
                     }
                 }
-                if is_first_in_pair {
-                    // mismatches are counted in lower half, for mate in higher
-                    if mate_unmapped {
-                        mismatches += xf_opt.unmapped_penalty << 16;
-                    }
-                } else {
-                    // mismatches in higher half, for mate in lower.
-                    mismatches <<= 16;
-                    if mate_unmapped {
-                        mismatches += xf_opt.unmapped_penalty;
+                if paired {
+                    if is_first_in_pair {
+                        // mismatches are counted in lower half, for mate in higher
+                        if mate_unmapped {
+                            mismatches += xf_opt.unmapped_penalty << 16;
+                        }
+                    } else {
+                        // mismatches in higher half, for mate in lower.
+                        mismatches <<= 16;
+                        if mate_unmapped {
+                            mismatches += xf_opt.unmapped_penalty;
+                        }
                     }
                 }
 
@@ -227,7 +230,7 @@ fn progress_score(r: &mut SamRec, xf_opt: &XFOpt, score: u32) -> u32 {
                     score + mismatches // mismatches in host, higher score, means more likely graft.
                 } else if score >= SKIP_FILTERED {
                     score
-                } else if (flag & SAMFLAG_PAIRED) == 0 || is_pending(score) || mate_unmapped {
+                } else if !paired || is_pending(score) || mate_unmapped {
                     if nm > xf_opt.mm_threshold || tot(mismatches) + xf_opt.graft_weight > tot(score & !PENDING) {
                         if r.excluded_out.is_some() {SKIP_FILTERED} else {SKIP_WRITE}
                     } else {
@@ -337,7 +340,8 @@ fn hashmap_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
             let flag = rec.v[1].to_owned().parse::<u32>().unwrap();
             if (flag & SAMFLAG_NON_PRIMARY) == 0 || !xf_opt.skip_non_primary {
                 {
-                    let x = readscore.entry(rec.v[0].clone()).or_insert(default_insert);
+                    let def = default_insert;
+                    let x = readscore.entry(rec.v[0].clone()).or_insert(def);
                     *x = progress_score(&mut rec, xf_opt, *x);
                 }
                 if rec.w.is_some() {
@@ -348,6 +352,7 @@ fn hashmap_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
                         if f[0] == rec.v[0] {
                             true
                         } else if rec.coord_sorted && is_surpassed(&f, tid, pos) {
+                            //assert!(false, "{}\n{}", f.join("\t"), rec.v.join("\t"));
                             is_partial = true;
                             true
                         } else {false}
@@ -423,7 +428,7 @@ fn main() {
             )
         .arg(
                 Arg::with_name("unmapped_penalty")
-                    .help("Penalty given to unmapped reads in favor of the alternative alignment.")
+                    .help("Penalty given to unmapped reads in favor of the alternative alignment. Set to 0 to disable this.")
                     .short("u")
                     .value_name("INT")
                     .long("unmapped-penalty")
@@ -432,7 +437,7 @@ fn main() {
             )
         .arg(
                 Arg::with_name("favor_last")
-                    .help("On equal alignment score, consider read to be the last alignment")
+                    .help("On equal alignment score, consider read to be the last alignment.")
                     .long("favor-last-alignment")
                     .short("l")
                     .required(false)
