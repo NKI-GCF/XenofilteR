@@ -70,7 +70,7 @@ Please add the following to your STAR command when mapping to the human as well 
 
 --outSAMattributes NM
 
-Additional explanation about the 'NM'-tag and optional output from STRA can be found here: 
+Additional explanation about the 'NM'-tag and optional output from STAR can be found here: 
 STAR manual (https://github.com/alexdobin/STAR/blob/master/doc/STARmanual.pdf)
 (section 9.11)
 
