@@ -305,15 +305,15 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
 		## The actual filter ##
 		#######################
 
-		filt <- list(setStart=function(x) x$qname %in% HumanSet)
+		filt <- FilterRules(list(setStart=function(x) x$qname %in% HumanSet))
 		
 		if (length(output.names)==0){
 				filterBam(paste(sample.paths.graft[i]), file.path(destination.folder,
-					gsub(".bam","_Filtered.bam",sample.files.graft[i])), filter=FilterRules(filt))
+					gsub(".bam","_Filtered.bam",sample.files.graft[i])), filter=filt)
 		}
 		if (length(output.names)!=0){
 				filterBam(paste(sample.paths.graft[i]), file.path(destination.folder,
-					gsub(".bam", "_Filtered.bam",output.names[i])), filter=FilterRules(filt))
+					gsub(".bam", "_Filtered.bam",output.names[i])), filter=filt)
 		}
 
     }
