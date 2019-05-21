@@ -1,7 +1,7 @@
 Package: XenofilteR
 Type: Package
 Title: Excluding host reads from xenograft sequencing data
-Version: 1.8
+Version: 1.6
 Date: 2019-05-09
 Author: Oscar Krijgsman
 Maintainer: Oscar Krijgsman <o.krijgsman@nki.nl>
