@@ -74,6 +74,22 @@ Additional explanation about the 'NM'-tag and optional output from STAR can be f
 STAR manual (https://github.com/alexdobin/STAR/blob/master/doc/STARmanual.pdf)
 (section 9.11)
 
+## MM-threshold and Unmapped_penalty
+
+For each sequence read an edit-distance is calculated which is used to classify a read as 
+human or of mouse origin. Sequence reads with an edit distance higher than the MM-threshold 
+(default == 4) will not be retained in the filtered output. This to remove sequence reads 
+of mouse origin that do not map onto the mouse reference genome but do map onto the human 
+reference genome. This problem is likely caused by gaps in the mouse reference genome and/or 
+differences between mouse strains. The default of 4 mismatches has been tested for PE and 
+SE sequence data of 75 basepairs. When applying XenofilteR to samples with longer 
+sequence reads raising the default value should be considered. For example, setting the MM-threshold 
+to 8 for samples with PE150. 
+
+When analysing paired-end sequence data it happens that one of the reads of a pair is mapped 
+to the reference genome while the other is not. The sequence read that is not mapped to the 
+reference genome will be given an edit-distance as defined in 'Unmapped_penalty' (default == 8). 
+
 
 ## Contact
 ## 
