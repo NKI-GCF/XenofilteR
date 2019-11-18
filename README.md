@@ -90,6 +90,14 @@ When analysing paired-end sequence data it happens that one of the reads of a pa
 to the reference genome while the other is not. The sequence read that is not mapped to the 
 reference genome will be given an edit-distance as defined in 'Unmapped_penalty' (default == 8). 
 
+## Independent performance assessment of XenofilteR 
+
+The performance of XenofilteR was recently assessed by an independent group:
+
+- Jo SY, Kim E, Kim S. Impact of mouse contamination in genomic profiling of 
+	patient-derived models and best practice for robust analysis. Genome Biol. 2019 Nov 
+	11;20(1):231. doi: 10.1186/s13059-019-1849-2. 
+[[Pubmed]](http://www.ncbi.nlm.nih.gov/pubmed/31707992)    
 
 ## Contact
 ## 
