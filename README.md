@@ -81,7 +81,7 @@ human or of mouse origin. Sequence reads with an edit distance higher than the M
 (default == 4) will not be retained in the filtered output. This to remove sequence reads 
 of mouse origin that do not map onto the mouse reference genome but do map onto the human 
 reference genome. This problem is likely caused by gaps in the mouse reference genome and/or 
-differences between mouse strains. The default of 4 mismatches has been tested for PE and 
+differences between mouse strains. The default of 3 mismatches has been tested for PE and 
 SE sequence data of 75 basepairs. When applying XenofilteR to samples with longer 
 sequence reads raising the default value should be considered. For example, setting the MM-threshold 
 to 8 for samples with PE150. 
