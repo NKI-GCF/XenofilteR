@@ -1,4 +1,4 @@
-XenofilteR <- function(sample.list, destination.folder, bp.param, output.names = NULL, MM_threshold = 4, Unmapped_penalty = 8) {
+XenofilteR <- function(sample.list, destination.folder, bp.param, output.names = NULL, MM_threshold = 4, Unmapped_penalty = 8, NM_id = "NM") {
 
     ##########################
     ## Check and initialise ##
@@ -171,10 +171,10 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
 
     i <- c(seq_along(sample.paths.graft))
     ActualFilter <- function(i, destination.folder, sample.list, is.paired.end, 
-                             sample.paths.graft, sample.paths.host, Unmapped_penalty, MM_threshold, bp.param){
+                             sample.paths.graft, sample.paths.host, Unmapped_penalty, MM_threshold, NM_id, bp.param){
 
 		## Settings for scanBam
-		p4 <- ScanBamParam(tag=c("NM"), what=c("qname", "flag", "cigar"), 
+		p4 <- ScanBamParam(tag=c(NM_id), what=c("qname", "flag", "cigar"), 
 		flag=scanBamFlag(isUnmappedQuery=FALSE, isSecondaryAlignment=FALSE))
 
 		## Read human data (mapped and primary alignment only)
@@ -199,13 +199,13 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
 		Cigar.matrix <- cigarOpTable(Mouse[[1]]$cigar)
 		Inserts <- Cigar.matrix[,colnames(Cigar.matrix)=="I"]
 		Clips <- Cigar.matrix[,colnames(Cigar.matrix)=="S"]
-		MM_I_mouse <- Clips+Inserts+Mouse[[1]]$tag$NM
+		MM_I_mouse <- Clips+Inserts+Mouse[[1]]$tag[[NM_id]]
 
 		## Get the Clips + inserts + MisMatches (Human)
 		Cigar.matrix <- cigarOpTable(Human[[1]]$cigar)
 		Inserts <- Cigar.matrix[,colnames(Cigar.matrix)=="I"]
 		Clips <- Cigar.matrix[,colnames(Cigar.matrix)=="S"]
-		MM_I_human <- Clips+Inserts+Human[[1]]$tag$NM
+		MM_I_human <- Clips+Inserts+Human[[1]]$tag[[NM_id]]
 
 		## Filter for human reads that also map to mouse
 		Human_qname_set <- Human[[1]]$qname[set==TRUE]
@@ -323,7 +323,7 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
      #############
 
     to.log <- bplapply(i, ActualFilter, destination.folder, sample.list, is.paired.end, 
-    sample.paths.graft, sample.paths.host, Unmapped_penalty, MM_threshold, BPPARAM = bp.param)
+    sample.paths.graft, sample.paths.host, Unmapped_penalty, MM_threshold, NM_id, BPPARAM = bp.param)
 
     flog.appender(appender.file(file.path(destination.folder,"XenofilteR.log")))
     #lapply(to.log, flog.info)
