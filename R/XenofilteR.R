@@ -214,7 +214,7 @@ XenofilteR <- function(sample.list, destination.folder, bp.param, output.names =
 
 
 		## Get read names mapped to human reference only with a MM_score
-		## below set threshold. Default = 5
+		## below set threshold. Default = 4
 		ToHumanOnly <- unique(Human[[1]]$qname[set==FALSE & MM_I_human<MM_threshold])
 
 
