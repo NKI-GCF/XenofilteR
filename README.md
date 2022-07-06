@@ -105,7 +105,6 @@ We have tried to make the XenofilteR code readable and its use as easy
 as possible. If any questions arise regarding the package, or if you
 want to report any bugs, please do not hesitate and contact:
 
-- [Oscar Krijgsman](mailto:o.krijgsman@nki.nl) 
 - [Roel Kluin](mailto:r.kluin@nki.nl)
 
 Oscar and Roel both work at the NKI, Oscar as a postdoc in the lab of Prof. Daniel
