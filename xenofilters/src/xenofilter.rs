@@ -4,24 +4,31 @@ extern crate nom;
 extern crate derive_new;
 extern crate clap;
 extern crate core;
-use clap::{Arg, App};
-use std::{io::{self,BufReader,prelude::*},collections::{HashMap,VecDeque},cmp::min,path::Path,fs::File,result::Result::*,str::FromStr};
+use clap::{App, Arg};
 use nom::digit;
+use std::{
+    cmp::min,
+    collections::{HashMap, VecDeque},
+    fs::File,
+    io::{self, prelude::*, BufReader},
+    path::Path,
+    result::Result::*,
+    str::FromStr,
+};
 //use nom::CompareResult::Error;
 // first argument must be host alignment, 2nd must be graft. Arguments may be pipes.
 // Both must be name sorted (or collate or unsorted, raw bwa ouptut, which should be in fastq order).
 // graft must contain all reads present in host, host may miss some (e.g. unmapped reads)
-
 
 // could also consider template length in PE.
 
 // cargo rustc -- -Z trace-macros
 // cargo +nightly clippy
 
-const PENDING: u32 =    0x8000_0000;
+const PENDING: u32 = 0x8000_0000;
 const SKIP_WRITE: u32 = 0xffff_ffff;
 const SKIP_FILTERED: u32 = 0xffff_fffe;
-const DO_WRITE: u32 =   0xffff_fffd;
+const DO_WRITE: u32 = 0xffff_fffd;
 
 const SAMFLAG_PAIRED: u32 = 1;
 const SAMFLAG_UNMAPPED: u32 = 4;
@@ -61,7 +68,7 @@ struct XFOpt {
     unmapped_penalty: u32,
     graft_weight: u32,
     skip_non_primary: bool,
-    ignore_clips_beyond_contig: bool
+    ignore_clips_beyond_contig: bool,
 }
 
 struct SamRec {
@@ -69,22 +76,22 @@ struct SamRec {
     n: String,
     s: BufReader<File>,
     v: Vec<String>,
-    pub w: Option<Box<Write>>,
+    pub w: Option<Box<dyn Write>>,
     coord_sorted: bool,
-    excluded_out: Option<Box<Write>>
+    excluded_out: Option<Box<dyn Write>>,
 }
 
 impl SamRec {
-    pub fn new(n: &str) -> Self {
-        SamRec {
+    pub fn new(n: &str) -> Result<Self, std::io::Error> {
+        Ok(SamRec {
             contig_len: HashMap::new(),
             n: n.to_owned(),
-            s: BufReader::new(File::open(n).unwrap_or_else(|e| panic!(e))),
+            s: File::open(n).map(BufReader::new)?,
             v: Vec::new(),
             w: None,
             coord_sorted: false,
             excluded_out: None,
-        }
+        })
     }
 }
 
@@ -94,7 +101,7 @@ fn is_coord_sorted(v: &[String]) -> bool {
 }
 
 /// writes record to a stream if so configured in command line arguments
-fn write_record(rw: &mut Option<Box<Write>>, buf: &[u8]) {
+fn write_record(rw: &mut Option<Box<dyn Write>>, buf: &[u8]) {
     if let Some(ref mut w) = rw {
         if let Err(e) = w.write(buf) {
             panic!("{}", e);
@@ -119,7 +126,7 @@ fn handle_headers(record: &mut Vec<SamRec>, xf_opt: &XFOpt) -> bool {
     let mut hashing_required = false;
     let mut line;
     for rec in record {
-         while {
+        while {
             line = String::new();
             rec.v = match rec.s.read_line(&mut line) {
                 Err(e) => panic!("{}", e),
@@ -127,23 +134,30 @@ fn handle_headers(record: &mut Vec<SamRec>, xf_opt: &XFOpt) -> bool {
                 Ok(_) => line.split('\t').map(|x| x.to_owned()).collect(),
             };
             rec.v[0].starts_with('@')
-         } {
+        } {
             if !rec.coord_sorted && is_coord_sorted(&rec.v) {
                 hashing_required = true;
                 rec.coord_sorted = true;
             }
             if xf_opt.ignore_clips_beyond_contig && rec.v[0] == "@SQ" {
-                rec.contig_len.insert(rec.v[1].chars().skip(3).collect::<String>(),
-                    rec.v[2].trim().chars().skip(3).collect::<String>().parse::<u32>().unwrap());
+                rec.contig_len.insert(
+                    rec.v[1].chars().skip(3).collect::<String>(),
+                    rec.v[2]
+                        .trim()
+                        .chars()
+                        .skip(3)
+                        .collect::<String>()
+                        .parse::<u32>()
+                        .unwrap(),
+                );
             }
             let buf = &rec.v.join("\t").into_bytes();
             write_record(&mut rec.w, buf);
             write_record(&mut rec.excluded_out, buf);
-         }
+        }
     }
     hashing_required
 }
-
 
 fn tot(x: u32) -> u32 {
     ((x & 0xffff_0000) >> 16) | (x & 0xffff)
@@ -169,13 +183,15 @@ fn sub(score: u32, sum: u32) -> u32 {
 }
 
 fn get_start_clipped<T: FromStr>(v: &[String]) -> Option<T> {
-    v[5].find('S').and_then(|n| v[5].split_at(n).0.parse::<T>().ok())
+    v[5].find('S')
+        .and_then(|n| v[5].split_at(n).0.parse::<T>().ok())
 }
 
-fn is_pending(score: u32) -> bool {(score & PENDING) != 0 && score != DO_WRITE}
+fn is_pending(score: u32) -> bool {
+    (score & PENDING) != 0 && score != DO_WRITE
+}
 
 fn progress_score(r: &mut SamRec, xf_opt: &XFOpt, score: u32) -> u32 {
-
     let flag = r.v[1].to_owned().parse::<u32>().unwrap();
     let paired = (flag & SAMFLAG_PAIRED) != 0;
     let mate_unmapped = (flag & SAMFLAG_MATE_UNMAPPED) != 0;
@@ -184,14 +200,25 @@ fn progress_score(r: &mut SamRec, xf_opt: &XFOpt, score: u32) -> u32 {
     } else if (flag & SAMFLAG_UNMAPPED) != 0 {
         if !paired || mate_unmapped {
             // do skip if graft unmapped pair.
-            if r.w.is_none() {DO_WRITE} else {SKIP_WRITE}
+            if r.w.is_none() {
+                DO_WRITE
+            } else {
+                SKIP_WRITE
+            }
         } else {
             score // Unchanged: penalty for an unmapped read is already evaluated when the mapped mate occurrs.
         }
     } else {
         let is_first_in_pair = (flag & SAMFLAG_1ST_IN_PAIR) != 0;
-        let nm = r.v[r.v.iter().rposition(|ref x| x.starts_with("NM:i:")).unwrap()]
-            .get(5..).map(u32::from_str).unwrap().unwrap();
+        let nm = r.v[r
+            .v
+            .iter()
+            .rposition(|ref x| x.starts_with("NM:i:"))
+            .unwrap()]
+        .get(5..)
+        .map(u32::from_str)
+        .unwrap()
+        .unwrap();
 
         // if read is mapped: nr-mismatches, nr-clipped
         match cigar_sum(&r.v[5]) {
@@ -226,23 +253,36 @@ fn progress_score(r: &mut SamRec, xf_opt: &XFOpt, score: u32) -> u32 {
                 }
 
                 // one added to score, to ensure it cannot be 0, which means skip.
-                if r.w.is_none() { // host
+                if r.w.is_none() {
+                    // host
                     score + mismatches // mismatches in host, higher score, means more likely graft.
                 } else if score >= SKIP_FILTERED {
                     score
                 } else if !paired || is_pending(score) || mate_unmapped {
-                    if nm > xf_opt.mm_threshold || tot(mismatches) + xf_opt.graft_weight > tot(score & !PENDING) {
-                        if r.excluded_out.is_some() {SKIP_FILTERED} else {SKIP_WRITE}
+                    if nm > xf_opt.mm_threshold
+                        || tot(mismatches) + xf_opt.graft_weight > tot(score & !PENDING)
+                    {
+                        if r.excluded_out.is_some() {
+                            SKIP_FILTERED
+                        } else {
+                            SKIP_WRITE
+                        }
                     } else {
                         DO_WRITE
                     }
-                } /*else if r.v[8].to_owned().parse::<i64>().unwrap() + (r.v[9].len() as i64) < 0 {
-                }*/ else if nm > xf_opt.mm_threshold {
-                    if r.excluded_out.is_some() {SKIP_FILTERED} else {SKIP_WRITE}
+                }
+                /*else if r.v[8].to_owned().parse::<i64>().unwrap() + (r.v[9].len() as i64) < 0 {
+                }*/
+                else if nm > xf_opt.mm_threshold {
+                    if r.excluded_out.is_some() {
+                        SKIP_FILTERED
+                    } else {
+                        SKIP_WRITE
+                    }
                 } else {
                     sub(score, mismatches) | PENDING
                 }
-            },
+            }
             Err(e) => panic!("{}, {}", e, r.v[5]),
         }
     }
@@ -261,14 +301,21 @@ fn line_by_line_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
     while i <= graft {
         score = progress_score(&mut record[i], xf_opt, score);
         let flag = record[i].v[1].to_owned().parse::<u32>().unwrap();
-        if i == graft && score != SKIP_WRITE && ((flag & SAMFLAG_NON_PRIMARY) == 0 || !xf_opt.skip_non_primary) {
+        if i == graft
+            && score != SKIP_WRITE
+            && ((flag & SAMFLAG_NON_PRIMARY) == 0 || !xf_opt.skip_non_primary)
+        {
             graft_lines.extend_from_slice(&record[i].v.join("\t").into_bytes());
         }
         let mut line = String::new();
-        let nr_read = record[i].s.read_line(&mut line).map_err(|e| panic!("{}", e)).unwrap();
+        let nr_read = record[i]
+            .s
+            .read_line(&mut line)
+            .map_err(|e| panic!("{}", e))
+            .unwrap();
         if nr_read != 0 {
             record[i].v = line.split('\t').map(|x| x.to_owned()).collect();
-            let alt = if i == graft {0} else {graft};
+            let alt = if i == graft { 0 } else { graft };
             if record[i].v[0] == record[alt].v[0] {
                 if i == graft {
                     if score == DO_WRITE {
@@ -305,14 +352,17 @@ fn lookup_and_eval_write(rec: &mut SamRec, f: &[String], val: u32, original_scor
         DO_WRITE => {
             write_record(&mut rec.w, &f.join("\t").into_bytes());
             true
-        },
+        }
         SKIP_FILTERED => {
             write_record(&mut rec.excluded_out, f.join("\t").trim().as_bytes());
-            write_record(&mut rec.excluded_out, &format!("\tXf:H:{:08X}\n", original_score).into_bytes());
+            write_record(
+                &mut rec.excluded_out,
+                &format!("\tXf:H:{:08X}\n", original_score).into_bytes(),
+            );
             true
         }
         SKIP_WRITE => true,
-        _ => false
+        _ => false,
     }
 }
 
@@ -321,9 +371,11 @@ fn is_surpassed(f: &[String], tid: &str, pos: i64) -> bool {
     //    - (v[9].len() as i64) + get_start_clipped::<i64>(v).unwrap_or(0)
     //    - (f[9].len() as i64) + get_start_clipped::<i64>(f).unwrap_or(0);
 
-    if f[2] != tid || tlen <= 0 { //next contig, unmapped or 2nd in pair.
+    if f[2] != tid || tlen <= 0 {
+        //next contig, unmapped or 2nd in pair.
         true
-    } else { // test whether past pso + tlen
+    } else {
+        // test whether past pso + tlen
         f[3].to_owned().parse::<i64>().unwrap() + tlen < pos
     }
 }
@@ -355,8 +407,12 @@ fn hashmap_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
                             //assert!(false, "{}\n{}", f.join("\t"), rec.v.join("\t"));
                             is_partial = true;
                             true
-                        } else {false}
-                    } else {true};
+                        } else {
+                            false
+                        }
+                    } else {
+                        true
+                    };
                     pending.push_back(rec.v.drain(..).collect());
                     if do_process {
                         while pending.front().map_or(false, |f| {
@@ -366,10 +422,22 @@ fn hashmap_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
                                 // mismatches were already subtracted in progress_score()
                                 let f_flag = f[1].to_owned().parse::<u32>().unwrap();
                                 let is_first_in_pair = (f_flag & SAMFLAG_1ST_IN_PAIR) != 0;
-                                if score == DO_WRITE || (score & if is_first_in_pair {0xffff} else {0x7fff_0000}) > 0 {
+                                if score == DO_WRITE
+                                    || (score
+                                        & if is_first_in_pair {
+                                            0xffff
+                                        } else {
+                                            0x7fff_0000
+                                        })
+                                        > 0
+                                {
                                     score = DO_WRITE
                                 } else {
-                                    score = if rec.excluded_out.is_some() {SKIP_FILTERED} else {SKIP_WRITE}
+                                    score = if rec.excluded_out.is_some() {
+                                        SKIP_FILTERED
+                                    } else {
+                                        SKIP_WRITE
+                                    }
                                 }
                             }
                             lookup_and_eval_write(&mut rec, &f, score, originalscore)
@@ -383,7 +451,12 @@ fn hashmap_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
                 }
             }
             line = String::new();
-            let _ = rec.s.read_line(&mut line).map_err(|e| panic!("{}", e)).ok().unwrap();
+            let _ = rec
+                .s
+                .read_line(&mut line)
+                .map_err(|e| panic!("{}", e))
+                .ok()
+                .unwrap();
             rec.v = line.split('\t').map(|x| x.to_owned()).collect();
         }
     }
@@ -397,10 +470,21 @@ fn hashmap_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
                 // mismatches were already subtracted in progress_score()
                 let f_flag = f[1].to_owned().parse::<u32>().unwrap();
                 let is_first_in_pair = (f_flag & SAMFLAG_1ST_IN_PAIR) != 0;
-                if (score & if is_first_in_pair {0xffff} else {0x7fff_0000}) > 0 {
+                if (score
+                    & if is_first_in_pair {
+                        0xffff
+                    } else {
+                        0x7fff_0000
+                    })
+                    > 0
+                {
                     score = DO_WRITE
                 } else {
-                    score = if record[graft].excluded_out.is_some() {SKIP_FILTERED} else {SKIP_WRITE}
+                    score = if record[graft].excluded_out.is_some() {
+                        SKIP_FILTERED
+                    } else {
+                        SKIP_WRITE
+                    }
                 }
             }
             lookup_and_eval_write(&mut record[graft], &f, score, originalscore)
@@ -411,9 +495,7 @@ fn hashmap_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
     eprintln!("Observed {} unique readnames..", readscore.len());
 }
 
-
-
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = App::new("xenofilters");
     let matches = app.version("0.01").author("Roel Kluin <r.kluin@nki.nl>")
         .about("Filter reads n multiple alignments. Reads mapping best in an alignment are piped as configured.")
@@ -494,7 +576,7 @@ fn main() {
 
     let mut record: Vec<SamRec> = vec![];
     for f in matches.values_of("alignments").unwrap().collect::<Vec<_>>() {
-        record.push(SamRec::new(&f));
+        record.push(SamRec::new(&f)?);
     }
     if record.len() > 1 {
         let graft = record.len() - 1;
@@ -507,13 +589,24 @@ fn main() {
         }
 
         let xf_opt = XFOpt::new(
-            matches.value_of("mm_threshold").map_or(4, |s| s.parse::<u32>().unwrap()),
-            matches.value_of("unmapped_penalty").map_or(8, |s| s.parse::<u32>().unwrap()),
-            if matches.is_present("favor_last") {1} else {0},
+            matches
+                .value_of("mm_threshold")
+                .map_or(4, |s| s.parse::<u32>().unwrap()),
+            matches
+                .value_of("unmapped_penalty")
+                .map_or(8, |s| s.parse::<u32>().unwrap()),
+            if matches.is_present("favor_last") {
+                1
+            } else {
+                0
+            },
             matches.is_present("skip_non_primary"),
-            matches.is_present("ignore_clips_beyond_contig"));
+            matches.is_present("ignore_clips_beyond_contig"),
+        );
 
-        let use_hashmap = handle_headers(&mut record, &xf_opt) || !all_same_readname(&mut record) || matches.is_present("use_hashing");
+        let use_hashmap = handle_headers(&mut record, &xf_opt)
+            || !all_same_readname(&mut record)
+            || matches.is_present("use_hashing");
         if use_hashmap {
             eprintln!("Coordinate sorted input or reads not in same order, falling back to hashmap lookup for read names.");
             hashmap_filter(&mut record, &xf_opt);
@@ -524,5 +617,5 @@ fn main() {
     } else {
         eprintln!("At least two alignments required as input");
     }
+    Ok(())
 }
-
