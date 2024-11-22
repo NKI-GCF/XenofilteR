@@ -210,15 +210,11 @@ fn progress_score(r: &mut SamRec, xf_opt: &XFOpt, score: u32) -> u32 {
         }
     } else {
         let is_first_in_pair = (flag & SAMFLAG_1ST_IN_PAIR) != 0;
-        let nm = r.v[r
-            .v
-            .iter()
-            .rposition(|ref x| x.starts_with("NM:i:"))
-            .unwrap()]
-        .get(5..)
-        .map(u32::from_str)
-        .unwrap()
-        .unwrap();
+        let nm = r.v[r.v.iter().rposition(|x| x.starts_with("NM:i:")).unwrap()]
+            .get(5..)
+            .map(u32::from_str)
+            .unwrap()
+            .unwrap();
 
         // if read is mapped: nr-mismatches, nr-clipped
         match cigar_sum(&r.v[5]) {
@@ -291,7 +287,7 @@ fn progress_score(r: &mut SamRec, xf_opt: &XFOpt, score: u32) -> u32 {
 // FIXME: allow writing to both host and graft.
 
 /// requires host and graft reads to be retrieved from alignments for all readnames in the same order.
-fn line_by_line_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
+fn line_by_line_filter(record: &mut [SamRec], xf_opt: &XFOpt) {
     let mut i = 0;
     let default_insert = xf_opt.graft_weight | (xf_opt.graft_weight << 16);
     let mut score: u32 = default_insert;
@@ -381,20 +377,20 @@ fn is_surpassed(f: &[String], tid: &str, pos: i64) -> bool {
 }
 
 /// requires memory, but not that host and graft reads occur in the same order.
-fn hashmap_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
+fn hashmap_filter(record: &mut [SamRec], xf_opt: &XFOpt) {
     let mut readscore: HashMap<String, u32> = HashMap::new();
     let mut pending: VecDeque<Vec<String>> = VecDeque::new();
     let mut line;
     let default_insert = xf_opt.graft_weight | (xf_opt.graft_weight << 16);
 
-    for mut rec in record.iter_mut() {
-        while rec.v[0] != "" {
+    for rec in record.iter_mut() {
+        while !rec.v[0].is_empty() {
             let flag = rec.v[1].to_owned().parse::<u32>().unwrap();
             if (flag & SAMFLAG_NON_PRIMARY) == 0 || !xf_opt.skip_non_primary {
                 {
                     let def = default_insert;
                     let x = readscore.entry(rec.v[0].clone()).or_insert(def);
-                    *x = progress_score(&mut rec, xf_opt, *x);
+                    *x = progress_score(rec, xf_opt, *x);
                 }
                 if rec.w.is_some() {
                     let mut is_partial = false;
@@ -403,7 +399,7 @@ fn hashmap_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
                     let do_process = if let Some(f) = pending.front() {
                         if f[0] == rec.v[0] {
                             true
-                        } else if rec.coord_sorted && is_surpassed(&f, tid, pos) {
+                        } else if rec.coord_sorted && is_surpassed(f, tid, pos) {
                             //assert!(false, "{}\n{}", f.join("\t"), rec.v.join("\t"));
                             is_partial = true;
                             true
@@ -440,11 +436,11 @@ fn hashmap_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
                                     }
                                 }
                             }
-                            lookup_and_eval_write(&mut rec, &f, score, originalscore)
+                            lookup_and_eval_write(rec, f, score, originalscore)
                         }) {
                             let _ = pending.pop_front().unwrap();
                             if let Some(f) = pending.front() {
-                                is_partial = rec.coord_sorted && is_surpassed(&f, tid, pos);
+                                is_partial = rec.coord_sorted && is_surpassed(f, tid, pos);
                             }
                         }
                     }
@@ -487,7 +483,7 @@ fn hashmap_filter(record: &mut Vec<SamRec>, xf_opt: &XFOpt) {
                     }
                 }
             }
-            lookup_and_eval_write(&mut record[graft], &f, score, originalscore)
+            lookup_and_eval_write(&mut record[graft], f, score, originalscore)
         }) {
             let _ = pending.pop_front().unwrap();
         }
@@ -576,16 +572,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut record: Vec<SamRec> = vec![];
     for f in matches.values_of("alignments").unwrap().collect::<Vec<_>>() {
-        record.push(SamRec::new(&f)?);
+        record.push(SamRec::new(f)?);
     }
     if record.len() > 1 {
         let graft = record.len() - 1;
         record[graft].w = match matches.value_of("output") {
-            Some(ref f) => Some(Box::new(File::create(&Path::new(f)).unwrap())),
+            Some(ref f) => Some(Box::new(File::create(Path::new(f)).unwrap())),
             None => Some(Box::new(io::stdout())),
         };
         if let Some(ref f) = matches.value_of("filtered_reads") {
-            record[graft].excluded_out = Some(Box::new(File::create(&Path::new(f)).unwrap()));
+            record[graft].excluded_out = Some(Box::new(File::create(Path::new(f)).unwrap()));
         }
 
         let xf_opt = XFOpt::new(
