@@ -574,44 +574,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for f in matches.values_of("alignments").unwrap().collect::<Vec<_>>() {
         record.push(SamRec::new(f)?);
     }
-    if record.len() > 1 {
-        let graft = record.len() - 1;
-        record[graft].w = match matches.value_of("output") {
-            Some(ref f) => Some(Box::new(File::create(Path::new(f)).unwrap())),
-            None => Some(Box::new(io::stdout())),
-        };
-        if let Some(ref f) = matches.value_of("filtered_reads") {
-            record[graft].excluded_out = Some(Box::new(File::create(Path::new(f)).unwrap()));
-        }
+    if record.len() < 2 {
+        return Err("At least two alignments required as input".into());
+    }
+    let graft = record.len() - 1;
+    record[graft].w = match matches.value_of("output") {
+        Some(ref f) => File::create(Path::new(f))
+            .map(|f| Box::new(f) as Box<dyn Write>)
+            .ok(),
+        None => Some(Box::new(io::stdout())),
+    };
+    if let Some(ref f) = matches.value_of("filtered_reads") {
+        record[graft].excluded_out = File::create(Path::new(f))
+            .map(|f| Box::new(f) as Box<dyn Write>)
+            .ok();
+    }
 
-        let xf_opt = XFOpt::new(
-            matches
-                .value_of("mm_threshold")
-                .map_or(4, |s| s.parse::<u32>().unwrap()),
-            matches
-                .value_of("unmapped_penalty")
-                .map_or(8, |s| s.parse::<u32>().unwrap()),
-            if matches.is_present("favor_last") {
-                1
-            } else {
-                0
-            },
-            matches.is_present("skip_non_primary"),
-            matches.is_present("ignore_clips_beyond_contig"),
-        );
-
-        let use_hashmap = handle_headers(&mut record, &xf_opt)
-            || !all_same_readname(&mut record)
-            || matches.is_present("use_hashing");
-        if use_hashmap {
-            eprintln!("Coordinate sorted input or reads not in same order, falling back to hashmap lookup for read names.");
-            hashmap_filter(&mut record, &xf_opt);
+    let xf_opt = XFOpt::new(
+        matches
+            .value_of("mm_threshold")
+            .map_or(4, |s| s.parse::<u32>().unwrap()),
+        matches
+            .value_of("unmapped_penalty")
+            .map_or(8, |s| s.parse::<u32>().unwrap()),
+        if matches.is_present("favor_last") {
+            1
         } else {
-            eprintln!("Attempting to use line-by-line processing. Requires readnames to be retrieved consecutive and in the same order for host and graft.");
-            line_by_line_filter(&mut record, &xf_opt);
-        }
+            0
+        },
+        matches.is_present("skip_non_primary"),
+        matches.is_present("ignore_clips_beyond_contig"),
+    );
+
+    let use_hashmap = handle_headers(&mut record, &xf_opt)
+        || !all_same_readname(&mut record)
+        || matches.is_present("use_hashing");
+    if use_hashmap {
+        eprintln!("Coordinate sorted input or reads not in same order, falling back to hashmap lookup for read names.");
+        hashmap_filter(&mut record, &xf_opt);
     } else {
-        eprintln!("At least two alignments required as input");
+        eprintln!("Attempting to use line-by-line processing. Requires readnames to be retrieved consecutive and in the same order for host and graft.");
+        line_by_line_filter(&mut record, &xf_opt);
     }
     Ok(())
 }
