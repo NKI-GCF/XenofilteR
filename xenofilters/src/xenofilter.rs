@@ -4,7 +4,7 @@ extern crate nom;
 extern crate derive_new;
 extern crate clap;
 extern crate core;
-use clap::{App, Arg};
+use clap::Parser;
 use nom::digit;
 use std::{
     cmp::min,
@@ -24,6 +24,66 @@ use std::{
 
 // cargo rustc -- -Z trace-macros
 // cargo +nightly clippy
+
+/// Xenofilter: a tool to filter out xenograft reads from a host alignment.
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    #[command(flatten)]
+    delegate: XFOpt,
+
+    ///On equal alignment score, consider read to be the last alignment.
+    #[arg(short, long)]
+    favor_last: bool,
+
+    /// Write reads kept from last alignment to this file (unless specified, default is stdout).
+    #[arg(short, long)]
+    output: Option<String>,
+
+    /// Write mapping reads, excluded from last alignment to this file.
+    #[arg(short, long)]
+    filtered_reads: Option<String>,
+
+    /// Enforce hashing algorithm.
+    #[arg(short, long)]
+    use_hashing: bool,
+
+    /// Alignments, 2 at least required. If reads - readnames of alignments - are consecutive and
+    /// in the same order for all alignment inputs, a low memory non-hashing strategy is adopted.
+    #[arg()]
+    alignments: Vec<String>,
+}
+
+// TODO:
+// 1: scheid per readgroup (vereist readgroup ammendment)
+// 2: behandel clippings in primary/non-primary beter
+//
+
+/// Xenofilter options.
+#[derive(Args)]
+#[command(PARENT CMD ATTRIBUTE)]
+#[group(required = false)]
+struct XFOpt {
+    /// Number of mismatches allowed in the second alignment.
+    #[arg(short, long, default_value = "4")]
+    mm_threshold: u32,
+
+    /// Penalty given to unmapped reads in favor of the alternative alignment. 0 to disable.
+    #[arg(short, long, default_value = "8")]
+    unmapped_penalty: u32,
+
+    /// On equal alignment score, consider read to be the last alignment.
+    #[arg(short, long)]
+    graft_weight: u32,
+
+    /// skip non primary mappings even if the primary mapping is written.
+    #[arg(short, long)]
+    skip_non_primary: bool,
+
+    /// Ignore clips in reads before start of contig.
+    #[arg(short, long)]
+    ignore_clips_beyond_contig: bool,
+}
 
 const PENDING: u32 = 0x8000_0000;
 const SKIP_WRITE: u32 = 0xffff_ffff;
@@ -56,20 +116,6 @@ named!(cigar_sum<&str, u32>, fold_many1!(cigar, 0, |acc, v| {
     //println!("cigar_sum: {}, {}", acc, v);
     acc + v
 }));
-
-// TODO:
-// 1: scheid per readgroup (vereist readgroup ammendment)
-// 2: behandel clippings in primary/non-primary beter
-//
-
-#[derive(new)]
-struct XFOpt {
-    mm_threshold: u32,
-    unmapped_penalty: u32,
-    graft_weight: u32,
-    skip_non_primary: bool,
-    ignore_clips_beyond_contig: bool,
-}
 
 struct SamRec {
     contig_len: HashMap<String, u32>,
@@ -492,82 +538,9 @@ fn hashmap_filter(record: &mut [SamRec], xf_opt: &XFOpt) {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let app = App::new("xenofilters");
-    let matches = app.version("0.01").author("Roel Kluin <r.kluin@nki.nl>")
-        .about("Filter reads n multiple alignments. Reads mapping best in an alignment are piped as configured.")
-        .arg(
-                Arg::with_name("mm_threshold")
-                    .help("Number of mismatches allowed in the second alignment.")
-                    .long("mismatch-threshold")
-                    .short("m")
-                    .value_name("INT")
-                    .required(false)
-                    .takes_value(true),
-            )
-        .arg(
-                Arg::with_name("unmapped_penalty")
-                    .help("Penalty given to unmapped reads in favor of the alternative alignment. Set to 0 to disable this.")
-                    .short("u")
-                    .value_name("INT")
-                    .long("unmapped-penalty")
-                    .required(false)
-                    .takes_value(true),
-            )
-        .arg(
-                Arg::with_name("favor_last")
-                    .help("On equal alignment score, consider read to be the last alignment.")
-                    .long("favor-last-alignment")
-                    .short("l")
-                    .required(false)
-            )
-        .arg(
-                Arg::with_name("skip_non_primary")
-                    .help("skip non primary mappings even if the primary mapping is written.")
-                    .long("skip-non-primary")
-                    .short("p")
-                    .required(false)
-            )
-        .arg(
-                Arg::with_name("output")
-                    .help("Write reads kept from last alignment to this file (unless specified, default is stdout).")
-                    .required(false)
-                    .long("output")
-                    .short("o")
-                    .value_name("FILE")
-                    .number_of_values(1),
-            )
-        .arg(
-                Arg::with_name("filtered_reads")
-                    .help("Write mapping reads, excluded from last alignment to this file.")
-                    .required(false)
-                    .long("filtered-reads")
-                    .short("f")
-                    .value_name("FILE")
-                    .number_of_values(1),
-            )
-        .arg(
-                Arg::with_name("use_hashing")
-                    .help("Enforce hashing algorithm.")
-                    .required(false)
-                    .long("use-hashing")
-                    .short("H")
-            )
-        .arg(
-                Arg::with_name("ignore_clips_beyond_contig")
-                    .help("Ignore clips in reads before start of contig.")
-                    .required(false)
-                    .long("ignore-clips-beyond-contig")
-                    .short("C")
-            )
-        .arg(
-                Arg::with_name("alignments")
-                    .help("Alignments, 2 at least required. If reads - readnames of alignments - are consecutive and in the same order for all alignment inputs, a low memory non-hashing strategy is adopted.")
-                    .required(true)
-                    .multiple(true)
-                    .number_of_values(1),
-            )
+    let args = Args::parse();
 
-        .get_matches();
+    let matches = args.get_matches();
     // hla: --favor-last-alignment --ignore-clips-beyond-contig -m 5 -u 0
 
     let mut record: Vec<SamRec> = vec![];

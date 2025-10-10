@@ -1,0 +1,52 @@
+use std::str::FromStr;
+use std::path::PathBuf;
+
+use anyhow::{anyhow, Result};
+use rust_htslib::bam::{self, Format, HeaderView};
+use clap::ValueEnum;
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+pub enum BamFormat {
+    Bam,
+    Sam,
+    Cram,
+}
+
+impl FromStr for BamFormat {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "bam" => Ok(BamFormat::Bam),
+            "sam" => Ok(BamFormat::Sam),
+            "cram" => Ok(BamFormat::Cram),
+            _ => Err(format!("Invalid format: {}", s)),
+        }
+    }
+}
+
+impl From<BamFormat> for Format {
+    fn from(f: BamFormat) -> Self {
+        match f {
+            BamFormat::Bam => Format::Bam,
+            BamFormat::Sam => Format::Sam,
+            BamFormat::Cram => Format::Cram,
+        }
+    }
+}
+
+pub(crate) fn out_from_file(f: &PathBuf, hdr_view: &HeaderView) -> Result<bam::Writer> {
+    let f_str = f.extension().unwrap_or(f.as_os_str()).to_str().expect("non utf-8 filename");
+    let fmt = <BamFormat as FromStr>::from_str(f_str).map_err(|e| anyhow!(e))?.into();
+    let hdr = bam::Header::from_template(hdr_view);
+    Ok(bam::Writer::from_path(f, &hdr, fmt)?)
+}
+
+pub(crate) fn out_stdout(hdr_view: &HeaderView, fmt: Format) -> Result<bam::Writer> {
+    let hdr = bam::Header::from_template(hdr_view);
+    let mut ob = bam::Writer::from_stdout(&hdr, fmt)?;
+    if let bam::Format::Bam = fmt {
+        ob.set_compression_level(rust_htslib::bam::CompressionLevel::Fastest)?;
+    }
+    Ok(ob)
+}

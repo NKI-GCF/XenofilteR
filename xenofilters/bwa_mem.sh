@@ -49,9 +49,9 @@ BWA_ARGS="$@"
 
 BN="${bam%.bam}"
 
-rg="@RG\tID:$(mktemp -u | cut -d '.' -f 2)\tPL:ILLUMINA\tSM:$BN\tLB:$BN"
+rg="@RG\tID:$(mktemp -u | cut -d '.' -f 2)\tCN:$(whoami)\tPL:ILLUMINA\tSM:$BN\tLB:$BN"
 target/release/xenofilter <($bwa mem $BWA_ARGS -R "$rg" $graft $fq1 $fq2) \
-<($bwa mem $BWA_ARGS $host $fq1 $fq2) --filtered-reads >($samtools sort -m 1294967296 -@2 - -o $bam.host.bam) |
+<($bwa mem $BWA_ARGS $host $fq1 $fq2) |
 $samtools view -Sbu - | $samtools sort -m 1294967296 -@2 - -o $bam &&
 $samtools index $bam
 

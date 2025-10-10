@@ -1,13 +1,21 @@
 [package]
 name = "xenofilter"
 version = "0.1.0"
+edition = "2024"
+description = "Filter or distribute reads according to read name from multiple alignments"
 authors = ["Roel Kluin <r.kluin@nki.nl>"]
 
+[package.metadata]
+MAX_ALN = "4"
+
 [dependencies]
-clap = "~2.27.0"
-nom = "^4.0"
-derive-new = "0.5"
+clap = { version = "4.5.48", features = ["derive"] }
+anyhow = "1.0.58"
+rust-htslib = "0.40.2"
+once_cell = "1.21.3"
+smallvec = "1.15.1"
+
 
 [[bin]]
-build = "src/xenofilter.rs"
 name = "xenofilter"
+path = "src/main.rs"
