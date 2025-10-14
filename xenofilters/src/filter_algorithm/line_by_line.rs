@@ -1,19 +1,25 @@
-use anyhow::{Result, bail, ensure};
+use anyhow::{Result, ensure};
 use smallvec::{SmallVec, smallvec};
+use rust_htslib::bam::record::Record;
 
 use crate::aln_stream::AlnStream;
 use crate::Config;
-use crate::fragment_state::FragmentState;
+use crate::fragment::FragmentState;
+
+type AlnState = (usize, FragmentState);
+type AlnBuffer = SmallVec<[AlnState; 2]>;
 
 pub struct LineByLine {
     aln: SmallVec<[AlnStream; 2]>,
+    log_likelihood_mismatch: [f64; 95],
     config: Config,
 }
 
 impl LineByLine {
-    pub fn new(config: Config, aln: SmallVec<[AlnStream; 2]>) -> Result<Self> {
+    pub fn new(config: Config, log_likelihood_mismatch: [f64; 95], aln: SmallVec<[AlnStream; 2]>) -> Result<Self> {
         Ok(LineByLine {
             aln,
+            log_likelihood_mismatch,
             config,
         })
     }
@@ -27,65 +33,61 @@ impl LineByLine {
         }
         Ok(())
     }
+    fn handle_record(&mut self, i: usize, fst_rec: Record, best: &mut AlnBuffer) -> bool {
 
-    pub fn process(&mut self) -> Result<()> {
-        let mut best: SmallVec<[(usize, FragmentState); 1]> = smallvec![];
-        
-        while let Some(fst_rec) = self.aln[0].next_rec()? {
-            if self.config.skip_secondary && fst_rec.is_secondary() {
-                continue;
-            }
-            ensure!(best.is_empty(), "Internal error: best not empty at start of loop");
-            best[0] = (0, FragmentState::from_record(fst_rec));
-
-            while let Some(nxt_rec) = self.aln[0].next_rec()? {
-                if self.config.skip_secondary && nxt_rec.is_secondary() {
-                    continue;
+        if !(self.config.skip_secondary && fst_rec.is_secondary()) {
+            if let Some(new_readname) = best.first().map(|b| b.1.first_qname() != fst_rec.qname()) {
+                if new_readname {
+                    // end of round
+                    self.aln[i].un_next(fst_rec);
+                    return true
                 }
-                if nxt_rec.qname() == best[0].1.first_qname() {
-                    best[0].1.add_record(nxt_rec);
-                } else {
-                    self.aln[0].un_next(nxt_rec);
-                    break;
-                }
-            }
-            for i in 1..self.aln.len() {
-                let mut fragment_state = if let Some(alt_rec) = self.aln[i].next_rec()? {
-                    FragmentState::from_record(alt_rec)
-                } else {
-                    bail!("alignment {i} has no more reads");
-                };
-                while let Some(alt_rec) = self.aln[i].next_rec()? {
-                    if self.config.skip_secondary && alt_rec.is_secondary() {
-                        continue;
-                    }
-                    if alt_rec.qname() == best[0].1.first_qname() {
-                        fragment_state.add_record(alt_rec);
-                    } else {
-                        self.aln[i].un_next(alt_rec);
+                // same readname, add to existing best
+                for (j, state) in best.iter_mut().rev() {
+                    if *j == i {
+                        state.add_record(fst_rec);
                         break;
                     }
                 }
-                if fragment_state > best[0].1 {
-                    for (i, state) in best.drain(..) {
-                        self.filter_records(i, state)?;
+            } else {
+                // first record
+                best.push((i, FragmentState::from_record(fst_rec, self.log_likelihood_mismatch)));
+            }
+        }
+        false
+    }
+
+    pub fn process(&mut self) -> Result<()> {
+
+        let mut best: AlnBuffer = smallvec![];
+
+        let mut i = 0;
+        while let Some(fst_rec) = self.aln[i].next_rec()? {
+            let incr = self.handle_record(i, fst_rec, &mut best);
+            if incr {
+                if i == 1 && best[0].1 > best[1].1 {
+                    best.swap(0, 1);
+                }
+                i += 1;
+                if i == self.aln.len() {
+                    while best.len() > 1 && best.last().unwrap().1 < best[0].1 {
+                        let (n, state) = best.pop().unwrap();
+                        self.filter_records(n, state)?;
                     }
-                    best[0] = (i, fragment_state);
-                } else if fragment_state == best[0].1 {
-                    best.push((i, fragment_state));
-                } else {
-                    self.filter_records(i, fragment_state)?;
+                    let best_state = (best.len() == 1).then_some(true);
+
+                    for (i, mut state) in best.drain(..) {
+                        for rec in state.drain() {
+                            self.aln[i].write_record(rec, best_state)?;
+                        }
+                    }
+                    i = 0;
                 }
             }
+        }
 
-            // None state for ambiguous
-            let best_state = (best.len() == 1).then_some(true);
-
-            for (i, mut state) in best.drain(..) {
-                for rec in state.drain() {
-                    self.aln[i].write_record(rec, best_state)?;
-                }
-            }
+        for i in 0..self.aln.len() {
+            ensure!(self.aln[i].next_rec()?.is_none(), "alignment {i} still has reads");
         }
         Ok(())
     }

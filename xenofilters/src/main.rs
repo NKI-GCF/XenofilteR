@@ -5,22 +5,46 @@ extern crate rust_htslib;
 extern crate core;
 extern crate smallvec;
 
+mod aln_stream;
+mod filter_algorithm;
+mod bam_format;
+mod alignment;
+mod fragment;
+
 use std::path::PathBuf;
 
 use anyhow::{ensure, Result};
 use clap::Parser;
+use once_cell::sync::Lazy;
 use smallvec::{SmallVec, smallvec};
 
-mod aln_stream;
-mod fragment_state;
-mod filter_algorithm;
-mod bam_format;
 use bam_format::BamFormat;
 use aln_stream::AlnStream;
 //use filter_algorithm::hasher::Hasher;
 use filter_algorithm::line_by_line::LineByLine;
 
+
+pub use alignment::*;
+pub use fragment::{FragmentState, Evaluation};
+
 const ARG_MAX: usize = 4;
+const MAX_Q: usize = 93;
+
+static ERROR_PROB: Lazy<[f64; MAX_Q]> = Lazy::new(|| {
+    let mut arr = [0.0_f64; MAX_Q];
+    for (q, item) in arr.iter_mut().enumerate() {
+        *item = 10f64.powf(-(q as f64) / 10.0); // x = 10^{-Q/10
+    }
+    arr
+});
+
+static LOG_LIKELIHOOD_MATCH: Lazy<[f64; MAX_Q]> = Lazy::new(|| {
+    let mut arr = [0.0_f64; MAX_Q];
+    for (q, item) in arr.iter_mut().enumerate() {
+        *item = (1.0 - ERROR_PROB[q]).log10();  // ln(1 - x)
+    }
+    arr
+});
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about=None)]
@@ -54,6 +78,18 @@ pub struct Config {
     #[clap(short = 'U', long, default_value = "false")]
     pub discard_unmapped: bool,
 
+    /// Gap open penalty (affects indels)
+    #[clap(short, long, default_value = "6", value_parser = clap::value_parser!(f64))]
+    pub gap_open: f64,
+
+    /// Gap extend penalty (affects indels)
+    #[clap(short, long, default_value = "1", value_parser = clap::value_parser!(f64))]
+    pub gap_extend: f64,
+
+    /// Mismatch penalty (affects mismatches)
+    #[clap(short, long, default_value = "4", value_parser = clap::value_parser!(f64))]
+    pub mismatch_penalty: f64,
+
     /*/// Number of mismatches allowed in the second alignment
     #[clap(short, long, default_value = "4")]
     pub mismatch_threshold: u32,
@@ -86,12 +122,24 @@ fn main() -> Result<()> {
     ensure!(config.alignment.len() >= 2, "At least two alignments required");
     ensure!(!config.read_from_stdin || config.alignment.len() == 1, "Cannot read from stdin with multiple input alignments");
 
+    let mut log_likelihood_mismatch = [0.0f64; MAX_Q + 2];
+
+    for q in 0..MAX_Q {
+        // mismatch likelihood (includes penalty)
+        log_likelihood_mismatch[q] = (ERROR_PROB[q] / 3.0).ln() - config.mismatch_penalty;
+    }
+    if config.gap_open <= 0.0 || config.gap_extend < 0.0 {
+        return Err(anyhow::anyhow!("Gap open/extend penalties must be positive"));
+    }
+    log_likelihood_mismatch[MAX_Q] = -config.gap_open; // gap open penalty
+    log_likelihood_mismatch[MAX_Q + 1] = -config.gap_extend; // gap extend penalty
+
     // first alignment to quick check readnames are in same name order
     let mut aln: SmallVec<[AlnStream; 2]> = smallvec![];
     for i in 0..config.alignment.len() {
         aln.push(AlnStream::new(&config, i)?);
     }
-    let mut line_by_line = LineByLine::new(config, aln)?;
+    let mut line_by_line = LineByLine::new(config, log_likelihood_mismatch, aln)?;
     line_by_line.process()
 }
 
