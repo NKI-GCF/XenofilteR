@@ -49,15 +49,15 @@ static LOG_LIKELIHOOD_MATCH: Lazy<[f64; MAX_Q]> = Lazy::new(|| {
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about=None)]
 pub struct Config {
-    /// Assign reads matching the last alignment to this file. Writes to stdout when omitted
+    /// Assign fragments matching alignment to these respective files. Writes first alignment to stdout when omitted
     #[clap(short, long, num_args = 0..ARG_MAX)]
     pub output: Vec<PathBuf>,
 
-    /// Ditch reads distancing the last alignment to this file. Writes to stdout when omitted
+    /// Discard fragments distancing more in alignment to these files. Default: do not discard
     #[clap(short, long, num_args = 0..ARG_MAX)]
     pub filtered_output: Vec<PathBuf>,
 
-    /// Write ambiguous reads (equally good mappings) to this file. Default: do not write
+    /// Write ambiguous reads (equally good mappings) to these files. Default: do not write
     #[clap(short, long, num_args = 0..ARG_MAX)]
     pub ambiguous_output: Vec<PathBuf>,
 
