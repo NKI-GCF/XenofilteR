@@ -4,7 +4,7 @@ use super::{AlignmentOp, MdOp, AlignmentError};
 
 pub struct AlignmentIterator<'a> {
     cigar: CigarStringView,
-    md_iter: std::iter::Peekable<std::vec::IntoIter<MdOp>>,
+    md_iter: std::vec::IntoIter<MdOp>,
     qual: &'a [u8],
     read_i: usize,
     current_cigar_op: Option<(Cigar, u32)>,
@@ -15,7 +15,7 @@ impl<'a> AlignmentIterator<'a> {
     pub fn new(cigar: CigarStringView, md_ops: Vec<MdOp>, qual: &'a [u8]) -> Self {
         AlignmentIterator {
             cigar,
-            md_iter: md_ops.into_iter().peekable(),
+            md_iter: md_ops.into_iter(),
             qual,
             read_i: 0,
             current_cigar_op: None,
@@ -60,7 +60,7 @@ impl<'a> Iterator for AlignmentIterator<'a> {
                             }
                             Some(MdOp::Mismatch) => Ok(AlignmentOp::Mismatch(q)),
                             // An MD Deletion cannot occur during a CIGAR Match.
-                            Some(MdOp::Deletion(_)) => Err(AlignmentError::MismatchedDeletion),
+                            Some(MdOp::Deletion) => Err(AlignmentError::MismatchedDeletion),
                             None => Err(AlignmentError::UnexpectedMdEnd),
                         }
                     }
@@ -76,13 +76,7 @@ impl<'a> Iterator for AlignmentIterator<'a> {
                             self.current_md_op = self.md_iter.next();
                         }
                         match self.current_md_op.take() {
-                            Some(MdOp::Deletion(mut del_bases)) => {
-                                del_bases.remove(0);
-                                if !del_bases.is_empty() {
-                                    self.current_md_op = Some(MdOp::Deletion(del_bases));
-                                }
-                                Ok(AlignmentOp::Deletion)
-                            }
+                            Some(MdOp::Deletion) => Ok(AlignmentOp::Deletion),
                             _ => Err(AlignmentError::MissingMdDeletion),
                         }
                     }

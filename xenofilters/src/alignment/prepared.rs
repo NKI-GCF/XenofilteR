@@ -1,7 +1,7 @@
 use rust_htslib::bam::record::{Aux, Cigar, CigarStringView, Record};
 use anyhow::Result;
-use crate::{MAX_Q, LOG_LIKELIHOOD_MATCH};
-use super::{MdOp, parse_md, PrepareError, AlignmentIterator, AlignmentOp};
+use crate::{MAX_Q, LOG_LIKELIHOOD_MATCH, AlignmentOp};
+use super::{MdOp, parse_md, PrepareError, AlignmentIterator};
 
 pub struct PreparedAlignment<'a> {
     cigar: Option<CigarStringView>,

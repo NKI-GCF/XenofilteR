@@ -11,40 +11,35 @@ pub enum AlignmentOp {
 pub enum MdOp {
     Match(u64),
     Mismatch,
-    Deletion(Vec<u8>),
+    Deletion,
 }
 
 pub fn parse_md(md: &str) -> Vec<MdOp> {
     let mut ops = Vec::new();
-    let mut num = String::new();
-    let mut chars = md.chars().peekable();
+    let mut num = 0;
+    let mut chars = md.chars();
+    let mut in_deletion = false;
 
     while let Some(c) = chars.next() {
         if c.is_ascii_digit() {
-            num.push(c);
+            num = (num * 10) + (c as u64 - '0' as u64);
+            in_deletion = false;
+        } else if c == '^' {
+            in_deletion = true;
         } else {
-            if !num.is_empty() {
-                ops.push(MdOp::Match(num.parse().unwrap()));
-                num.clear();
+            if num > 0 {
+                ops.push(MdOp::Match(num));
+                num = 0;
             }
-            if c == '^' {
-                let mut del = Vec::new();
-                while let Some(&d) = chars.peek() {
-                    if d.is_ascii_alphabetic() {
-                        del.push(d as u8);
-                        chars.next();
-                    } else {
-                        break;
-                    }
-                }
-                ops.push(MdOp::Deletion(del));
+            if in_deletion {
+                ops.push(MdOp::Deletion);
             } else {
                 ops.push(MdOp::Mismatch);
             }
         }
     }
-    if !num.is_empty() {
-        ops.push(MdOp::Match(num.parse().unwrap()));
+    if num > 0 {
+        ops.push(MdOp::Match(num));
     }
     ops
 }
