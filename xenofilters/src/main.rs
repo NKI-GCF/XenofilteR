@@ -62,7 +62,7 @@ pub struct Config {
     pub ambiguous_output: Vec<PathBuf>,
 
     /// ouput format of stdout
-    #[clap(short, long, default_value = "bam")]
+    #[clap(short = 'O', long, default_value = "bam")]
     pub stdout_format: BamFormat,
 
     /// Input alignments to compare. If the same readnames are consecutive and in the same order for
@@ -83,7 +83,7 @@ pub struct Config {
     pub gap_open: f64,
 
     /// Gap extend penalty (affects indels)
-    #[clap(short, long, default_value = "1", value_parser = clap::value_parser!(f64))]
+    #[clap(short = 'e', long, default_value = "1", value_parser = clap::value_parser!(f64))]
     pub gap_extend: f64,
 
     /// Mismatch penalty (affects mismatches)

@@ -17,10 +17,9 @@ impl FromStr for BamFormat {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "bam" => Ok(BamFormat::Bam),
             "sam" => Ok(BamFormat::Sam),
             "cram" => Ok(BamFormat::Cram),
-            _ => Err(format!("Invalid format: {}", s)),
+            _ => Ok(BamFormat::Bam),
         }
     }
 }
