@@ -1,34 +1,42 @@
 use rust_htslib::bam::record::{Aux, Cigar, CigarStringView, Record};
 use anyhow::Result;
 use crate::{MAX_Q, LOG_LIKELIHOOD_MATCH, AlignmentOp};
-use super::{MdOp, parse_md, PrepareError, AlignmentIterator};
+use super::{MdOp, MdOpIterator, PrepareError, AlignmentIterator};
 
 pub struct PreparedAlignment<'a> {
     cigar: Option<CigarStringView>,
-    md_ops: Vec<MdOp>,
+    md_iter: Option<MdOpIterator<'a>>,
     qual: &'a [u8],
 }
 
 impl<'a> PreparedAlignment<'a> {
-    pub fn is_perfect_match(&self) -> bool {
-        if let Some(cigar) = &self.cigar {
-            cigar.iter().all(|c| matches!(c, Cigar::Match(_) | Cigar::Equal(_)))
-                && self.md_ops.iter().all(|m| matches!(m, MdOp::Match(_)))
-        } else {
-            false
+    pub fn is_perfect_match(&mut self) -> bool {
+        if let Some(cigar) = &self.cigar
+            && cigar.iter().all(|c| matches!(c, Cigar::Match(_) | Cigar::Equal(_)))
+                && let Some(md_iter) = &mut self.md_iter {
+            return md_iter.all(|m| matches!(m, MdOp::Match(_)));
         }
+        false
     }
 
+    /// Scores the alignment using the provided log likelihood mismatch array.
+    /// If no CIGAR is present (unmapped read), it sums the mismatch scores for each base quality.
+    /// If a CIGAR is present, it uses the CIGAR and MD tag to compute the score.
+    /// The log_likelihood_mismatch array must have length MAX_Q + 2, where the last two entries
+    /// are used for gap open and gap extension penalties.
+    ///
+    /// Higher scores are better, with perfect matches scoring f64::INFINITY.
+    ///
     pub fn score(mut self, log_likelihood_mismatch: &[f64; MAX_Q + 2]) -> Result<f64> {
         if let Some(cigar) = self.cigar.take() {
             let mut score = 0.0_f64;
             let gap_open = log_likelihood_mismatch[MAX_Q];
             let gap_ext = log_likelihood_mismatch[MAX_Q + 1];
 
-            // --- State for Affine Gap Penalties ---
-            let mut indel_gap = None; // None, Some(true)=insertion, Some(false)=deletion
-                                  //
-            let aln_iter = AlignmentIterator::new(cigar, self.md_ops.clone(), self.qual);
+            let mut indel_gap = None; // Some(true)=insertion, Some(false)=deletion
+
+            let md_iter = self.md_iter.take().ok_or(PrepareError::NoMdTag)?;
+            let aln_iter = AlignmentIterator::new(cigar, md_iter, self.qual);
 
             for op in aln_iter {
                 match op? {
@@ -42,10 +50,10 @@ impl<'a> PreparedAlignment<'a> {
                     },
                     AlignmentOp::Insertion(_q) => {
                         if indel_gap != Some(true) {
-                            score += gap_open; // Add open penalty only for the first base in the gap.
+                            score += gap_open;
                             indel_gap = Some(true)
                         }
-                        score += gap_ext; // Add extend penalty for every base.
+                        score += gap_ext;
                     },
                     AlignmentOp::Deletion => {
                         if indel_gap == Some(false) {
@@ -85,26 +93,22 @@ impl<'a> Iterator for PreparedAlignmentIter<'a> {
             }
 
             if r.is_unmapped() {
-                // An unmapped read is a valid item to yield for potential scoring.
                 return Some(Ok(PreparedAlignment {
                     cigar: None,
-                    md_ops: vec![],
+                    md_iter: None,
                     qual: r.qual(),
                 }));
             }
 
-            let md_str = match r.aux(b"MD") {
-                Ok(Aux::String(md)) => md,
+            let md_iter = match r.aux(b"MD") {
+                Ok(Aux::String(md)) => Some(MdOpIterator::new(md)),
                 Ok(_) => return Some(Err(PrepareError::NoMdTag)),
                 Err(e) => return Some(Err(PrepareError::AuxError(e.to_string()))),
             };
 
-            let md_ops = parse_md(md_str);
-            let cigar = Some(r.cigar());
-
             return Some(Ok(PreparedAlignment {
-                cigar,
-                md_ops,
+                cigar: Some(r.cigar()),
+                md_iter,
                 qual: r.qual(),
             }));
         }

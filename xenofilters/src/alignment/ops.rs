@@ -14,32 +14,66 @@ pub enum MdOp {
     Deletion,
 }
 
-pub fn parse_md(md: &str) -> Vec<MdOp> {
-    let mut ops = Vec::new();
-    let mut num = 0;
-    let mut chars = md.chars();
-    let mut in_deletion = false;
+pub struct MdOpIterator<'a> {
+    chars: std::str::Chars<'a>,
+    // State is simpler: just the number being built and a flag.
+    num: u64,
+    in_deletion: bool,
+}
 
-    while let Some(c) = chars.next() {
-        if c.is_ascii_digit() {
-            num = (num * 10) + (c as u64 - '0' as u64);
-            in_deletion = false;
-        } else if c == '^' {
-            in_deletion = true;
-        } else {
-            if num > 0 {
-                ops.push(MdOp::Match(num));
-                num = 0;
+impl<'a> MdOpIterator<'a> {
+    pub fn new(md: &'a str) -> Self {
+        MdOpIterator {
+            chars: md.chars(),
+            num: 0,
+            in_deletion: false,
+        }
+    }
+}
+
+impl<'a> Iterator for MdOpIterator<'a> {
+    type Item = MdOp;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let c = match self.chars.next() {
+                Some(c) => c,
+                None => {
+                    if self.num > 0 {
+                        let match_op = MdOp::Match(self.num);
+                        self.num = 0;
+                        return Some(match_op);
+                    }
+                    return None;
+                }
+            };
+
+            if c.is_ascii_digit() {
+                self.num = (self.num * 10) + (c as u64 - '0' as u64);
+                self.in_deletion = false;
+                continue;
             }
-            if in_deletion {
-                ops.push(MdOp::Deletion);
+
+            if self.num > 0 {
+                let match_op = MdOp::Match(self.num);
+                self.num = 0;
+                if c == '^' {
+                    self.in_deletion = true;
+                }
+                return Some(match_op);
+            }
+
+            if c == '^' {
+                self.in_deletion = true;
+                continue;
+            }
+
+            if self.in_deletion {
+                self.in_deletion = false;
+                return Some(MdOp::Deletion);
             } else {
-                ops.push(MdOp::Mismatch);
+                return Some(MdOp::Mismatch);
             }
         }
     }
-    if num > 0 {
-        ops.push(MdOp::Match(num));
-    }
-    ops
 }

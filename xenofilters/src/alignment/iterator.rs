@@ -1,10 +1,10 @@
 use rust_htslib::bam::record::{Cigar, CigarStringView};
 use anyhow::Result;
-use super::{AlignmentOp, MdOp, AlignmentError};
+use super::{AlignmentOp, MdOp, MdOpIterator, AlignmentError};
 
 pub struct AlignmentIterator<'a> {
     cigar: CigarStringView,
-    md_iter: std::vec::IntoIter<MdOp>,
+    md_iter: MdOpIterator<'a>,
     qual: &'a [u8],
     read_i: usize,
     current_cigar_op: Option<(Cigar, u32)>,
@@ -12,10 +12,10 @@ pub struct AlignmentIterator<'a> {
 }
 
 impl<'a> AlignmentIterator<'a> {
-    pub fn new(cigar: CigarStringView, md_ops: Vec<MdOp>, qual: &'a [u8]) -> Self {
+    pub fn new(cigar: CigarStringView, md_iter: MdOpIterator<'a>, qual: &'a [u8]) -> Self {
         AlignmentIterator {
             cigar,
-            md_iter: md_ops.into_iter(),
+            md_iter,
             qual,
             read_i: 0,
             current_cigar_op: None,

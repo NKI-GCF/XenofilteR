@@ -63,8 +63,7 @@ impl LineByLine {
 
         let mut i = 0;
         while let Some(fst_rec) = self.aln[i].next_rec()? {
-            let incr = self.handle_record(i, fst_rec, &mut best);
-            if incr {
+            if self.handle_record(i, fst_rec, &mut best) {
                 if i == 1 && best[0].1 > best[1].1 {
                     best.swap(0, 1);
                 }
