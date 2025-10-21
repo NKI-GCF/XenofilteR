@@ -29,11 +29,12 @@ pub use fragment::{FragmentState, Evaluation};
 
 const ARG_MAX: usize = 4;
 const MAX_Q: usize = 93;
+const REFERENCE_PENALTY: f64 = 4.0;
 
 static ERROR_PROB: Lazy<[f64; MAX_Q]> = Lazy::new(|| {
     let mut arr = [0.0_f64; MAX_Q];
     for (q, item) in arr.iter_mut().enumerate() {
-        *item = 10f64.powf(-(q as f64) / 10.0); // x = 10^{-Q/10
+        *item = 10f64.powf(-(q as f64) / 10.0); // x = 10^{-Q/10}
     }
     arr
 });
@@ -41,7 +42,7 @@ static ERROR_PROB: Lazy<[f64; MAX_Q]> = Lazy::new(|| {
 static LOG_LIKELIHOOD_MATCH: Lazy<[f64; MAX_Q]> = Lazy::new(|| {
     let mut arr = [0.0_f64; MAX_Q];
     for (q, item) in arr.iter_mut().enumerate() {
-        *item = (1.0 - ERROR_PROB[q]).log10();  // ln(1 - x)
+    *item = (1.0 - ERROR_PROB[q]).log10();
     }
     arr
 });
@@ -90,6 +91,10 @@ pub struct Config {
     #[clap(short, long, default_value = "4", value_parser = clap::value_parser!(f64))]
     pub mismatch_penalty: f64,
 
+    /// strip fastq-style /1 and /2 from read names when comparing
+    #[clap(short='R', long)]
+    pub strip_read_suffix: Option<bool>,
+
     /*/// Number of mismatches allowed in the second alignment
     #[clap(short, long, default_value = "4")]
     pub mismatch_threshold: u32,
@@ -108,13 +113,7 @@ pub struct Config {
 }
 
 fn main() -> Result<()> {
-    let config = Config::parse();
-    // hla: --favor-last-alignment --ignore-clips-beyond-contig -m 5 -u 0
-
-    /*if config.second_unmapped_penalty == 0x8000 {
-        config.second_unmapped_penalty = config.unmapped_penalty;
-    }
-    config.unmapped_penalty <<= 16;*/
+    let mut config = Config::parse();
 
     ensure!(config.output.len() <= config.alignment.len(), "More output than input specified");
     ensure!(config.filtered_output.len() <= config.alignment.len(), "More filtered output than input specified");
@@ -122,14 +121,16 @@ fn main() -> Result<()> {
     ensure!(config.alignment.len() >= 2, "At least two alignments required");
     ensure!(!config.read_from_stdin || config.alignment.len() == 1, "Cannot read from stdin with multiple input alignments");
 
-    let mut log_likelihood_mismatch = [0.0f64; MAX_Q + 2];
-
-    for q in 0..MAX_Q {
-        // mismatch likelihood (includes penalty)
-        log_likelihood_mismatch[q] = (ERROR_PROB[q] / 3.0).ln() - config.mismatch_penalty;
-    }
-    if config.gap_open <= 0.0 || config.gap_extend < 0.0 {
+    if config.gap_open <= 0.0 || config.gap_extend < 0.0 || config.mismatch_penalty <= 0.0 {
         return Err(anyhow::anyhow!("Gap open/extend penalties must be positive"));
+    }
+
+    let mut log_likelihood_mismatch = [0.0f64; MAX_Q + 2];
+    let scaling_factor = config.mismatch_penalty / REFERENCE_PENALTY;
+
+    for (q, item) in log_likelihood_mismatch.iter_mut().enumerate().take(MAX_Q) {
+        let base_score = -(q as f64) / 10.0;
+        *item = base_score * scaling_factor;
     }
     log_likelihood_mismatch[MAX_Q] = -config.gap_open; // gap open penalty
     log_likelihood_mismatch[MAX_Q + 1] = -config.gap_extend; // gap extend penalty
@@ -137,8 +138,10 @@ fn main() -> Result<()> {
     // first alignment to quick check readnames are in same name order
     let mut aln: SmallVec<[AlnStream; 2]> = smallvec![];
     for i in 0..config.alignment.len() {
-        aln.push(AlnStream::new(&config, i)?);
+        aln.push(AlnStream::new(&mut config, i)?);
+        ensure!(aln[i].next_qname() == aln[0].next_qname(), "Input alignments must have the same read order.");
     }
+
     let mut line_by_line = LineByLine::new(config, log_likelihood_mismatch, aln)?;
     line_by_line.process()
 }

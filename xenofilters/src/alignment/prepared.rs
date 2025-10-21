@@ -3,6 +3,17 @@ use anyhow::Result;
 use crate::{MAX_Q, LOG_LIKELIHOOD_MATCH, AlignmentOp};
 use super::{MdOp, MdOpIterator, PrepareError, AlignmentIterator};
 
+#[allow(dead_code)]
+pub fn print_req(i: usize, rec: &Record) {
+    let qname = String::from_utf8_lossy(rec.qname());
+    let cigar = rec.cigar().to_string();
+    eprint!("{i}:{qname}\t{cigar}");
+    if let Ok(Aux::String(md)) = rec.aux(b"MD") {
+        eprint!("\tMD:Z:{md}")
+    }
+    eprintln!();
+}
+
 pub struct PreparedAlignment<'a> {
     cigar: Option<CigarStringView>,
     md_iter: Option<MdOpIterator<'a>>,
@@ -10,20 +21,19 @@ pub struct PreparedAlignment<'a> {
 }
 
 impl<'a> PreparedAlignment<'a> {
-    pub fn is_perfect_match(&mut self) -> bool {
+    pub fn is_perfect_match(&self) -> bool {
         if let Some(cigar) = &self.cigar
             && cigar.iter().all(|c| matches!(c, Cigar::Match(_) | Cigar::Equal(_)))
-                && let Some(md_iter) = &mut self.md_iter {
-            return md_iter.all(|m| matches!(m, MdOp::Match(_)));
+                && let Some(md_iter) = &self.md_iter {
+            let mut md_iter = md_iter.clone();
+            return matches!(md_iter.next(), Some(MdOp::Match(_))) && md_iter.next().is_none();
         }
         false
     }
 
     /// Scores the alignment using the provided log likelihood mismatch array.
-    /// If no CIGAR is present (unmapped read), it sums the mismatch scores for each base quality.
+    /// If unmapped read, it sums the mismatch scores for each base quality.
     /// If a CIGAR is present, it uses the CIGAR and MD tag to compute the score.
-    /// The log_likelihood_mismatch array must have length MAX_Q + 2, where the last two entries
-    /// are used for gap open and gap extension penalties.
     ///
     /// Higher scores are better, with perfect matches scoring f64::INFINITY.
     ///
@@ -36,17 +46,17 @@ impl<'a> PreparedAlignment<'a> {
             let mut indel_gap = None; // Some(true)=insertion, Some(false)=deletion
 
             let md_iter = self.md_iter.take().ok_or(PrepareError::NoMdTag)?;
-            let aln_iter = AlignmentIterator::new(cigar, md_iter, self.qual);
+            let aln_iter = AlignmentIterator::new(cigar.iter(), md_iter, self.qual);
 
             for op in aln_iter {
                 match op? {
                     AlignmentOp::Match(q) => {
+                        indel_gap = None;
                         score += LOG_LIKELIHOOD_MATCH[q as usize];
-                        indel_gap = None;
                     },
-                    AlignmentOp::Mismatch(q) | AlignmentOp::SoftClip(q) => {
-                        score += log_likelihood_mismatch[q as usize];
+                    AlignmentOp::Mismatch(q) | AlignmentOp::SoftClip(q)=> {
                         indel_gap = None;
+                        score += log_likelihood_mismatch[q as usize];
                     },
                     AlignmentOp::Insertion(_q) => {
                         if indel_gap != Some(true) {
@@ -56,7 +66,7 @@ impl<'a> PreparedAlignment<'a> {
                         score += gap_ext;
                     },
                     AlignmentOp::Deletion => {
-                        if indel_gap == Some(false) {
+                        if indel_gap != Some(false) {
                             score += gap_open;
                             indel_gap = Some(false)
                         }
@@ -105,7 +115,6 @@ impl<'a> Iterator for PreparedAlignmentIter<'a> {
                 Ok(_) => return Some(Err(PrepareError::NoMdTag)),
                 Err(e) => return Some(Err(PrepareError::AuxError(e.to_string()))),
             };
-
             return Some(Ok(PreparedAlignment {
                 cigar: Some(r.cigar()),
                 md_iter,

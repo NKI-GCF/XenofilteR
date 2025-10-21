@@ -35,7 +35,7 @@ impl From<BamFormat> for Format {
 }
 
 pub(crate) fn out_from_file(f: &PathBuf, hdr_view: &HeaderView) -> Result<bam::Writer> {
-    let f_str = f.extension().unwrap_or(f.as_os_str()).to_str().expect("non utf-8 filename");
+    let f_str = f.extension().and_then(|e| e.to_str()).unwrap_or("bam");
     let fmt = <BamFormat as FromStr>::from_str(f_str).map_err(|e| anyhow!(e))?.into();
     let hdr = bam::Header::from_template(hdr_view);
     Ok(bam::Writer::from_path(f, &hdr, fmt)?)

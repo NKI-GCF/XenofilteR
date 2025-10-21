@@ -13,7 +13,7 @@ pub struct AlnStream {
 }
 
 impl AlnStream {
-    pub fn new(opt: &Config, i: usize)
+    pub fn new(opt: &mut Config, i: usize)
         -> Result<Self>
     {
         let bam_str = opt.alignment[i].as_str();
@@ -21,6 +21,26 @@ impl AlnStream {
 
         let mut test_record = Record::new();
         bam.read(&mut test_record).transpose()?.ok_or_else(|| anyhow!("{bam_str} has no records"))?;
+
+        let qname = test_record.qname();
+        match opt.strip_read_suffix {
+            Some(true) => {
+                ensure!(qname.ends_with(b"/1") || qname.ends_with(b"/2"),
+                    "Input read names do not have /1 or /2 suffixes, but strip_read_suffix is true.");
+            },
+            Some(false) => {
+                ensure!(!qname.ends_with(b"/1") && !qname.ends_with(b"/2"),
+                    "Input read names have /1 or /2 suffixes, but strip_read_suffix is false.");
+            },
+            None => {
+                // auto-detect
+                if qname.ends_with(b"/1") || qname.ends_with(b"/2") {
+                    opt.strip_read_suffix = Some(true);
+                } else {
+                    opt.strip_read_suffix = Some(false);
+                }
+            }
+        }
 
         let next = Some(test_record);
         let out = opt.output.get(i).map(|f| out_from_file(f, bam.header())).transpose()?;
@@ -35,7 +55,7 @@ impl AlnStream {
             ambiguous,
         };
 
-        if i == 0 {
+        if i == 0 && stream.out.is_none() {
             stream.out = Some(out_stdout(stream.bam.header(), opt.stdout_format.into())?);
         }
         let parts: Vec<Vec<&[u8]>> = stream.bam.header()
@@ -50,6 +70,10 @@ impl AlnStream {
 
         Ok(stream)
     }
+    pub fn next_qname(&self) -> &[u8] {
+        self.next.as_ref().map_or(b"", |r| r.qname())
+    }
+
     pub fn un_next(&mut self, rec: Record) {
         self.next = Some(rec);
     }

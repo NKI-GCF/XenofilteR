@@ -14,6 +14,7 @@ pub enum MdOp {
     Deletion,
 }
 
+#[derive(Clone)]
 pub struct MdOpIterator<'a> {
     chars: std::str::Chars<'a>,
     // State is simpler: just the number being built and a flag.
@@ -69,7 +70,6 @@ impl<'a> Iterator for MdOpIterator<'a> {
             }
 
             if self.in_deletion {
-                self.in_deletion = false;
                 return Some(MdOp::Deletion);
             } else {
                 return Some(MdOp::Mismatch);
