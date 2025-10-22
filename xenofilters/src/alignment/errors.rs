@@ -18,4 +18,7 @@ pub enum AlignmentError {
 
     #[error("MD/CIGAR inconsistency: A CIGAR deletion ('D') was not matched by a corresponding MD deletion ('^').")]
     MissingMdDeletion,
+
+    #[error("Quality score index out of bounds")]
+    QualIndexOutOfBounds
 }

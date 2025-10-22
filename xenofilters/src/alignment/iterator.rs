@@ -8,36 +8,8 @@ pub struct AlignmentIterator<'a> {
     md_iter: MdOpIterator<'a>,
     qual: &'a [u8],
     read_i: usize,
-    current_cigar_op: Option<(Cig, u32)>,
+    current_cigar_op: Option<Cigar>,
     current_md_op: Option<MdOp>,
-}
-
-enum Cig {
-    Match,
-    Ins,
-    Del,
-    SoftClip,
-    Equal,
-    Diff,
-    HardClip,
-    Pad,
-    RefSkip,
-}
-
-impl From<Cigar> for Cig {
-    fn from(cigar: Cigar) -> Self {
-        match cigar {
-            Cigar::Match(_) => Cig::Match,
-            Cigar::Ins(_) => Cig::Ins,
-            Cigar::Del(_) => Cig::Del,
-            Cigar::SoftClip(_) => Cig::SoftClip,
-            Cigar::Equal(_) => Cig::Equal,
-            Cigar::Diff(_) => Cig::Diff,
-            Cigar::HardClip(_) => Cig::HardClip,
-            Cigar::Pad(_) => Cig::Pad,
-            Cigar::RefSkip(_) => Cig::RefSkip,
-        }
-    }
 }
 
 impl<'a> AlignmentIterator<'a> {
@@ -51,6 +23,20 @@ impl<'a> AlignmentIterator<'a> {
             current_md_op: None,
         }
     }
+    fn get_qual(&mut self) -> Result<u8, AlignmentError> {
+        if let Some(&q) = self.qual.get(self.read_i) {
+            self.read_i += 1;
+            Ok(q)
+        } else {
+            Err(AlignmentError::QualIndexOutOfBounds)
+        }
+    }
+    fn next_md_op(&mut self) -> Option<MdOp> {
+        if self.current_md_op.is_none() {
+            self.current_md_op = self.md_iter.next();
+        }
+        self.current_md_op.take()
+    }
 }
 
 impl<'a> Iterator for AlignmentIterator<'a> {
@@ -61,75 +47,50 @@ impl<'a> Iterator for AlignmentIterator<'a> {
         // It allows us to consume CIGAR ops like HardClip or RefSkip that don't yield an op.
         loop {
             if self.current_cigar_op.is_none() {
-                match self.cigar_iter.next() {
-                    Some(&cigar_view) => {
-                        let cigar_len = cigar_view.len();
-                        self.current_cigar_op = Some((Cig::from(cigar_view), cigar_len));
-                    }
-                    None => return None,
-                }
+                self.current_cigar_op = self.cigar_iter.next().map(|&cigar| cigar);
             }
 
-            if let Some((ref cigar, ref mut len)) = self.current_cigar_op {
-                let op_result = match cigar {
-                    Cig::Match | Cig::Equal | Cig::Diff => {
-                        if self.current_md_op.is_none() {
-                            self.current_md_op = self.md_iter.next();
-                        }
-
-                        let q = *self.qual.get(self.read_i).unwrap();
-                        self.read_i += 1;
-
-                        match self.current_md_op.take() {
+            if let Some(cigar) = self.current_cigar_op.take() {
+                match cigar {
+                    Cigar::Match(len) | Cigar::Equal(len) | Cigar::Diff(len) => {
+                        // MAtch Equal and Diff are handled similarly.
+                        self.current_cigar_op = (len > 1).then_some(Cigar::Match(len - 1));
+                        match self.next_md_op().take() {
                             Some(MdOp::Match(n)) => {
                                 if n > 1 {
                                     self.current_md_op = Some(MdOp::Match(n - 1));
                                 }
-                                Ok(AlignmentOp::Match(q))
+                                return Some(self.get_qual().map(AlignmentOp::Match));
                             }
-                            _ => Ok(AlignmentOp::Mismatch(q)),
+                            _ => return Some(self.get_qual().map(AlignmentOp::Mismatch)),
                         }
-                    }
+                    },
                     // Insertions consume read bases but not reference bases.
-                    Cig::Ins => {
-                        let q = *self.qual.get(self.read_i).unwrap();
-                        self.read_i += 1;
-                        Ok(AlignmentOp::Insertion(q))
+                    Cigar::Ins(len) => {
+                        self.current_cigar_op = (len > 1).then_some(Cigar::Ins(len - 1));
+                        return Some(self.get_qual().map(AlignmentOp::Insertion));
                     }
                     // Deletions consume reference bases but not read bases.
-                    Cig::Del => {
-                        if self.current_md_op.is_none() {
-                            self.current_md_op = self.md_iter.next();
-                        }
-                        if let Some(MdOp::Deletion) = self.current_md_op {
+                    Cigar::Del(len) => {
+                        self.current_cigar_op = (len > 1).then_some(Cigar::Del(len - 1));
+                        if let Some(MdOp::Deletion) = self.next_md_op() {
                             // It matches, so consume it.
                             self.current_md_op = None;
                         }
                         // Assume the deletion is valid even if MD tag is inconsistent.
-                        Ok(AlignmentOp::Deletion)
+                        return Some(Ok(AlignmentOp::Deletion));
                     }
                     // Soft clips consume read bases but not reference bases.
-                    Cig::SoftClip => {
-                        let q = *self.qual.get(self.read_i).unwrap();
-                        self.read_i += 1;
-                        Ok(AlignmentOp::SoftClip(q))
+                    Cigar::SoftClip(len) => {
+                        self.current_cigar_op = (len > 1).then_some(Cigar::SoftClip(len - 1));
+                        return Some(self.get_qual().map(AlignmentOp::SoftClip));
                     }
 
                     // These operations consume neither read nor reference bases. skip.
-                    Cig::HardClip | Cig::Pad | Cig::RefSkip => {
-                        *len = 0;
-                        self.current_cigar_op = None;
-                        continue;
-                    },
-                };
-
-                *len -= 1;
-                if *len == 0 {
-                    self.current_cigar_op = None;
+                    Cigar::HardClip(_) | Cigar::Pad(_) | Cigar::RefSkip(_) => {},
                 }
-
-                // Wrap the successful or failed result in Some and return.
-                return Some(op_result);
+            } else {
+                return None;
             }
         }
     }
