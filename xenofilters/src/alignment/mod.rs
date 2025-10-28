@@ -1,9 +1,9 @@
-mod ops;
-mod iterator;
-mod prepared;
 mod errors;
+mod iterator;
+mod ops;
+mod prepared;
 
-pub use ops::{AlignmentOp, MdOp, MdOpIterator};
-pub use iterator::AlignmentIterator;
-pub use prepared::{PreparedAlignment, PreparedAlignmentIter};
 pub use errors::{AlignmentError, PrepareError};
+pub use iterator::{AlignmentCompareIterator, AlignmentIterator};
+pub use ops::{AlignmentOp, AlnCmpOp, MdOp, MdOpIterator};
+pub use prepared::{PreparedAlignmentPair, PreparedAlignmentPairIter};

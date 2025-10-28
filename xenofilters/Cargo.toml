@@ -12,7 +12,6 @@ MAX_ALN = "4"
 clap = { version = "4.5.48", features = ["derive"] }
 anyhow = "1.0.58"
 rust-htslib = "0.40.2"
-once_cell = "1.21.3"
 smallvec = "1.15.1"
 thiserror = "2.0.17"
 

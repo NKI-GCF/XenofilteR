@@ -1,34 +1,37 @@
-use std::cmp::Ordering;
+use anyhow::Result;
 use rust_htslib::bam::record::Record;
 use smallvec::{SmallVec, smallvec};
-use anyhow::Result;
-use crate::MAX_Q;
-use crate::alignment::{PreparedAlignment, PreparedAlignmentIter, PrepareError};
+use std::cmp::Ordering;
 
-type PreparedAlignmentIterBox<'a> = Box<dyn Iterator<Item = Result<PreparedAlignment<'a>, PrepareError>> + 'a>;
+use crate::MAX_Q;
+use crate::alignment::{PrepareError, PreparedAlignmentPair, PreparedAlignmentPairIter};
+
+type PreparedAlignmentPairIterBox<'a> =
+    Box<dyn Iterator<Item = Result<PreparedAlignmentPair<'a>, PrepareError>> + 'a>;
 
 pub enum Evaluation<'a> {
     Greater,
     Less,
     Equal,
-    NeedsScoring(PreparedAlignmentIterBox<'a>, PreparedAlignmentIterBox<'a>),
+    NeedsScoring(PreparedAlignmentPairIterBox<'a>),
 }
 
 pub struct FragmentState {
     records: SmallVec<[Record; 2]>,
     log_likelihood_mismatch: [f64; MAX_Q + 2],
 }
-// TODO2: if there are supplementary alignments, modify sigar to skip the clipped sections.
-//        may require a penalty for the placement of a secondary, elsewhere.
-
+// TODO: if there are supplementary alignments, modify cigar to skip the clipped sections.
+//       may require a penalty for the placement of a secondary, elsewhere.
 
 impl FragmentState {
+    #[must_use]
     pub fn from_record(r: Record, log_likelihood_mismatch: [f64; MAX_Q + 2]) -> Self {
         FragmentState {
             records: smallvec![r],
             log_likelihood_mismatch,
         }
     }
+    #[must_use]
     pub fn first_qname(&self) -> &[u8] {
         self.records.first().map_or(b"", |r| r.qname())
     }
@@ -47,67 +50,57 @@ impl FragmentState {
     pub fn drain(&mut self) -> SmallVec<[Record; 2]> {
         self.records.drain(..).collect()
     }
+    fn try_needs_score(&self, iter: PreparedAlignmentPairIterBox<'_>) -> Option<f64> {
+        let mut total_score_diff = Some(0.0);
 
-    fn try_needs_score<'a>(&self, iter: PreparedAlignmentIterBox<'a>, other_iter: PreparedAlignmentIterBox<'a>) -> (Option<f64>, Option<f64>) {
-        let mut ret1 = Some(0.0);
-        for p in iter.filter_map(|x| x.ok()) {
-            match p.score(&self.log_likelihood_mismatch) {
-                Ok(sc) => ret1 = ret1.map(|n| n + sc),
-                Err(_) => {
-                    ret1 = None;
-                    break;
-                }
+        // We filter_map to skip pairs that had a PrepareError,
+        // as they won't contribute to the score.
+        for pair_result in iter.filter_map(std::result::Result::ok) {
+            match pair_result.score(&self.log_likelihood_mismatch) {
+                Ok(score_diff) => total_score_diff = total_score_diff.map(|n| n + score_diff),
+                Err(_) => return None,
             }
         }
-        let mut ret2 = Some(0.0);
-        for o in other_iter.filter_map(|x| x.ok()) {
-            match o.score(&self.log_likelihood_mismatch) {
-                Ok(sc) => ret2 = ret2.map(|n| n + sc),
-                Err(_) => {
-                    ret2 = None;
-                    break;
-                }
-            }
-        }
-        (ret1, ret2)
+        total_score_diff
     }
     fn try_quick_cmp<'a>(&'a self, other: &'a Self) -> Evaluation<'a> {
         if self.records[0].is_unmapped() && self.records[0].is_mate_unmapped() {
             if other.records[0].is_unmapped() && other.records[0].is_mate_unmapped() {
                 return Evaluation::Equal;
-            } else {
-                return Evaluation::Less;
             }
+            return Evaluation::Less;
         }
         if other.records[0].is_unmapped() && other.records[0].is_mate_unmapped() {
             return Evaluation::Greater;
         }
 
-        let self_iter = PreparedAlignmentIter::new(&self.records);
-        let other_iter = PreparedAlignmentIter::new(&other.records);
+        let iter = PreparedAlignmentPairIter::new(&self.records, &other.records);
 
         if self.records[0].is_unmapped() && other.records[0].is_mate_unmapped() {
-            return Evaluation::NeedsScoring(Box::new(self_iter), Box::new(other_iter));
+            return Evaluation::NeedsScoring(Box::new(iter));
         }
         if other.records[0].is_unmapped() && self.records[0].is_mate_unmapped() {
-            return Evaluation::NeedsScoring(Box::new(self_iter), Box::new(other_iter));
+            return Evaluation::NeedsScoring(Box::new(iter));
         }
 
         let mut balance = None;
-        for (s, o) in self_iter.zip(other_iter) {
-            balance = match (s, o) {
-                (Ok(s), Ok(o)) => {
-                    if s.is_perfect_match() {
-                        if !o.is_perfect_match() {
+        for pair_result in iter {
+            balance = match pair_result {
+                Ok(pair) => {
+                    let s_perfect = pair.is_perfect_match(true);
+                    let o_perfect = pair.is_perfect_match(false);
+
+                    if s_perfect {
+                        if o_perfect {
+                            Some(Evaluation::Equal)
+                        } else {
                             match balance {
                                 Some(Evaluation::Less) => break,
                                 None => Some(Evaluation::Greater),
                                 _ => return Evaluation::Greater,
                             }
-                        } else {
-                            Some(Evaluation::Equal)
                         }
-                    } else if o.is_perfect_match() {
+                    } else if o_perfect {
                         match balance {
                             Some(Evaluation::Greater) => break,
                             None => Some(Evaluation::Less),
@@ -118,28 +111,17 @@ impl FragmentState {
                         break;
                     }
                 }
-                (Ok(_s), Err(_)) => match balance {
-                    Some(Evaluation::Less) => break,
-                    None => Some(Evaluation::Greater),
-                    _ => return Evaluation::Greater,
-                }
-                (Err(_), Ok(_o)) => match balance {
-                    Some(Evaluation::Greater) => break,
-                    None => Some(Evaluation::Less),
-                    _ => return Evaluation::Less,
-                }
-                (Err(_), Err(_)) => { // both unmapped
-                    if let Some(balance) = balance {
-                        return balance;
-                    }
-                    Some(Evaluation::Equal)
+                Err(_) => {
+                    // A PrepareError occurred (e.g., No MD tag).
+                    // We can't do a quick check, so break and go to full scoring.
+                    break;
                 }
             }
         }
-        Evaluation::NeedsScoring(
-            Box::new(PreparedAlignmentIter::new(&self.records)),
-            Box::new(PreparedAlignmentIter::new(&other.records)),
-        )
+        Evaluation::NeedsScoring(Box::new(PreparedAlignmentPairIter::new(
+            &self.records,
+            &other.records,
+        )))
     }
 }
 
@@ -149,12 +131,13 @@ impl Ord for FragmentState {
             Evaluation::Greater => Ordering::Greater,
             Evaluation::Less => Ordering::Less,
             Evaluation::Equal => Ordering::Equal,
-            Evaluation::NeedsScoring(s, o) => {
-                match self.try_needs_score(s, o) {
-                    (Some(s), Some(o)) => s.partial_cmp(&o).unwrap_or(Ordering::Equal),
-                    (Some(_), None) => Ordering::Greater,
-                    (None, Some(_)) => Ordering::Less,
-                    (None, None) => Ordering::Equal,
+            Evaluation::NeedsScoring(pair_iter) => {
+                match self.try_needs_score(pair_iter) {
+                    Some(score_diff) => {
+                        // Compare the final score difference to 0.0
+                        score_diff.partial_cmp(&0.0).unwrap_or(Ordering::Equal)
+                    }
+                    None => Ordering::Equal, // Error case
                 }
             }
         }

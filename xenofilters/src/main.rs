@@ -1,37 +1,33 @@
 extern crate anyhow;
 extern crate clap;
-extern crate once_cell;
-extern crate rust_htslib;
 extern crate core;
+extern crate rust_htslib;
 extern crate smallvec;
 
-mod aln_stream;
-mod filter_algorithm;
-mod bam_format;
 mod alignment;
+mod aln_stream;
+mod bam_format;
+mod filter_algorithm;
 mod fragment;
 
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
-use anyhow::{ensure, Result};
+use aln_stream::AlnStream;
+use anyhow::{Result, ensure};
+use bam_format::BamFormat;
 use clap::Parser;
-use once_cell::sync::Lazy;
+use filter_algorithm::line_by_line::LineByLine;
 use smallvec::{SmallVec, smallvec};
 
-use bam_format::BamFormat;
-use aln_stream::AlnStream;
-//use filter_algorithm::hasher::Hasher;
-use filter_algorithm::line_by_line::LineByLine;
-
-
 pub use alignment::*;
-pub use fragment::{FragmentState, Evaluation};
+pub use fragment::{Evaluation, FragmentState};
 
 const ARG_MAX: usize = 4;
 const MAX_Q: usize = 93;
 const REFERENCE_PENALTY: f64 = 4.0;
 
-static ERROR_PROB: Lazy<[f64; MAX_Q]> = Lazy::new(|| {
+static ERROR_PROB: LazyLock<[f64; MAX_Q]> = LazyLock::new(|| {
     let mut arr = [0.0_f64; MAX_Q];
     for (q, item) in arr.iter_mut().enumerate() {
         *item = 10f64.powf(-(q as f64) / 10.0); // x = 10^{-Q/10}
@@ -39,10 +35,10 @@ static ERROR_PROB: Lazy<[f64; MAX_Q]> = Lazy::new(|| {
     arr
 });
 
-static LOG_LIKELIHOOD_MATCH: Lazy<[f64; MAX_Q]> = Lazy::new(|| {
+static LOG_LIKELIHOOD_MATCH: LazyLock<[f64; MAX_Q]> = LazyLock::new(|| {
     let mut arr = [0.0_f64; MAX_Q];
     for (q, item) in arr.iter_mut().enumerate() {
-    *item = (1.0 - ERROR_PROB[q]).log10();
+        *item = (1.0 - ERROR_PROB[q]).log10();
     }
     arr
 });
@@ -92,7 +88,7 @@ pub struct Config {
     pub mismatch_penalty: f64,
 
     /// strip fastq-style /1 and /2 from read names when comparing
-    #[clap(short='R', long)]
+    #[clap(short = 'R', long)]
     pub strip_read_suffix: Option<bool>,
 
     /*/// Number of mismatches allowed in the second alignment
@@ -106,7 +102,6 @@ pub struct Config {
     /// Same, for mate. Defaults to same as first mapping penalty
     #[clap(long, default_value = "32768", value_parser = clap::value_parser!(u32).range(..=0x8000))]
     pub second_unmapped_penalty: u32,*/
-
     /// Skip secondary mappings even if the primary mapping is written
     #[clap(short, long, default_value = "false")]
     pub skip_secondary: bool,
@@ -115,35 +110,42 @@ pub struct Config {
 fn main() -> Result<()> {
     let mut config = Config::parse();
 
-    ensure!(config.output.len() <= config.alignment.len(), "More output than input specified");
-    ensure!(config.filtered_output.len() <= config.alignment.len(), "More filtered output than input specified");
-    ensure!(config.ambiguous_output.len() <= config.alignment.len(), "More ambiguous output than input specified");
-    ensure!(config.alignment.len() >= 2, "At least two alignments required");
-    ensure!(!config.read_from_stdin || config.alignment.len() == 1, "Cannot read from stdin with multiple input alignments");
+    ensure!(
+        config.output.len() <= config.alignment.len(),
+        "More output than input specified"
+    );
+    ensure!(
+        config.filtered_output.len() <= config.alignment.len(),
+        "More filtered output than input specified"
+    );
+    ensure!(
+        config.ambiguous_output.len() <= config.alignment.len(),
+        "More ambiguous output than input specified"
+    );
+    ensure!(
+        config.alignment.len() >= 2,
+        "At least two alignments required"
+    );
+    ensure!(
+        !config.read_from_stdin || config.alignment.len() == 1,
+        "Cannot read from stdin with multiple input alignments"
+    );
 
     if config.gap_open <= 0.0 || config.gap_extend < 0.0 || config.mismatch_penalty <= 0.0 {
-        return Err(anyhow::anyhow!("Gap open/extend penalties must be positive"));
+        return Err(anyhow::anyhow!(
+            "Gap open/extend penalties must be positive"
+        ));
     }
-
-    let mut log_likelihood_mismatch = [0.0f64; MAX_Q + 2];
-    let scaling_factor = config.mismatch_penalty / REFERENCE_PENALTY;
-
-    for (q, item) in log_likelihood_mismatch.iter_mut().enumerate().take(MAX_Q) {
-        let base_score = -(q as f64) / 10.0;
-        *item = base_score * scaling_factor;
-    }
-    log_likelihood_mismatch[MAX_Q] = -config.gap_open; // gap open penalty
-    log_likelihood_mismatch[MAX_Q + 1] = -config.gap_extend; // gap extend penalty
 
     // first alignment to quick check readnames are in same name order
     let mut aln: SmallVec<[AlnStream; 2]> = smallvec![];
     for i in 0..config.alignment.len() {
         aln.push(AlnStream::new(&mut config, i)?);
-        ensure!(aln[i].next_qname() == aln[0].next_qname(), "Input alignments must have the same read order.");
+        ensure!(
+            aln[i].next_qname() == aln[0].next_qname(),
+            "Input alignments must have the same read order."
+        );
     }
 
-    let mut line_by_line = LineByLine::new(config, log_likelihood_mismatch, aln)?;
-    line_by_line.process()
+    LineByLine::new(config, aln).process()
 }
-
-

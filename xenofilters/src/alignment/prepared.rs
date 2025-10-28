@@ -1,7 +1,11 @@
-use rust_htslib::bam::record::{Aux, Cigar, CigarStringView, Record};
 use anyhow::Result;
-use crate::{MAX_Q, LOG_LIKELIHOOD_MATCH, AlignmentOp};
-use super::{MdOp, MdOpIterator, PrepareError, AlignmentIterator};
+use rust_htslib::bam::record::{Aux, Cigar, CigarStringView, Record};
+
+use super::{
+    AlignmentCompareIterator, AlignmentError, AlignmentIterator, AlnCmpOp, MdOp, MdOpIterator,
+    PrepareError,
+};
+use crate::{AlignmentOp, LOG_LIKELIHOOD_MATCH, MAX_Q};
 
 #[allow(dead_code)]
 pub fn print_req(i: usize, rec: &Record) {
@@ -9,116 +13,236 @@ pub fn print_req(i: usize, rec: &Record) {
     let cigar = rec.cigar().to_string();
     eprint!("{i}:{qname}\t{cigar}");
     if let Ok(Aux::String(md)) = rec.aux(b"MD") {
-        eprint!("\tMD:Z:{md}")
+        eprint!("\tMD:Z:{md}");
     }
     eprintln!();
 }
 
-pub struct PreparedAlignment<'a> {
-    cigar: Option<CigarStringView>,
-    md_iter: Option<MdOpIterator<'a>>,
+pub struct PreparedAlignmentPair<'a> {
+    cigar1: Option<CigarStringView>,
+    cigar2: Option<CigarStringView>,
+    md_iter1: Option<MdOpIterator<'a>>,
+    md_iter2: Option<MdOpIterator<'a>>,
     qual: &'a [u8],
 }
 
-impl<'a> PreparedAlignment<'a> {
-    pub fn is_perfect_match(&self) -> bool {
-        if let Some(cigar) = &self.cigar
-            && cigar.iter().all(|c| matches!(c, Cigar::Match(_) | Cigar::Equal(_)))
-                && let Some(md_iter) = &self.md_iter {
+impl<'a> PreparedAlignmentPair<'a> {
+    #[must_use]
+    pub fn is_perfect_match(&self, first: bool) -> bool {
+        if first {
+            if let Some(cigar) = &self.cigar1
+                && cigar
+                    .iter()
+                    .all(|c| matches!(c, Cigar::Match(_) | Cigar::Equal(_)))
+                && let Some(md_iter) = &self.md_iter1
+            {
+                let mut md_iter = md_iter.clone();
+                return matches!(md_iter.next(), Some(MdOp::Match(_))) && md_iter.next().is_none();
+            }
+        } else if let Some(cigar) = &self.cigar2
+            && cigar
+                .iter()
+                .all(|c| matches!(c, Cigar::Match(_) | Cigar::Equal(_)))
+            && let Some(md_iter) = &self.md_iter2
+        {
             let mut md_iter = md_iter.clone();
             return matches!(md_iter.next(), Some(MdOp::Match(_))) && md_iter.next().is_none();
         }
         false
     }
 
-    /// Scores the alignment using the provided log likelihood mismatch array.
+    fn score_aln_op_against_mm(
+        &self,
+        cigar: CigarStringView,
+        md_iter: MdOpIterator<'a>,
+        log_likelihood_mismatch: &[f64; MAX_Q + 2],
+    ) -> Result<f64, PrepareError> {
+        let gap_open = log_likelihood_mismatch[MAX_Q];
+        let gap_ext = log_likelihood_mismatch[MAX_Q + 1];
+
+        let mut read_i = 0;
+        let mut indel_gap = None;
+        let mut score = 0.0;
+
+        for op in AlignmentIterator::new(cigar.take().iter(), md_iter) {
+            score += match op? {
+                AlignmentOp::Match => {
+                    let q = *self
+                        .qual
+                        .get(read_i)
+                        .ok_or(AlignmentError::QualIndexOutOfBounds)?;
+                    read_i += 1;
+                    indel_gap = None;
+                    LOG_LIKELIHOOD_MATCH[q as usize] - log_likelihood_mismatch[q as usize]
+                }
+                AlignmentOp::Mismatch | AlignmentOp::SoftClip => {
+                    // A mismatch/Sofclip is not scored against an unmapped read
+                    read_i += 1;
+                    indel_gap = None;
+                    0.0
+                }
+                AlignmentOp::Insertion => {
+                    let q = *self
+                        .qual
+                        .get(read_i)
+                        .ok_or(AlignmentError::QualIndexOutOfBounds)?;
+                    read_i += 1;
+                    if indel_gap == Some(true) {
+                        gap_ext - log_likelihood_mismatch[q as usize]
+                    } else {
+                        indel_gap = Some(true);
+                        gap_open + gap_ext - log_likelihood_mismatch[q as usize]
+                    }
+                }
+                AlignmentOp::Deletion => {
+                    if indel_gap == Some(false) {
+                        gap_ext
+                    } else {
+                        indel_gap = Some(false);
+                        gap_open + gap_ext
+                    }
+                }
+            };
+        }
+        Ok(score)
+    }
+
+    /// Scores the alignment using the provided log likelihood (mis)match arrays.
     /// If unmapped read, it sums the mismatch scores for each base quality.
-    /// If a CIGAR is present, it uses the CIGAR and MD tag to compute the score.
     ///
-    /// Higher scores are better, with perfect matches scoring f64::INFINITY.
+    /// Higher scores are better
     ///
     pub fn score(mut self, log_likelihood_mismatch: &[f64; MAX_Q + 2]) -> Result<f64> {
-        if let Some(cigar) = self.cigar.take() {
-            let mut score = 0.0_f64;
-            let gap_open = log_likelihood_mismatch[MAX_Q];
-            let gap_ext = log_likelihood_mismatch[MAX_Q + 1];
+        let mut score = 0.0_f64;
 
-            let mut indel_gap = None; // Some(true)=insertion, Some(false)=deletion
+        match (self.cigar1.take(), self.cigar2.take()) {
+            (Some(cigar1), Some(cigar2)) => {
+                let mut indel_gap1 = None;
+                let mut indel_gap2 = None;
 
-            let md_iter = self.md_iter.take().ok_or(PrepareError::NoMdTag)?;
-            let aln_iter = AlignmentIterator::new(cigar.iter(), md_iter, self.qual);
+                let md_iter1 = self.md_iter1.take().ok_or(PrepareError::NoMdTag)?;
+                let md_iter2 = self.md_iter2.take().ok_or(PrepareError::NoMdTag)?;
+                let aln_iter = AlignmentCompareIterator::new(
+                    cigar1.iter(),
+                    md_iter1,
+                    cigar2.iter(),
+                    md_iter2,
+                    self.qual,
+                );
 
-            for op in aln_iter {
-                match op? {
-                    AlignmentOp::Match(q) => {
-                        indel_gap = None;
-                        score += LOG_LIKELIHOOD_MATCH[q as usize];
-                    },
-                    AlignmentOp::Mismatch(q) | AlignmentOp::SoftClip(q)=> {
-                        indel_gap = None;
-                        score += log_likelihood_mismatch[q as usize];
-                    },
-                    AlignmentOp::Insertion(_q) => {
-                        if indel_gap != Some(true) {
-                            score += gap_open;
-                            indel_gap = Some(true)
+                for pair in aln_iter {
+                    match pair? {
+                        AlnCmpOp::Equal => {
+                            indel_gap1 = None;
+                            indel_gap2 = None;
                         }
-                        score += gap_ext;
-                    },
-                    AlignmentOp::Deletion => {
-                        if indel_gap != Some(false) {
-                            score += gap_open;
-                            indel_gap = Some(false)
+                        AlnCmpOp::UnEqual(op1, op2, q) => match (op1, op2) {
+                            (ref x, ref y) if x.same_variant(y) => {}
+                            (AlignmentOp::Mismatch, AlignmentOp::SoftClip)
+                            | (AlignmentOp::SoftClip, AlignmentOp::Mismatch) => {}
+                            (x, y) => {
+                                score += x.score(q, &mut indel_gap1, log_likelihood_mismatch)
+                                    - y.score(q, &mut indel_gap2, log_likelihood_mismatch);
+                            }
+                        },
+                        AlnCmpOp::Left(op1, q) => {
+                            score += op1.score(q, &mut indel_gap1, log_likelihood_mismatch);
                         }
-                        score += gap_ext;
-                    },
+                        AlnCmpOp::Right(op2, q) => {
+                            score -= op2.score(q, &mut indel_gap2, log_likelihood_mismatch);
+                        }
+                    }
                 }
             }
-            Ok(score)
-        } else {
-            Ok(self.qual.iter().map(|&q| log_likelihood_mismatch[q as usize]).sum())
+            (Some(cigar1), None) => {
+                let md_iter1 = self.md_iter1.take().ok_or(PrepareError::NoMdTag)?;
+                score += self.score_aln_op_against_mm(cigar1, md_iter1, log_likelihood_mismatch)?;
+            }
+            (None, Some(cigar2)) => {
+                let md_iter2 = self.md_iter2.take().ok_or(PrepareError::NoMdTag)?;
+                score -= self.score_aln_op_against_mm(cigar2, md_iter2, log_likelihood_mismatch)?;
+            }
+            (None, None) => {}
+        }
+        Ok(score)
+    }
+}
+
+pub struct PreparedAlignmentPairIter<'a> {
+    records1: std::slice::Iter<'a, Record>,
+    records2: std::slice::Iter<'a, Record>,
+}
+
+impl<'a> PreparedAlignmentPairIter<'a> {
+    #[must_use]
+    pub fn new(alns1: &'a [Record], alns2: &'a [Record]) -> Self {
+        Self {
+            records1: alns1.iter(),
+            records2: alns2.iter(),
         }
     }
 }
 
-pub struct PreparedAlignmentIter<'a> {
-    records: std::slice::Iter<'a, Record>,
-}
-
-impl<'a> PreparedAlignmentIter<'a> {
-    pub fn new(alns: &'a [Record]) -> Self {
-        Self { records: alns.iter() }
-    }
-}
-
-impl<'a> Iterator for PreparedAlignmentIter<'a> {
-    type Item = Result<PreparedAlignment<'a>, PrepareError>;
+impl<'a> Iterator for PreparedAlignmentPairIter<'a> {
+    type Item = Result<PreparedAlignmentPair<'a>, PrepareError>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        let mut r1: Option<&Record> = None;
+        let mut r2: Option<&Record> = None;
         loop {
-            let r = self.records.next()?;
-
-            if r.is_secondary() {
-                continue;
+            if r1.is_none() {
+                r1 = match self.records1.next() {
+                    Some(r) if r.is_secondary() => continue,
+                    Some(r) => Some(r),
+                    None => return None,
+                };
             }
+            if r2.is_none() {
+                r2 = match self.records2.next() {
+                    Some(r) if r.is_secondary() => continue,
+                    Some(r) => Some(r),
+                    None => return None,
+                };
+            }
+            let r1 = r1.take().unwrap();
+            let r2 = r2.take().unwrap();
+            assert_eq!(r1.qual(), r2.qual());
 
-            if r.is_unmapped() {
-                return Some(Ok(PreparedAlignment {
-                    cigar: None,
-                    md_iter: None,
-                    qual: r.qual(),
+            if r1.is_unmapped() {
+                return Some(Ok(PreparedAlignmentPair {
+                    cigar1: None,
+                    cigar2: r2.is_unmapped().then_some(r2.cigar()),
+                    md_iter1: None,
+                    md_iter2: None,
+                    qual: r1.qual(),
+                }));
+            }
+            if r2.is_unmapped() {
+                return Some(Ok(PreparedAlignmentPair {
+                    cigar1: Some(r1.cigar()),
+                    cigar2: None,
+                    md_iter1: None,
+                    md_iter2: None,
+                    qual: r1.qual(),
                 }));
             }
 
-            let md_iter = match r.aux(b"MD") {
+            let md_iter1 = match r1.aux(b"MD") {
                 Ok(Aux::String(md)) => Some(MdOpIterator::new(md)),
                 Ok(_) => return Some(Err(PrepareError::NoMdTag)),
                 Err(e) => return Some(Err(PrepareError::AuxError(e.to_string()))),
             };
-            return Some(Ok(PreparedAlignment {
-                cigar: Some(r.cigar()),
-                md_iter,
-                qual: r.qual(),
+            let md_iter2 = match r2.aux(b"MD") {
+                Ok(Aux::String(md)) => Some(MdOpIterator::new(md)),
+                Ok(_) => return Some(Err(PrepareError::NoMdTag)),
+                Err(e) => return Some(Err(PrepareError::AuxError(e.to_string()))),
+            };
+            return Some(Ok(PreparedAlignmentPair {
+                cigar1: Some(r1.cigar()),
+                cigar2: Some(r2.cigar()),
+                md_iter1,
+                md_iter2,
+                qual: r1.qual(),
             }));
         }
     }
