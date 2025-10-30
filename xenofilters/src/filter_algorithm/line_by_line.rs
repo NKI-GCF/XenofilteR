@@ -126,7 +126,7 @@ impl LineByLine {
         let mut best: AlnBuffer = smallvec![];
 
         let mut i = 0;
-        loop {
+        while i != self.aln.len() {
             while let Some(rec) = self.aln[i].next_rec()? {
                 if self.handle_record_is_fragment_finished(i, rec, &mut best) {
                     i += 1;
@@ -137,12 +137,10 @@ impl LineByLine {
                 }
             }
             i += 1;
-            if i == self.aln.len() {
-                self.handle_best(&mut best)?;
-                break;
-            }
         }
-        for i in 0..self.aln.len() {
+        self.handle_best(&mut best)?;
+        while i > 0 {
+            i -= 1;
             eprintln!(
                 "Filtered from alignment {i}: {}",
                 self.branch_counters[i << 1]
@@ -155,9 +153,6 @@ impl LineByLine {
                 "Ambiguous for alignment {i}: {}",
                 self.branch_counters[16 + i]
             );
-        }
-
-        for i in 0..self.aln.len() {
             ensure!(
                 self.aln[i].next_rec()?.is_none(),
                 "alignment {i} still has reads"
