@@ -7,6 +7,7 @@ pub enum AlignmentOp {
     Insertion,
     Deletion,
     SoftClip,
+    RefSkip(u32),
 }
 
 impl AlignmentOp {
@@ -54,7 +55,24 @@ impl AlignmentOp {
                     gap_open + gap_ext
                 }
             }
+            AlignmentOp::RefSkip(_) => 0.0,
         }
+    }
+    pub fn ref_consumed(&self) -> usize {
+        match self {
+            AlignmentOp::Match | AlignmentOp::Mismatch | AlignmentOp::Deletion => 1,
+            AlignmentOp::RefSkip(n) => *n as usize,
+            AlignmentOp::Insertion | AlignmentOp::SoftClip => 0,
+        }
+    }
+    pub fn consumes_read(&self) -> bool {
+        matches!(
+            self,
+            AlignmentOp::Match
+                | AlignmentOp::Mismatch
+                | AlignmentOp::Insertion
+                | AlignmentOp::SoftClip
+        )
     }
 }
 
