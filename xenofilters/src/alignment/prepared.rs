@@ -50,43 +50,6 @@ impl<'a> PreparedAlignmentPair<'a> {
         }
         false
     }
-    fn score_op(
-        op: &AlignmentOp,
-        qual: u8,
-        indel_gap: &mut Option<bool>,
-        log_likelihood_mismatch: &[f64; MAX_Q + 2],
-    ) -> f64 {
-        let gap_open = log_likelihood_mismatch[MAX_Q];
-        let gap_ext = log_likelihood_mismatch[MAX_Q + 1];
-
-        match op {
-            AlignmentOp::Match => {
-                *indel_gap = None;
-                LOG_LIKELIHOOD_MATCH[qual as usize]
-            }
-            AlignmentOp::Mismatch | AlignmentOp::SoftClip => {
-                *indel_gap = None;
-                log_likelihood_mismatch[qual as usize]
-            }
-            AlignmentOp::Insertion => {
-                let mut score = gap_ext;
-                if *indel_gap != Some(true) {
-                    *indel_gap = Some(true);
-                    score += gap_open;
-                }
-                score
-            }
-            AlignmentOp::Deletion => {
-                let mut score = gap_ext;
-                if *indel_gap != Some(false) {
-                    *indel_gap = Some(false);
-                    score += gap_open;
-                }
-                score
-            }
-            AlignmentOp::RefSkip(_) => 0.0,
-        }
-    }
 
     fn score_aln_op_against_mm(
         &self,
@@ -94,16 +57,18 @@ impl<'a> PreparedAlignmentPair<'a> {
         md_iter: MdOpIterator<'a>,
         log_likelihood_mismatch: &[f64; MAX_Q + 2],
     ) -> Result<f64, PrepareError> {
-        let gap_open = log_likelihood_mismatch[MAX_Q];
-        let gap_ext = log_likelihood_mismatch[MAX_Q + 1];
-
         let mut read_i = 0;
         let mut indel_gap = None;
         let mut score = 0.0;
 
         for op in AlignmentIterator::new(cigar.take().iter(), md_iter) {
-            score += self.score_op(op?, qual[read_i], &mut indel_gap, log_likelihood_mismatch)
+            let op = op?;
+            let q = *self.qual.get(read_i).ok_or(AlignmentError::QualIndexOutOfBounds)?;
+            score += op.score(q, &mut indel_gap, log_likelihood_mismatch)
                 - log_likelihood_mismatch[q as usize];
+            if !matches!(op, AlignmentOp::Deletion | AlignmentOp::RefSkip(_)) {
+                read_i += 1;
+            }
         }
         Ok(score)
     }
