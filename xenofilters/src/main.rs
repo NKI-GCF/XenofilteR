@@ -9,6 +9,8 @@ mod aln_stream;
 mod bam_format;
 mod filter_algorithm;
 mod fragment;
+mod vcf_format;
+mod variant;
 
 use std::path::PathBuf;
 use std::sync::LazyLock;
@@ -90,6 +92,9 @@ pub struct Config {
     /// strip fastq-style /1 and /2 from read names when comparing
     #[clap(short = 'R', long)]
     pub strip_read_suffix: Option<bool>,
+
+    #[clap(short, long, num_args = 0..ARG_MAX)]
+    pub vcf: Vec<PathBuf>,
 
     /*/// Number of mismatches allowed in the second alignment
     #[clap(short, long, default_value = "4")]

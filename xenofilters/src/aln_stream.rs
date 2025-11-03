@@ -1,8 +1,11 @@
+use std::collections::HashMap;
+
 use anyhow::{Result, anyhow, ensure};
 use rust_htslib::bam::{self, Read, record::Record};
 
 use crate::Config;
 use crate::bam_format::{out_from_file, out_stdout};
+use crate::vcf_format::{Variant, reader_from_file};
 
 pub struct AlnStream {
     ambiguous: Option<bam::Writer>,
@@ -10,6 +13,7 @@ pub struct AlnStream {
     filt: Option<bam::Writer>,
     next: Option<Record>,
     output: Option<bam::Writer>,
+    variants: Option<Vec<HashMap<i64, Variant>>>,
 }
 
 impl AlnStream {
@@ -62,6 +66,7 @@ impl AlnStream {
             .get(i)
             .map(|f| out_from_file(f, bam.header()))
             .transpose()?;
+        let variants = opt.vcf.get(i).map(|f| reader_from_file(f)).transpose()?;
 
         let mut stream = AlnStream {
             ambiguous,
@@ -69,6 +74,7 @@ impl AlnStream {
             filt,
             next,
             output,
+            variants,
         };
 
         if i == 0 && stream.output.is_none() {
