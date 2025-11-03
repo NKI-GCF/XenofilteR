@@ -118,6 +118,16 @@ pub struct Config {
     pub is_paired: Option<bool>,
 }
 
+impl Config {
+    pub fn nreads(&self) -> usize {
+        match self.is_paired {
+            Some(true) => 2,
+            Some(false) => 1,
+            None => panic!("is_paired not set"), // don't call before AlnStream::new
+        }
+    }
+}
+
 fn main() -> Result<()> {
     let mut config = Config::parse();
 

@@ -19,6 +19,12 @@ pub enum AlignmentError {
 
     #[error("Quality score index out of bounds")]
     QualIndexOutOfBounds,
+
+    #[error("MD/CIGAR inconsistency: Excess mismatches in MD tag after processing CIGAR.")]
+    MdCigarMismatch,
+
+    #[error("Unexpected translocation operation in CIGAR string")]
+    UnexpectedTranslocate,
 }
 
 #[derive(Debug, Error)]

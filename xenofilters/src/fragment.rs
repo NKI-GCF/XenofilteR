@@ -37,15 +37,7 @@ impl FragmentState {
     }
 
     pub fn add_record(&mut self, r: Record) {
-        if r.is_secondary() || r.is_supplementary() {
-            self.records.push(r);
-        } else if r.is_first_in_template() {
-            self.records.insert(0, r);
-        } else if r.is_last_in_template() && !self.records.is_empty() {
-            self.records.insert(1, r);
-        } else {
-            self.records.push(r);
-        }
+        self.records.push(r);
     }
     pub fn drain(&mut self) -> SmallVec<[Record; 2]> {
         self.records.drain(..).collect()

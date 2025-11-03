@@ -1,138 +1,134 @@
-use rust_htslib::bam::record::{Cigar, Record, CigarStringView, Aux};
+use rust_htslib::bam::record::{Record, Aux, Cigar, CigarStringView};
 use anyhow::{Result, anyhow};
-
-/// Our new, owned CIGAR enum
-pub enum CigarOp {
-    Match(u32),
-    Ins(u32),
-    Del(u32),
-    RefSkip(u32),
-    SoftClip(u32),
-    HardClip(u32),
-    Pad(u32),
-    Equal(u32),
-    Diff(u32),
-    /// Our new op for supplementary jumps.
-    Translocate {
-        new_tid: i32,
-        new_pos: i64,
-        new_strand: bool,
-        // We can add a score/penalty here if we want
-        gap_score: f64,
-    },
-}
-
-impl From<&Cigar> for CigarOp {
-    fn from(cigar: &Cigar) -> Self {
-        match *cigar {
-            Cigar::Match(l) => CigarOp::Match(l),
-            Cigar::Ins(l) => CigarOp::Ins(l),
-            Cigar::Del(l) => CigarOp::Del(l),
-            Cigar::RefSkip(l) => CigarOp::RefSkip(l),
-            Cigar::SoftClip(l) => CigarOp::SoftClip(l),
-            Cigar::HardClip(l) => CigarOp::HardClip(l),
-            Cigar::Pad(l) => CigarOp::Pad(l),
-            Cigar::Equal(l) => CigarOp::Equal(l),
-            Cigar::Diff(l) => CigarOp::Diff(l),
-        }
-    }
-}
-
-fn get_read_span(cigar: CigarStringView) -> (i64, i64) {
-    let mut read_start = 0;
-    let mut read_end = 0;
-
-    for op in cigar.iter() {
-        match *op {
-            Cigar::SoftClip(len) | Cigar::HardClip(len) => {
-                if read_start == 0 {
-                    read_start += len as i64;
-                }
-            }
-            Cigar::Match(len)
-            | Cigar::Ins(len)
-            | Cigar::Equal(len)
-            | Cigar::Diff(len) => {
-                read_end += len as i64;
-            }
-            _ => {}
-        }
-    }
-    (read_start, read_end)
-}
-
-fn get_md_tag(record: &Record) -> Result<String> {
-    match record.aux(b"MD")? {
-        Aux::String(md_bytes) => Ok(md_bytes.to_string()),
-        _ => Err(anyhow!("MD tag not found or of unexpected type")),
-    }
-}
+use smallvec::{SmallVec, smallvec};
+use crate::{UnifiedOp, lift_alignment_ops};
 
 // A new struct to hold the combined alignment data
 pub struct StitchedAlignment<'a> {
-    pub seq: &'a [u8],
-    pub qual: &'a [u8],
+    pub seq: Box<dyn Iterator<Item = u8> + 'a>,
+    pub qual: Box<dyn Iterator<Item = u8> + 'a>,
     pub tid: i32,
     pub pos: i64,
     pub strand: bool,
-    pub stitched_cigar: Vec<CigarOp>, // A new, combined CIGAR
-    pub stitched_md: String,        // A new, combined MD string
+    pub stitched_ops: SmallVec<[UnifiedOp; 1]>, // A new, combined CIGAR
 }
 
-/// Pre-processes a primary alignment and its supplementary records
-/// into a single, stitch-aware alignment.
-pub fn stitch_alignment_segments(records: &[Record]) -> Result<StitchedAlignment<'_>> {
-    let mut rec_iter = records.iter();
-    let primary = rec_iter.next().ok_or(anyhow!("No primary alignment found among records"))?;
+pub fn stitch_alignment_segments<'a>(
+    records: &'a [Record],
+    gap_penalty: f64
+) -> Result<(Option<StitchedAlignment<'a>>, Option<StitchedAlignment<'a>>)> {
 
-    // 2. Collect and sort all segments (primary + supplementary)
-    //    by their unclipped start position *on the read*.
-    let mut segments: Vec<_> = rec_iter.map(|r| {
-        let (read_start, read_end) = get_read_span(r.cigar());
-        (read_start, read_end, r)
-    }).collect();
-    segments.sort_by_key(|(start, _, _)| *start);
+    // 1. Partition records into R1, R2, and other.
+    let mut groups: SmallVec<[SmallVec<[&'a Record; 1]>; 2]> = smallvec![SmallVec::new()];
 
-    // 3. Build the stitched CIGAR and MD
-    let mut stitched_cigar: Vec<CigarOp> = Vec::new();
-    let mut last_segment: Option<&Record> = None;
-
-    for (read_start, read_end, record) in segments.iter() {
-        // 1. Add a Translocate op if this isn't the first segment
-        if let Some(last_rec) = last_segment {
-            // Check for continuity
-            if last_rec.tid() != record.tid() || record.pos() != *read_end {
-                stitched_cigar.push(CigarOp::Translocate {
-                    new_tid: record.tid(),
-                    new_pos: record.pos(),
-                    new_strand: !record.is_reverse(),
-                    gap_score: -60.0, // Example static penalty
-                });
+    for rec in records {
+        if rec.is_secondary() { continue; } // Skip secondaries
+        if rec.is_first_in_template() {
+            groups[0].push(rec); // R1 group
+        } else if rec.is_last_in_template() {
+            if groups.len() == 1 {
+                groups.push(SmallVec::new());
             }
+            groups[1].push(rec); // R2 group
+        }
+    }
+
+    let r1_stitched = groups.get(0).map(|r1_records| {
+        stitch_one_read(r1_records, gap_penalty)
+    }).transpose()?;
+
+    let r2_stitched = groups.get(1).map(|r2_records| {
+        stitch_one_read(r2_records, gap_penalty)
+    }).transpose()?;
+
+    Ok((r1_stitched, r2_stitched))
+}
+
+const fn reverse_complement_base(base: u8) -> u8 {
+    match base {
+        b'A' => b'T',
+        b'T' => b'A',
+        b'C' => b'G',
+        b'G' => b'C',
+        b'N' => b'N',
+        _ => base, // Non-standard bases are returned as-is
+    }
+}
+
+fn get_unclipped_read_start(cigar: CigarStringView) -> u32 {
+    let mut read_start = 0;
+    for op in cigar.iter() {
+        match *op {
+            Cigar::SoftClip(len) | Cigar::HardClip(len) => read_start += len,
+            _ => break,
+        }
+    }
+    read_start
+}
+
+pub fn stitch_one_read<'a>(
+    records: &[&'a Record],
+    gap_penalty: f64,
+) -> Result<StitchedAlignment<'a>> {
+
+    let anchor = records.iter().find(|r| !r.is_supplementary())
+        .ok_or_else(|| anyhow!("No primary record found for stitching"))?;
+
+    let anchor_is_reverse = anchor.is_reverse();
+    let anchor_seq = anchor.seq();
+
+    let mut segments: SmallVec<[_; 1]> = records.iter().map(|rec| {
+        let read_start = get_unclipped_read_start(rec.cigar());
+        Ok((read_start, *rec))
+    }).collect::<Result<SmallVec<[_; 1]>>>()?;
+
+    segments.sort_by_key(|(start, _)| *start);
+
+    let mut stitched_ops: SmallVec<[UnifiedOp; 1]> = SmallVec::new();
+
+    for (i, (_, record)) in segments.iter().enumerate() {
+        if i > 0 {
+            stitched_ops.push(UnifiedOp::Translocate {
+                new_tid: record.tid(),
+                new_pos: record.pos(),
+                new_strand: !record.is_reverse(),
+                gap_score: gap_penalty,
+            });
         }
 
-        // 2. Add this segment's CIGAR ops (minus clips)
-        stitched_cigar.extend(
-            record.cigar().iter()
-                .filter(|op| !matches!(op, Cigar::SoftClip(_) | Cigar::HardClip(_)))
-                .map(CigarOp::from)
-        );
-        
-        last_segment = Some(record);
+        let md = match record.aux(b"MD")? {
+            Aux::String(md_bytes) => md_bytes.to_string(),
+            _ => return Err(anyhow!("MD tag not found or of unexpected type")),
+        };
+
+        let mut ops = lift_alignment_ops(record.cigar(), &md)?;
+
+        if anchor_is_reverse != record.is_reverse() {
+            ops.reverse();
+        }
+
+        stitched_ops.extend(ops);
     }
-    
-    let primary = last_segment.unwrap(); // Or find primary record
-    // The MD string is now just the simple, unmodified MD
-    let md_string = get_md_tag(primary)?; 
+
+    let (seq, qual): (Box<dyn Iterator<Item = u8>>, Box<dyn Iterator<Item = u8>>) = if anchor_is_reverse {
+        (
+            Box::new(anchor_seq.encoded.iter().map(|&b| reverse_complement_base(b))),
+            Box::new(anchor.qual().iter().rev().copied())
+        )
+    } else {
+        (
+            Box::new(anchor.seq().encoded.iter().copied()),
+            Box::new(anchor.qual().iter().copied())
+        )
+    };
 
     Ok(StitchedAlignment {
-        seq: primary.seq().encoded,
-        qual: primary.qual(),
-        tid: primary.tid(),
-        pos: primary.pos(),
-        strand: !primary.is_reverse(),
-        stitched_cigar,  // <-- The new Vec<CigarOp>
-        stitched_md: md_string, // <-- The simple MD
+        seq,
+        qual,
+        tid: anchor.tid(),
+        pos: anchor.pos(),
+        strand: !anchor_is_reverse, // fastq-order strand
+        stitched_ops,
     })
 }
 
