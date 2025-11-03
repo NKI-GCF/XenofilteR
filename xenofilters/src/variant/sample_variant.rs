@@ -19,32 +19,43 @@ impl Variant for SampleVariant {
     fn alt_allele(&self) -> &[u8] { &self.alt_a }
 
     fn score_alt_match(&self, quals: &[u8], log_likelihood_mismatch: &[f64; MAX_Q + 2]) -> f64 {
+        let len = quals.len();
+        if len == 0 {
+            return 0.0;
+        }
+        let len = len as f64;
         // P(Genotype is correct)
         let p_gt_correct = 1.0 - 10f64.powf(-(self.genotype_quality as f64) / 10.0);
 
         // P(Variant is truth) = P(GT is correct) if ALT is called,
         // OR 1-P(GT is correct) if REF is called.
         let p_variant = if self.is_called { p_gt_correct } else { 1.0 - p_gt_correct };
-        let mut score = 0.0;
+
+        let mut score_match = 0.0;
+        let mut score_mismatch = 0.0;
         for q in quals {
-            let score_match = LOG_LIKELIHOOD_MATCH[*q as usize];
-            let score_mismatch = log_likelihood_mismatch[*q as usize];
-            score += p_variant * score_match + (1.0 - p_variant) * score_mismatch;
+            score_match += LOG_LIKELIHOOD_MATCH[*q as usize];
+            score_mismatch += log_likelihood_mismatch[*q as usize];
         }
-        score
+        p_variant * (score_match / len) + (1.0 - p_variant) * (score_mismatch / len)
     }
 
     fn score_ref_match(&self, quals: &[u8], log_likelihood_mismatch: &[f64; MAX_Q + 2]) -> f64 {
+        let len = quals.len();
+        if len == 0 {
+            return 0.0;
+        }
+        let len = len as f64;
         let p_gt_correct = 1.0 - 10f64.powf(-(self.genotype_quality as f64) / 10.0);
         let p_variant = if self.is_called { p_gt_correct } else { 1.0 - p_gt_correct };
 
-        let mut score = 0.0;
+        let mut score_match = 0.0;
+        let mut score_mismatch = 0.0;
         for q in quals {
-            let score_match = LOG_LIKELIHOOD_MATCH[*q as usize];
-            let score_mismatch = log_likelihood_mismatch[*q as usize];
-            score += (1.0 - p_variant) * score_match + p_variant * score_mismatch
+            score_match += LOG_LIKELIHOOD_MATCH[*q as usize];
+            score_mismatch += log_likelihood_mismatch[*q as usize];
         }
-        score
+        (1.0 - p_variant) * (score_match / len) + p_variant * (score_mismatch / len)
     }
 }
 

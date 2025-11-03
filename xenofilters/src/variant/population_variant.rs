@@ -21,14 +21,18 @@ impl Variant for PopulationVariant {
 
         // This read matches the ALT.
         // Score = P(Variant is truth) * (Score for Match) + P(Ref is truth) * (Score for Mismatch)
-        let mut score = 0.0;
-        for q in quals {
-            let score_match = LOG_LIKELIHOOD_MATCH[*q as usize];
-            let score_mismatch = log_likelihood_mismatch[*q as usize];
-
-            score += p_variant * score_match + (1.0 - p_variant) * score_mismatch
+        let len = quals.len();
+        if len == 0 {
+            return 0.0;
         }
-        score
+        let len = len as f64;
+        let mut score_match = 0.0;
+        let mut score_mismatch = 0.0;
+        for q in quals {
+            score_match += LOG_LIKELIHOOD_MATCH[*q as usize];
+            score_mismatch += log_likelihood_mismatch[*q as usize];
+        }
+        p_variant * (score_match / len) + (1.0 - p_variant) * (score_mismatch / len)
     }
 
     fn score_ref_match(&self, quals: &[u8], log_likelihood_mismatch: &[f64; MAX_Q + 2]) -> f64 {
@@ -37,14 +41,19 @@ impl Variant for PopulationVariant {
         // This read matches the REF.
         // Score = P(Ref is truth) * (Score for Match) + P(Variant is truth) * (Score for Mismatch)
 
-        let mut score = 0.0;
-        for q in quals {
-            let score_match = LOG_LIKELIHOOD_MATCH[*q as usize];
-            let score_mismatch = log_likelihood_mismatch[*q as usize];
-
-            score += (1.0 - p_variant) * score_match + p_variant * score_mismatch
+        let len = quals.len();
+        if len == 0 {
+            return 0.0;
         }
-        score
+        let len = len as f64;
+
+        let mut score_match = 0.0;
+        let mut score_mismatch = 0.0;
+        for q in quals {
+            score_match += LOG_LIKELIHOOD_MATCH[*q as usize];
+            score_mismatch += log_likelihood_mismatch[*q as usize];
+        }
+        (1.0 - p_variant) * (score_match / len) + p_variant * (score_mismatch / len)
     }
 }
 
