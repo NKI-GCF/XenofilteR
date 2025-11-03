@@ -113,6 +113,9 @@ pub struct Config {
     /// Skip secondary mappings even if the primary mapping is written
     #[clap(short, long, default_value = "false")]
     pub skip_secondary: bool,
+
+    #[clap(short, long)]
+    pub is_paired: Option<bool>,
 }
 
 fn main() -> Result<()> {

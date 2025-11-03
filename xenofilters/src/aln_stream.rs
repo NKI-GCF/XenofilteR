@@ -51,6 +51,15 @@ impl AlnStream {
                 }
             }
         }
+        if i == 0 && opt.is_paired.is_none() {
+            opt.is_paired = Some(test_record.is_paired());
+        } else {
+            ensure!(
+                opt.is_paired == Some(test_record.is_paired()),
+                "All input BAMs must be either paired-end or single-end."
+            );
+        }
+
 
         let next = Some(test_record);
         let output = opt
