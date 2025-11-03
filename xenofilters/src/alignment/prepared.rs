@@ -62,13 +62,13 @@ impl<'a> PreparedAlignmentPair<'a> {
         let mut score = 0.0;
 
         for op in AlignmentIterator::new(cigar.take().iter(), md_iter) {
-            let op = op?;
             let q = *self.qual.get(read_i).ok_or(AlignmentError::QualIndexOutOfBounds)?;
-            score += op.score(q, &mut indel_gap, log_likelihood_mismatch)
-                - log_likelihood_mismatch[q as usize];
+            let op = op?;
             if !matches!(op, AlignmentOp::Deletion | AlignmentOp::RefSkip(_)) {
                 read_i += 1;
             }
+            score += op.score(q, &mut indel_gap, log_likelihood_mismatch)
+                - log_likelihood_mismatch[q as usize];
         }
         Ok(score)
     }

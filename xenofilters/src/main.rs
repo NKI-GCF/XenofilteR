@@ -94,7 +94,10 @@ pub struct Config {
     pub strip_read_suffix: Option<bool>,
 
     #[clap(short, long, num_args = 0..ARG_MAX)]
-    pub vcf: Vec<PathBuf>,
+    pub sample_variants: Vec<PathBuf>,
+
+    #[clap(short, long, num_args = 0..ARG_MAX)]
+    pub population_variants: Vec<PathBuf>,
 
     /*/// Number of mismatches allowed in the second alignment
     #[clap(short, long, default_value = "4")]

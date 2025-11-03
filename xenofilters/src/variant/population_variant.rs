@@ -1,4 +1,7 @@
-
+use rust_htslib::bcf::record::Record;
+use anyhow::{Result, anyhow};
+use crate::vcf_format::Variant;
+use crate::{MAX_Q, LOG_LIKELIHOOD_MATCH};
 
 pub struct PopulationVariant {
     pos: i64,
@@ -18,10 +21,14 @@ impl Variant for PopulationVariant {
 
         // This read matches the ALT.
         // Score = P(Variant is truth) * (Score for Match) + P(Ref is truth) * (Score for Mismatch)
-        let score_match = default_score(&AlignmentOp::Match, quals, log_likelihood_mismatch);
-        let score_mismatch = default_score(&AlignmentOp::Mismatch, quals, log_likelihood_mismatch);
+        let mut score = 0.0;
+        for q in quals {
+            let score_match = LOG_LIKELIHOOD_MATCH[*q as usize];
+            let score_mismatch = log_likelihood_mismatch[*q as usize];
 
-        p_variant * score_match + (1.0 - p_variant) * score_mismatch
+            score += p_variant * score_match + (1.0 - p_variant) * score_mismatch
+        }
+        score
     }
 
     fn score_ref_match(&self, quals: &[u8], log_likelihood_mismatch: &[f64; MAX_Q + 2]) -> f64 {
@@ -29,10 +36,15 @@ impl Variant for PopulationVariant {
 
         // This read matches the REF.
         // Score = P(Ref is truth) * (Score for Match) + P(Variant is truth) * (Score for Mismatch)
-        let score_match = default_score(&AlignmentOp::Match, quals, log_likelihood_mismatch);
-        let score_mismatch = default_score(&AlignmentOp::Mismatch, quals, log_likelihood_mismatch);
 
-        (1.0 - p_variant) * score_match + p_variant * score_mismatch
+        let mut score = 0.0;
+        for q in quals {
+            let score_match = LOG_LIKELIHOOD_MATCH[*q as usize];
+            let score_mismatch = log_likelihood_mismatch[*q as usize];
+
+            score += (1.0 - p_variant) * score_match + p_variant * score_mismatch
+        }
+        score
     }
 }
 

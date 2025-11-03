@@ -5,7 +5,8 @@ use rust_htslib::bam::{self, Read, record::Record};
 
 use crate::Config;
 use crate::bam_format::{out_from_file, out_stdout};
-use crate::vcf_format::{Variant, reader_from_file};
+use crate::vcf_format::vcf_reader;
+use crate::variant::{parse_sample_record, parse_population_record, SampleVariant, PopulationVariant};
 
 pub struct AlnStream {
     ambiguous: Option<bam::Writer>,
@@ -13,7 +14,8 @@ pub struct AlnStream {
     filt: Option<bam::Writer>,
     next: Option<Record>,
     output: Option<bam::Writer>,
-    variants: Option<Vec<HashMap<i64, Variant>>>,
+    sample_variants: Option<Vec<HashMap<i64, Vec<SampleVariant>>>>,
+    population_variants: Option<Vec<HashMap<i64, Vec<PopulationVariant>>>>,
 }
 
 impl AlnStream {
@@ -66,7 +68,18 @@ impl AlnStream {
             .get(i)
             .map(|f| out_from_file(f, bam.header()))
             .transpose()?;
-        let variants = opt.vcf.get(i).map(|f| reader_from_file(f)).transpose()?;
+        let sample_variants = opt.sample_variants.get(i).map(|_| {
+            vcf_reader(
+                &opt.sample_variants[i],
+                parse_sample_record,
+            )
+        }).transpose()?;
+        let population_variants = opt.population_variants.get(i).map(|_| {
+            vcf_reader(
+                &opt.population_variants[i],
+                parse_population_record,
+            )
+        }).transpose()?;
 
         let mut stream = AlnStream {
             ambiguous,
@@ -74,7 +87,8 @@ impl AlnStream {
             filt,
             next,
             output,
-            variants,
+            sample_variants,
+            population_variants,
         };
 
         if i == 0 && stream.output.is_none() {

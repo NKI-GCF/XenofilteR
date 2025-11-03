@@ -1,4 +1,7 @@
-
+use rust_htslib::bcf::record::Record;
+use anyhow::Result;
+use crate::vcf_format::Variant;
+use crate::{MAX_Q, LOG_LIKELIHOOD_MATCH};
 
 pub struct SampleVariant {
     pos: i64,
@@ -22,21 +25,26 @@ impl Variant for SampleVariant {
         // P(Variant is truth) = P(GT is correct) if ALT is called,
         // OR 1-P(GT is correct) if REF is called.
         let p_variant = if self.is_called { p_gt_correct } else { 1.0 - p_gt_correct };
-
-        let score_match = default_score(&AlignmentOp::Match, quals, log_likelihood_mismatch);
-        let score_mismatch = default_score(&AlignmentOp::Mismatch, quals, log_likelihood_mismatch);
-
-        p_variant * score_match + (1.0 - p_variant) * score_mismatch
+        let mut score = 0.0;
+        for q in quals {
+            let score_match = LOG_LIKELIHOOD_MATCH[*q as usize];
+            let score_mismatch = log_likelihood_mismatch[*q as usize];
+            score += p_variant * score_match + (1.0 - p_variant) * score_mismatch;
+        }
+        score
     }
 
     fn score_ref_match(&self, quals: &[u8], log_likelihood_mismatch: &[f64; MAX_Q + 2]) -> f64 {
         let p_gt_correct = 1.0 - 10f64.powf(-(self.genotype_quality as f64) / 10.0);
         let p_variant = if self.is_called { p_gt_correct } else { 1.0 - p_gt_correct };
 
-        let score_match = default_score(&AlignmentOp::Match, quals, log_likelihood_mismatch);
-        let score_mismatch = default_score(&AlignmentOp::Mismatch, quals, log_likelihood_mismatch);
-
-        (1.0 - p_variant) * score_match + p_variant * score_mismatch
+        let mut score = 0.0;
+        for q in quals {
+            let score_match = LOG_LIKELIHOOD_MATCH[*q as usize];
+            let score_mismatch = log_likelihood_mismatch[*q as usize];
+            score += (1.0 - p_variant) * score_match + p_variant * score_mismatch
+        }
+        score
     }
 }
 

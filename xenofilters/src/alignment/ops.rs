@@ -23,7 +23,7 @@ impl AlignmentOp {
         )
     }
     pub fn score(
-        &self,
+        self,
         q: u8,
         indel_gap: &mut Option<bool>,
         log_likelihood_mismatch: &[f64; MAX_Q + 2],
