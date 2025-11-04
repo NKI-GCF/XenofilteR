@@ -5,6 +5,7 @@ use std::path::Path;
 
 use crate::MAX_Q;
 
+#[allow(dead_code)]
 /// Trait for any object that can be scored against an alignment.
 pub trait Variant {
     /// The 1-based reference position of the variant.

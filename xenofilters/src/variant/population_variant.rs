@@ -3,6 +3,7 @@ use crate::{LOG_LIKELIHOOD_MATCH, MAX_Q};
 use anyhow::{Result, anyhow};
 use rust_htslib::bcf::record::Record;
 
+#[allow(dead_code)]
 pub struct PopulationVariant {
     pos: i64,
     ref_a: Vec<u8>,

@@ -199,6 +199,7 @@ pub enum AlignmentOp {
     Insertion,
     Deletion,
     SoftClip,
+    #[allow(dead_code)]
     RefSkip(u32),
 }
 

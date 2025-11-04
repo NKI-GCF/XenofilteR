@@ -16,7 +16,9 @@ pub struct AlnStream {
     filt: Option<bam::Writer>,
     next: Option<Record>,
     output: Option<bam::Writer>,
+    #[allow(dead_code)]
     sample_variants: Option<Vec<HashMap<i64, Vec<SampleVariant>>>>,
+    #[allow(dead_code)]
     population_variants: Option<Vec<HashMap<i64, Vec<PopulationVariant>>>>,
 }
 
