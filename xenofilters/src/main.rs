@@ -22,7 +22,7 @@ use clap::Parser;
 use filter_algorithm::line_by_line::LineByLine;
 use smallvec::{SmallVec, smallvec};
 
-pub use alignment::*;
+pub use alignment::{PreparedAlignmentPair, PreparedAlignmentPairIter};
 pub use fragment::{Evaluation, FragmentState};
 
 const ARG_MAX: usize = 4;

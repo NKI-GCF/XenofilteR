@@ -1,7 +1,7 @@
 use rust_htslib::bam::record::{Record, Aux, Cigar, CigarStringView};
 use anyhow::{Result, anyhow};
 use smallvec::{SmallVec, smallvec};
-use crate::{UnifiedOp, lift_alignment_ops};
+use crate::alignment::{UnifiedOp, lift_alignment_ops};
 
 // A new struct to hold the combined alignment data
 pub struct StitchedAlignment<'a> {
@@ -33,7 +33,7 @@ pub fn stitch_alignment_segments<'a>(
         }
     }
 
-    let r1_stitched = groups.get(0).map(|r1_records| {
+    let r1_stitched = groups.first().map(|r1_records| {
         stitch_one_read(r1_records, gap_penalty)
     }).transpose()?;
 

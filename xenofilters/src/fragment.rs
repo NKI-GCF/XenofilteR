@@ -36,8 +36,8 @@ impl FragmentState {
     pub fn add_record(&mut self, r: Record) {
         self.records.push(r);
     }
-    pub fn drain(&mut self) -> SmallVec<[Record; 2]> {
-        self.records.drain(..).collect()
+    pub fn drain(&mut self) -> impl Iterator<Item = Record> + '_ {
+        self.records.drain(..)
     }
     fn try_needs_score(&self, iter: PreparedAlignmentPairIterBox<'_>) -> Option<f64> {
         let mut total_score_diff = Some(0.0);

@@ -5,7 +5,8 @@ use super::{
     AlignmentCompareIterator, AlignmentError, AlignmentIterator, AlnCmpOp, MdOp, MdOpIterator,
     PrepareError,
 };
-use crate::{AlignmentOp, LOG_LIKELIHOOD_MISMATCH};
+use crate::LOG_LIKELIHOOD_MISMATCH;
+use crate::alignment::AlignmentOp;
 
 #[allow(dead_code)]
 pub fn print_req(i: usize, rec: &Record) {

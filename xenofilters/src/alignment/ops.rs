@@ -40,7 +40,7 @@ impl<'a> Iterator for RichMdOpIterator<'a> {
                 len
             }));
         }
-        let Some(&c) = self.chars.peek() else { return None };
+        let &c = self.chars.peek()?;
 
         if c.is_ascii_digit() {
             // 1. Handle Match
@@ -122,7 +122,7 @@ pub fn lift_alignment_ops(
     let mut cigar_iter = cigar.iter().peekable();
     let mut md_iter: Box<dyn Iterator<Item = RichMdOp>> = Box::new(RichMdOpIterator::new(md).peekable());
 
-    while let Some(cigar_op) = cigar_iter.next() {
+    for cigar_op in cigar_iter {
         match *cigar_op {
             // --- CIGAR Ops that consume CIGAR and MD ---
             Cigar::Match(mut len) | Cigar::Equal(mut len) | Cigar::Diff(mut len) => {
@@ -216,7 +216,6 @@ impl AlignmentOp {
         indel_gap: &mut Option<bool>,
     ) -> f64 {
         let log_likelihood_mismatch = LOG_LIKELIHOOD_MISMATCH.get().unwrap();
-        let config = CONFIG.get().unwrap();
         match self {
             AlignmentOp::Match => {
                 *indel_gap = None;
@@ -227,6 +226,7 @@ impl AlignmentOp {
                 log_likelihood_mismatch[q as usize]
             }
             AlignmentOp::Insertion => {
+                let config = CONFIG.get().unwrap();
                 if *indel_gap == Some(true) {
                     config.gap_extend
                 } else {
@@ -235,6 +235,7 @@ impl AlignmentOp {
                 }
             }
             AlignmentOp::Deletion => {
+                let config = CONFIG.get().unwrap();
                 if *indel_gap == Some(false) {
                     config.gap_extend
                 } else {

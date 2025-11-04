@@ -63,8 +63,8 @@ impl Variant for SampleVariant {
 pub fn parse_sample_record(record: &mut Record) -> Result<Vec<SampleVariant>> {
     // Genotype representation as a vector of GenotypeAllele.
     // 1. Get GT and GQ from FORMAT
-    let gq = record.format(b"GQ").integer()?.get(0).and_then(|v| v.get(0).map(|i| *i as f32)).unwrap_or(0.0);
-    let gt = record.format(b"GT").integer()?.get(0).and_then(|v| v.get(0));
+    let gq = record.format(b"GQ").integer()?.first().and_then(|v| v.first().map(|i| *i as f32)).unwrap_or(0.0);
+    let gt = record.format(b"GT").integer()?.first().and_then(|v| v.first());
 
     let alleles = record.alleles();
     let ref_a = alleles[0].to_vec();
@@ -73,7 +73,7 @@ pub fn parse_sample_record(record: &mut Record) -> Result<Vec<SampleVariant>> {
     for (i, alt_a) in alleles[1..].iter().enumerate() {
         let alt_index = (i + 1) as i32;
         // Check if this allele (alt_index) is present in the GT
-        let is_called = gt.map_or(false, |&g| g == alt_index);
+        let is_called = gt.is_some_and(|&g| g == alt_index);
 
         variants.push(SampleVariant {
             pos: record.pos(),
