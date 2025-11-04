@@ -4,41 +4,30 @@ use smallvec::{SmallVec, smallvec};
 
 use crate::aln_stream::AlnStream;
 use crate::fragment::FragmentState;
-use crate::{Config, MAX_Q, REFERENCE_PENALTY};
+use crate::CONFIG;
+
+// Usually two species compared so two alignments, two fragment states.
 
 type AlnState = (usize, FragmentState);
 type AlnBuffer = SmallVec<[AlnState; 2]>;
 
 pub struct LineByLine {
     aln: SmallVec<[AlnStream; 2]>,
-    log_likelihood_mismatch: [f64; 95],
-    config: Config,
     branch_counters: [u64; 32],
 }
 
 impl LineByLine {
-    pub fn new(config: Config, aln: SmallVec<[AlnStream; 2]>) -> Self {
-        let mut log_likelihood_mismatch = [0.0f64; MAX_Q + 2];
-        let scaling_factor = config.mismatch_penalty / REFERENCE_PENALTY;
-
-        for (q, item) in log_likelihood_mismatch.iter_mut().enumerate().take(MAX_Q) {
-            let base_score = -(q as f64) / 10.0;
-            *item = base_score * scaling_factor;
-        }
-        log_likelihood_mismatch[MAX_Q] = -config.gap_open; // gap open penalty
-        log_likelihood_mismatch[MAX_Q + 1] = -config.gap_extend; // gap extend penalty
-
+    pub fn new(aln: SmallVec<[AlnStream; 2]>) -> Self {
         LineByLine {
             aln,
-            log_likelihood_mismatch,
-            config,
             branch_counters: [0; 32],
         }
     }
 
     fn filter_records(&mut self, i: usize, mut fs: FragmentState) -> Result<()> {
+        let config = CONFIG.get().unwrap();
         for r in fs.drain() {
-            if self.config.discard_unmapped && r.is_unmapped() && r.is_mate_unmapped() {
+            if config.discard_unmapped && r.is_unmapped() && r.is_mate_unmapped() {
                 continue;
             }
             self.write_record(i, r, Some(false))?;
@@ -46,8 +35,9 @@ impl LineByLine {
         Ok(())
     }
     fn neqn(&self, best: &AlnBuffer, qname2: &[u8]) -> Option<bool> {
+        let config = CONFIG.get().unwrap();
         best.first().map(|b| b.1.first_qname()).map(|qname1| {
-            if self.config.strip_read_suffix.unwrap_or(false) {
+            if config.strip_read_suffix.unwrap_or(false) {
                 qname1[..qname1.len() - 2] != qname2[..qname2.len() - 2]
             } else {
                 qname1 != qname2
@@ -70,7 +60,8 @@ impl LineByLine {
         rec: Record,
         best: &mut AlnBuffer,
     ) -> bool {
-        if !self.config.skip_secondary || !rec.is_secondary() {
+        let config = CONFIG.get().unwrap();
+        if !config.skip_secondary || !rec.is_secondary() {
             if let Some(new_readname) = self.neqn(best, rec.qname()) {
                 if new_readname {
                     // end of round
@@ -97,7 +88,7 @@ impl LineByLine {
             }
             best.push((
                 i,
-                FragmentState::from_record(rec, self.log_likelihood_mismatch),
+                FragmentState::from_record(rec),
             ));
         } // else skip secondary
 

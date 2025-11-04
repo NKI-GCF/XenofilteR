@@ -5,7 +5,7 @@ use super::{
     AlignmentCompareIterator, AlignmentError, AlignmentIterator, AlnCmpOp, MdOp, MdOpIterator,
     PrepareError,
 };
-use crate::{AlignmentOp, MAX_Q};
+use crate::{AlignmentOp, LOG_LIKELIHOOD_MISMATCH};
 
 #[allow(dead_code)]
 pub fn print_req(i: usize, rec: &Record) {
@@ -55,7 +55,6 @@ impl<'a> PreparedAlignmentPair<'a> {
         &self,
         cigar: CigarStringView,
         md_iter: MdOpIterator<'a>,
-        log_likelihood_mismatch: &[f64; MAX_Q + 2],
     ) -> Result<f64, PrepareError> {
         let mut read_i = 0;
         let mut indel_gap = None;
@@ -67,8 +66,8 @@ impl<'a> PreparedAlignmentPair<'a> {
             if !matches!(op, AlignmentOp::Deletion | AlignmentOp::RefSkip(_)) {
                 read_i += 1;
             }
-            score += op.score(q, &mut indel_gap, log_likelihood_mismatch)
-                - log_likelihood_mismatch[q as usize];
+            let log_likelihood_mismatch = LOG_LIKELIHOOD_MISMATCH.get().unwrap();
+            score += op.score(q, &mut indel_gap) - log_likelihood_mismatch[q as usize];
         }
         Ok(score)
     }
@@ -78,7 +77,7 @@ impl<'a> PreparedAlignmentPair<'a> {
     ///
     /// Higher scores are better
     ///
-    pub fn score(mut self, log_likelihood_mismatch: &[f64; MAX_Q + 2]) -> Result<f64> {
+    pub fn score(mut self) -> Result<f64> {
         let mut score = 0.0_f64;
 
         match (self.cigar1.take(), self.cigar2.take()) {
@@ -107,26 +106,26 @@ impl<'a> PreparedAlignmentPair<'a> {
                             (AlignmentOp::Mismatch, AlignmentOp::SoftClip)
                             | (AlignmentOp::SoftClip, AlignmentOp::Mismatch) => {}
                             (x, y) => {
-                                score += x.score(q, &mut indel_gap1, log_likelihood_mismatch)
-                                    - y.score(q, &mut indel_gap2, log_likelihood_mismatch);
+                                score += x.score(q, &mut indel_gap1)
+                                    - y.score(q, &mut indel_gap2);
                             }
                         },
                         AlnCmpOp::Left(op1, q) => {
-                            score += op1.score(q, &mut indel_gap1, log_likelihood_mismatch);
+                            score += op1.score(q, &mut indel_gap1);
                         }
                         AlnCmpOp::Right(op2, q) => {
-                            score -= op2.score(q, &mut indel_gap2, log_likelihood_mismatch);
+                            score -= op2.score(q, &mut indel_gap2);
                         }
                     }
                 }
             }
             (Some(cigar1), None) => {
                 let md_iter1 = self.md_iter1.take().ok_or(PrepareError::NoMdTag)?;
-                score += self.score_aln_op_against_mm(cigar1, md_iter1, log_likelihood_mismatch)?;
+                score += self.score_aln_op_against_mm(cigar1, md_iter1)?;
             }
             (None, Some(cigar2)) => {
                 let md_iter2 = self.md_iter2.take().ok_or(PrepareError::NoMdTag)?;
-                score -= self.score_aln_op_against_mm(cigar2, md_iter2, log_likelihood_mismatch)?;
+                score -= self.score_aln_op_against_mm(cigar2, md_iter2)?;
             }
             (None, None) => {}
         }

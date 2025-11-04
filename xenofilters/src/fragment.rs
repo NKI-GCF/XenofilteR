@@ -3,7 +3,6 @@ use rust_htslib::bam::record::Record;
 use smallvec::{SmallVec, smallvec};
 use std::cmp::Ordering;
 
-use crate::MAX_Q;
 use crate::alignment::{PrepareError, PreparedAlignmentPair, PreparedAlignmentPairIter};
 
 type PreparedAlignmentPairIterBox<'a> =
@@ -18,17 +17,15 @@ pub enum Evaluation<'a> {
 
 pub struct FragmentState {
     records: SmallVec<[Record; 2]>,
-    log_likelihood_mismatch: [f64; MAX_Q + 2],
 }
 // TODO: if there are supplementary alignments, modify cigar to skip the clipped sections.
 //       may require a penalty for the placement of a secondary, elsewhere.
 
 impl FragmentState {
     #[must_use]
-    pub fn from_record(r: Record, log_likelihood_mismatch: [f64; MAX_Q + 2]) -> Self {
+    pub fn from_record(r: Record) -> Self {
         FragmentState {
             records: smallvec![r],
-            log_likelihood_mismatch,
         }
     }
     #[must_use]
@@ -48,7 +45,7 @@ impl FragmentState {
         // We filter_map to skip pairs that had a PrepareError,
         // as they won't contribute to the score.
         for pair_result in iter.filter_map(std::result::Result::ok) {
-            match pair_result.score(&self.log_likelihood_mismatch) {
+            match pair_result.score() {
                 Ok(score_diff) => total_score_diff = total_score_diff.map(|n| n + score_diff),
                 Err(_) => return None,
             }

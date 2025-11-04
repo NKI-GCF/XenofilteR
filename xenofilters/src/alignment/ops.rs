@@ -1,4 +1,4 @@
-use crate::{LOG_LIKELIHOOD_MATCH, MAX_Q};
+use crate::{LOG_LIKELIHOOD_MATCH, LOG_LIKELIHOOD_MISMATCH, CONFIG};
 use rust_htslib::bam::record::{Cigar, CigarStringView};
 use crate::alignment::AlignmentError;
 
@@ -214,10 +214,9 @@ impl AlignmentOp {
         self,
         q: u8,
         indel_gap: &mut Option<bool>,
-        log_likelihood_mismatch: &[f64; MAX_Q + 2],
     ) -> f64 {
-        let gap_open = log_likelihood_mismatch[MAX_Q];
-        let gap_ext = log_likelihood_mismatch[MAX_Q + 1];
+        let log_likelihood_mismatch = LOG_LIKELIHOOD_MISMATCH.get().unwrap();
+        let config = CONFIG.get().unwrap();
         match self {
             AlignmentOp::Match => {
                 *indel_gap = None;
@@ -229,18 +228,18 @@ impl AlignmentOp {
             }
             AlignmentOp::Insertion => {
                 if *indel_gap == Some(true) {
-                    gap_ext
+                    config.gap_extend
                 } else {
                     *indel_gap = Some(true);
-                    gap_open + gap_ext
+                    config.gap_open + config.gap_extend
                 }
             }
             AlignmentOp::Deletion => {
                 if *indel_gap == Some(false) {
-                    gap_ext
+                    config.gap_extend
                 } else {
                     *indel_gap = Some(false);
-                    gap_open + gap_ext
+                    config.gap_open + config.gap_extend
                 }
             }
             AlignmentOp::RefSkip(_) => 0.0,

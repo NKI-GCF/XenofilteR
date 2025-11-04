@@ -13,10 +13,10 @@ mod vcf_format;
 mod variant;
 
 use std::path::PathBuf;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 
 use aln_stream::AlnStream;
-use anyhow::{Result, ensure};
+use anyhow::{Result, anyhow, ensure};
 use bam_format::BamFormat;
 use clap::Parser;
 use filter_algorithm::line_by_line::LineByLine;
@@ -27,7 +27,6 @@ pub use fragment::{Evaluation, FragmentState};
 
 const ARG_MAX: usize = 4;
 const MAX_Q: usize = 93;
-const REFERENCE_PENALTY: f64 = 4.0;
 
 static ERROR_PROB: LazyLock<[f64; MAX_Q]> = LazyLock::new(|| {
     let mut arr = [0.0_f64; MAX_Q];
@@ -44,6 +43,10 @@ static LOG_LIKELIHOOD_MATCH: LazyLock<[f64; MAX_Q]> = LazyLock::new(|| {
     }
     arr
 });
+
+static CONFIG: OnceLock<Config> = OnceLock::new();
+
+static LOG_LIKELIHOOD_MISMATCH: OnceLock<[f64; MAX_Q]> = OnceLock::new();
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about=None)]
@@ -126,37 +129,53 @@ impl Config {
             None => panic!("is_paired not set"), // don't call before AlnStream::new
         }
     }
+    fn validate_and_init(&mut self) -> Result<()> {
+        ensure!(
+            self.output.len() <= self.alignment.len(),
+            "More output than input specified"
+        );
+        ensure!(
+            self.filtered_output.len() <= self.alignment.len(),
+            "More filtered output than input specified"
+        );
+        ensure!(
+            self.ambiguous_output.len() <= self.alignment.len(),
+            "More ambiguous output than input specified"
+        );
+        ensure!(
+            self.alignment.len() >= 2,
+            "At least two alignments required"
+        );
+        ensure!(
+            !self.read_from_stdin || self.alignment.len() == 1,
+            "Cannot read from stdin with multiple input alignments"
+        );
+        if self.gap_open > 0.0 {
+            self.gap_open = -self.gap_open;
+        }
+        if self.gap_extend > 0.0 {
+            self.gap_extend = -self.gap_extend;
+        }
+
+        if self.gap_open == 0.0 || self.mismatch_penalty <= 0.0 {
+            return Err(anyhow::anyhow!("Gap open/mismatch penalties must be positive"));
+        }
+        let mut arr = [0.0f64; MAX_Q];
+        let reference_penalty = 4.0;
+        let scaling_factor = self.mismatch_penalty / reference_penalty;
+
+        for (q, item) in arr.iter_mut().enumerate() {
+            *item = -(q as f64) / 10.0 * scaling_factor;
+        }
+        LOG_LIKELIHOOD_MISMATCH.set(arr).map_err(|_| anyhow::anyhow!("LOG_LIKELIHOOD_MISMATCH already set"))?;
+
+        Ok(())
+    }
 }
 
 fn main() -> Result<()> {
     let mut config = Config::parse();
-
-    ensure!(
-        config.output.len() <= config.alignment.len(),
-        "More output than input specified"
-    );
-    ensure!(
-        config.filtered_output.len() <= config.alignment.len(),
-        "More filtered output than input specified"
-    );
-    ensure!(
-        config.ambiguous_output.len() <= config.alignment.len(),
-        "More ambiguous output than input specified"
-    );
-    ensure!(
-        config.alignment.len() >= 2,
-        "At least two alignments required"
-    );
-    ensure!(
-        !config.read_from_stdin || config.alignment.len() == 1,
-        "Cannot read from stdin with multiple input alignments"
-    );
-
-    if config.gap_open <= 0.0 || config.gap_extend < 0.0 || config.mismatch_penalty <= 0.0 {
-        return Err(anyhow::anyhow!(
-            "Gap open/extend penalties must be positive"
-        ));
-    }
+    config.validate_and_init()?;
 
     // first alignment to quick check readnames are in same name order
     let mut aln: SmallVec<[AlnStream; 2]> = smallvec![];
@@ -167,6 +186,7 @@ fn main() -> Result<()> {
             "Input alignments must have the same read order."
         );
     }
+    CONFIG.set(config).map_err(|_| anyhow!("CONFIG already set"))?;
 
-    LineByLine::new(config, aln).process()
+    LineByLine::new(aln).process()
 }
