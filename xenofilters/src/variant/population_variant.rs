@@ -1,7 +1,7 @@
-use rust_htslib::bcf::record::Record;
-use anyhow::{Result, anyhow};
 use crate::vcf_format::Variant;
-use crate::{MAX_Q, LOG_LIKELIHOOD_MATCH};
+use crate::{LOG_LIKELIHOOD_MATCH, MAX_Q};
+use anyhow::{Result, anyhow};
+use rust_htslib::bcf::record::Record;
 
 pub struct PopulationVariant {
     pos: i64,
@@ -12,9 +12,15 @@ pub struct PopulationVariant {
 }
 
 impl Variant for PopulationVariant {
-    fn pos(&self) -> i64 { self.pos }
-    fn ref_allele(&self) -> &[u8] { &self.ref_a }
-    fn alt_allele(&self) -> &[u8] { &self.alt_a }
+    fn pos(&self) -> i64 {
+        self.pos
+    }
+    fn ref_allele(&self) -> &[u8] {
+        &self.ref_a
+    }
+    fn alt_allele(&self) -> &[u8] {
+        &self.alt_a
+    }
 
     fn score_alt_match(&self, quals: &[u8], log_likelihood_mismatch: &[f64; MAX_Q + 2]) -> f64 {
         let p_variant = self.allele_frequency as f64;
@@ -60,7 +66,9 @@ impl Variant for PopulationVariant {
 /// Example parser for Population VCF (checks INFO tag "AF")
 pub fn parse_population_record(record: &mut Record) -> Result<Vec<PopulationVariant>> {
     // 1. Get AF from INFO
-    let af_values = record.info(b"AF").float()?
+    let af_values = record
+        .info(b"AF")
+        .float()?
         .ok_or_else(|| anyhow!("Missing AF tag"))?;
 
     let alleles = record.alleles();
@@ -77,4 +85,3 @@ pub fn parse_population_record(record: &mut Record) -> Result<Vec<PopulationVari
     }
     Ok(variants)
 }
-

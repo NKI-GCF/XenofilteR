@@ -1,7 +1,7 @@
-use rust_htslib::bcf::record::Record;
-use anyhow::Result;
 use crate::vcf_format::Variant;
-use crate::{MAX_Q, LOG_LIKELIHOOD_MATCH};
+use crate::{LOG_LIKELIHOOD_MATCH, MAX_Q};
+use anyhow::Result;
+use rust_htslib::bcf::record::Record;
 
 pub struct SampleVariant {
     pos: i64,
@@ -14,9 +14,15 @@ pub struct SampleVariant {
 }
 
 impl Variant for SampleVariant {
-    fn pos(&self) -> i64 { self.pos }
-    fn ref_allele(&self) -> &[u8] { &self.ref_a }
-    fn alt_allele(&self) -> &[u8] { &self.alt_a }
+    fn pos(&self) -> i64 {
+        self.pos
+    }
+    fn ref_allele(&self) -> &[u8] {
+        &self.ref_a
+    }
+    fn alt_allele(&self) -> &[u8] {
+        &self.alt_a
+    }
 
     fn score_alt_match(&self, quals: &[u8], log_likelihood_mismatch: &[f64; MAX_Q + 2]) -> f64 {
         let len = quals.len();
@@ -29,7 +35,11 @@ impl Variant for SampleVariant {
 
         // P(Variant is truth) = P(GT is correct) if ALT is called,
         // OR 1-P(GT is correct) if REF is called.
-        let p_variant = if self.is_called { p_gt_correct } else { 1.0 - p_gt_correct };
+        let p_variant = if self.is_called {
+            p_gt_correct
+        } else {
+            1.0 - p_gt_correct
+        };
 
         let mut score_match = 0.0;
         let mut score_mismatch = 0.0;
@@ -47,7 +57,11 @@ impl Variant for SampleVariant {
         }
         let len = len as f64;
         let p_gt_correct = 1.0 - 10f64.powf(-(self.genotype_quality as f64) / 10.0);
-        let p_variant = if self.is_called { p_gt_correct } else { 1.0 - p_gt_correct };
+        let p_variant = if self.is_called {
+            p_gt_correct
+        } else {
+            1.0 - p_gt_correct
+        };
 
         let mut score_match = 0.0;
         let mut score_mismatch = 0.0;
@@ -63,8 +77,17 @@ impl Variant for SampleVariant {
 pub fn parse_sample_record(record: &mut Record) -> Result<Vec<SampleVariant>> {
     // Genotype representation as a vector of GenotypeAllele.
     // 1. Get GT and GQ from FORMAT
-    let gq = record.format(b"GQ").integer()?.first().and_then(|v| v.first().map(|i| *i as f32)).unwrap_or(0.0);
-    let gt = record.format(b"GT").integer()?.first().and_then(|v| v.first());
+    let gq = record
+        .format(b"GQ")
+        .integer()?
+        .first()
+        .and_then(|v| v.first().map(|i| *i as f32))
+        .unwrap_or(0.0);
+    let gt = record
+        .format(b"GT")
+        .integer()?
+        .first()
+        .and_then(|v| v.first());
 
     let alleles = record.alleles();
     let ref_a = alleles[0].to_vec();

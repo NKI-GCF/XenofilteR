@@ -9,8 +9,8 @@ mod aln_stream;
 mod bam_format;
 mod filter_algorithm;
 mod fragment;
-mod vcf_format;
 mod variant;
+mod vcf_format;
 
 use std::path::PathBuf;
 use std::sync::{LazyLock, OnceLock};
@@ -158,7 +158,9 @@ impl Config {
         }
 
         if self.gap_open == 0.0 || self.mismatch_penalty <= 0.0 {
-            return Err(anyhow::anyhow!("Gap open/mismatch penalties must be positive"));
+            return Err(anyhow::anyhow!(
+                "Gap open/mismatch penalties must be positive"
+            ));
         }
         let mut arr = [0.0f64; MAX_Q];
         let reference_penalty = 4.0;
@@ -167,7 +169,9 @@ impl Config {
         for (q, item) in arr.iter_mut().enumerate() {
             *item = -(q as f64) / 10.0 * scaling_factor;
         }
-        LOG_LIKELIHOOD_MISMATCH.set(arr).map_err(|_| anyhow::anyhow!("LOG_LIKELIHOOD_MISMATCH already set"))?;
+        LOG_LIKELIHOOD_MISMATCH
+            .set(arr)
+            .map_err(|_| anyhow::anyhow!("LOG_LIKELIHOOD_MISMATCH already set"))?;
 
         Ok(())
     }
@@ -186,7 +190,9 @@ fn main() -> Result<()> {
             "Input alignments must have the same read order."
         );
     }
-    CONFIG.set(config).map_err(|_| anyhow!("CONFIG already set"))?;
+    CONFIG
+        .set(config)
+        .map_err(|_| anyhow!("CONFIG already set"))?;
 
     LineByLine::new(aln).process()
 }

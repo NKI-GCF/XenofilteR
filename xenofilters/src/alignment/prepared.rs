@@ -62,7 +62,10 @@ impl<'a> PreparedAlignmentPair<'a> {
         let mut score = 0.0;
 
         for op in AlignmentIterator::new(cigar.take().iter(), md_iter) {
-            let q = *self.qual.get(read_i).ok_or(AlignmentError::QualIndexOutOfBounds)?;
+            let q = *self
+                .qual
+                .get(read_i)
+                .ok_or(AlignmentError::QualIndexOutOfBounds)?;
             let op = op?;
             if !matches!(op, AlignmentOp::Deletion | AlignmentOp::RefSkip(_)) {
                 read_i += 1;
@@ -107,8 +110,7 @@ impl<'a> PreparedAlignmentPair<'a> {
                             (AlignmentOp::Mismatch, AlignmentOp::SoftClip)
                             | (AlignmentOp::SoftClip, AlignmentOp::Mismatch) => {}
                             (x, y) => {
-                                score += x.score(q, &mut indel_gap1)
-                                    - y.score(q, &mut indel_gap2);
+                                score += x.score(q, &mut indel_gap1) - y.score(q, &mut indel_gap2);
                             }
                         },
                         AlnCmpOp::Left(op1, q) => {

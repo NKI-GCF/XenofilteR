@@ -16,7 +16,7 @@ pub enum Evaluation<'a> {
 }
 
 pub struct FragmentState {
-    records: SmallVec<[Record; 2]>,
+    pub records: SmallVec<[Record; 2]>,
 }
 // TODO: if there are supplementary alignments, modify cigar to skip the clipped sections.
 //       may require a penalty for the placement of a secondary, elsewhere.
@@ -33,12 +33,6 @@ impl FragmentState {
         self.records.first().map_or(b"", |r| r.qname())
     }
 
-    pub fn add_record(&mut self, r: Record) {
-        self.records.push(r);
-    }
-    pub fn drain(&mut self) -> impl Iterator<Item = Record> + '_ {
-        self.records.drain(..)
-    }
     fn try_needs_score(&self, iter: PreparedAlignmentPairIterBox<'_>) -> Option<f64> {
         let mut total_score_diff = Some(0.0);
 

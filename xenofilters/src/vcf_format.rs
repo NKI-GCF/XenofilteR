@@ -1,7 +1,7 @@
-use rust_htslib::bcf::{Reader, Read, record::Record};
 use anyhow::{Result, anyhow};
-use std::path::Path;
+use rust_htslib::bcf::{Read, Reader, record::Record};
 use std::collections::HashMap;
+use std::path::Path;
 
 use crate::MAX_Q;
 
@@ -35,9 +35,8 @@ pub trait Variant {
 pub fn vcf_reader<V: Variant>(
     f: &Path,
     // The parser function defines which use case (Population vs. Sample)
-    parser: impl Fn(&mut Record) -> Result<Vec<V>>
+    parser: impl Fn(&mut Record) -> Result<Vec<V>>,
 ) -> Result<Vec<HashMap<i64, Vec<V>>>> {
-
     let mut chr_variants: Vec<HashMap<i64, Vec<V>>> = Vec::new();
     let mut bcf_reader = Reader::from_path(f)
         .map_err(|e| anyhow!("Failed to open BCF file {}: {}", f.display(), e))?;
@@ -57,4 +56,3 @@ pub fn vcf_reader<V: Variant>(
     }
     Ok(chr_variants)
 }
-

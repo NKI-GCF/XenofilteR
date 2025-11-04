@@ -5,8 +5,10 @@ use rust_htslib::bam::{self, Read, record::Record};
 
 use crate::Config;
 use crate::bam_format::{out_from_file, out_stdout};
+use crate::variant::{
+    PopulationVariant, SampleVariant, parse_population_record, parse_sample_record,
+};
 use crate::vcf_format::vcf_reader;
-use crate::variant::{parse_sample_record, parse_population_record, SampleVariant, PopulationVariant};
 
 pub struct AlnStream {
     ambiguous: Option<bam::Writer>,
@@ -60,7 +62,6 @@ impl AlnStream {
             );
         }
 
-
         let next = Some(test_record);
         let output = opt
             .output
@@ -77,18 +78,16 @@ impl AlnStream {
             .get(i)
             .map(|f| out_from_file(f, bam.header()))
             .transpose()?;
-        let sample_variants = opt.sample_variants.get(i).map(|_| {
-            vcf_reader(
-                &opt.sample_variants[i],
-                parse_sample_record,
-            )
-        }).transpose()?;
-        let population_variants = opt.population_variants.get(i).map(|_| {
-            vcf_reader(
-                &opt.population_variants[i],
-                parse_population_record,
-            )
-        }).transpose()?;
+        let sample_variants = opt
+            .sample_variants
+            .get(i)
+            .map(|_| vcf_reader(&opt.sample_variants[i], parse_sample_record))
+            .transpose()?;
+        let population_variants = opt
+            .population_variants
+            .get(i)
+            .map(|_| vcf_reader(&opt.population_variants[i], parse_population_record))
+            .transpose()?;
 
         let mut stream = AlnStream {
             ambiguous,

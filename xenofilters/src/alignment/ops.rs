@@ -1,16 +1,17 @@
-use crate::{LOG_LIKELIHOOD_MATCH, LOG_LIKELIHOOD_MISMATCH, CONFIG};
-use rust_htslib::bam::record::{Cigar, CigarStringView};
 use crate::alignment::AlignmentError;
+use crate::{CONFIG, LOG_LIKELIHOOD_MATCH, LOG_LIKELIHOOD_MISMATCH};
+use rust_htslib::bam::record::{Cigar, CigarStringView};
 
-use std::iter::{once, Peekable};
+use std::iter::{Peekable, once};
 use std::str::Chars;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RichMdOp {
     Match(u32),
-    Mismatch(u8), // A single base mismatch
+    Mismatch(u8),      // A single base mismatch
     Deletion(Vec<u8>), // One or more deleted bases
-    Translocate { // Your new op, parsed from a custom MD tag
+    Translocate {
+        // Your new op, parsed from a custom MD tag
         new_tid: u32,
         new_pos: i64,
         new_strand: bool,
@@ -25,7 +26,10 @@ pub struct RichMdOpIterator<'a> {
 
 impl<'a> RichMdOpIterator<'a> {
     pub fn new(md: &'a str) -> Self {
-        Self { chars: md.chars().peekable(), match_remain: 0 }
+        Self {
+            chars: md.chars().peekable(),
+            match_remain: 0,
+        }
     }
 }
 
@@ -50,7 +54,6 @@ impl<'a> Iterator for RichMdOpIterator<'a> {
                 num = (num * 10) + (digit as u32 - '0' as u32);
             }
             return Some(RichMdOp::Match(num));
-
         } else if c == '^' {
             // 2. Handle Deletion or Translocate
             self.chars.next(); // Consume '^'
@@ -71,7 +74,6 @@ impl<'a> Iterator for RichMdOpIterator<'a> {
                 deleted_bases.push(base as u8);
             }
             return Some(RichMdOp::Deletion(deleted_bases));
-
         } else if c.is_ascii_alphabetic() {
             // 3. Handle Mismatch
             self.chars.next(); // Consume base
@@ -117,10 +119,10 @@ pub fn lift_alignment_ops(
     cigar: CigarStringView,
     md: &str,
 ) -> Result<Vec<UnifiedOp>, AlignmentError> {
-
     let mut unified_ops = Vec::new();
     let mut cigar_iter = cigar.iter().peekable();
-    let mut md_iter: Box<dyn Iterator<Item = RichMdOp>> = Box::new(RichMdOpIterator::new(md).peekable());
+    let mut md_iter: Box<dyn Iterator<Item = RichMdOp>> =
+        Box::new(RichMdOpIterator::new(md).peekable());
 
     for cigar_op in cigar_iter {
         match *cigar_op {
@@ -138,9 +140,11 @@ pub fn lift_alignment_ops(
 
                             // Put back the remainder if MD was longer
                             if md_len > op_len {
-                                md_iter = Box::new(once(RichMdOp::Match(md_len - op_len))
-                                    .chain(md_iter)
-                                    .peekable());
+                                md_iter = Box::new(
+                                    once(RichMdOp::Match(md_len - op_len))
+                                        .chain(md_iter)
+                                        .peekable(),
+                                );
                             }
                             len -= op_len;
                         }
@@ -153,10 +157,10 @@ pub fn lift_alignment_ops(
                             // This implies the CIGAR was wrong, but we follow MD.
                             unified_ops.push(UnifiedOp::Deletion(bases));
                             len -= 1; // Or bases.len()? This implies a spec violation.
-                                      // Let's assume MD matches CIGAR.
+                            // Let's assume MD matches CIGAR.
                         }
                         RichMdOp::Translocate { .. } => {
-                             return Err(AlignmentError::UnexpectedTranslocate);
+                            return Err(AlignmentError::UnexpectedTranslocate);
                         }
                     }
                 }
@@ -210,11 +214,7 @@ impl AlignmentOp {
                 | (AlignmentOp::SoftClip, AlignmentOp::SoftClip)
         )
     }
-    pub fn score(
-        self,
-        q: u8,
-        indel_gap: &mut Option<bool>,
-    ) -> f64 {
+    pub fn score(self, q: u8, indel_gap: &mut Option<bool>) -> f64 {
         let log_likelihood_mismatch = LOG_LIKELIHOOD_MISMATCH.get().unwrap();
         match self {
             AlignmentOp::Match => {

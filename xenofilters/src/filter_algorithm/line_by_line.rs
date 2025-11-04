@@ -2,9 +2,9 @@ use anyhow::{Result, ensure};
 use rust_htslib::bam::record::Record;
 use smallvec::{SmallVec, smallvec};
 
+use crate::CONFIG;
 use crate::aln_stream::AlnStream;
 use crate::fragment::FragmentState;
-use crate::CONFIG;
 
 // Usually two species compared so two alignments, two fragment states.
 
@@ -24,7 +24,6 @@ pub struct LineByLine {
     branch_counters: [u64; 32],
 }
 
-
 impl LineByLine {
     pub fn new(aln: SmallVec<[AlnStream; 2]>) -> Self {
         LineByLine {
@@ -33,9 +32,6 @@ impl LineByLine {
         }
     }
 
-    fn filter_records(&mut self, i: usize, mut fs: FragmentState) -> Result<()> {
-        fs.drain().try_for_each(|r| self.write_record(i, r, None))
-    }
     fn write_record(&mut self, i: usize, rec: Record, best_state: Option<bool>) -> Result<()> {
         let is_unmapped_skipped = IS_UNMAPPED_SKIPPED.get_or_init(init_unmapped_skipper);
         if is_unmapped_skipped(&rec) {
@@ -63,29 +59,32 @@ impl LineByLine {
                     // end of round
                     self.aln[i].un_next(rec);
                     if best.len() > 1 && best.last().unwrap().1 != best[0].1 {
-                        let last = best.pop().unwrap();
+                        let mut last = best.pop().unwrap();
                         if last.1 > best[0].1 {
-                            for b in best.drain(..) {
-                                self.filter_records(b.0, b.1)?;
-                            }
+                            // TODO: use best.splice(.., last) when stable
+                            best.drain(..).try_for_each(|mut b| {
+                                b.1.records
+                                    .drain(..)
+                                    .try_for_each(|r| self.write_record(b.0, r, None))
+                            })?;
                             best.push(last);
                         } else {
-                            self.filter_records(i, last.1)?;
+                            last.1
+                                .records
+                                .drain(..)
+                                .try_for_each(|r| self.write_record(i, r, None))?;
                         }
                     }
                     return Ok(true);
                 }
                 for (j, state) in best.iter_mut().rev() {
                     if *j == i {
-                        state.add_record(rec);
+                        state.records.push(rec);
                         return Ok(false);
                     }
                 }
             }
-            best.push((
-                i,
-                FragmentState::from_record(rec),
-            ));
+            best.push((i, FragmentState::from_record(rec)));
         } // else skip secondary
 
         Ok(false)
@@ -96,19 +95,20 @@ impl LineByLine {
                 b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
             });
             if best[0].1 > best[1].1 {
-                for (i, state) in best.drain(1..) {
-                    self.filter_records(i, state)?;
-                }
+                best.drain(1..).try_for_each(|mut b| {
+                    b.1.records
+                        .drain(..)
+                        .try_for_each(|r| self.write_record(b.0, r, None))
+                })?;
             }
         }
         let best_state = (best.len() == 1).then_some(true);
 
-        for (i, mut state) in best.drain(..) {
-            for rec in state.drain() {
-                self.write_record(i, rec, best_state)?;
-            }
-        }
-        Ok(())
+        best.drain(..).try_for_each(|mut b| {
+            b.1.records
+                .drain(..)
+                .try_for_each(|r| self.write_record(b.0, r, best_state))
+        })
     }
 
     pub fn process(&mut self) -> Result<()> {
@@ -168,14 +168,14 @@ fn init_unmapped_skipper() -> fn(&Record) -> bool {
 fn init_qname_comparer() -> fn(&AlnBuffer, &[u8]) -> Option<bool> {
     match CONFIG.get().unwrap().strip_read_suffix {
         Some(true) => |best: &AlnBuffer, qname2: &[u8]| {
-            best.first().map(|b| b.1.first_qname()).map(|qname1| {
-                qname1[..qname1.len() - 2] != qname2[..qname2.len() - 2]
-            })
+            best.first()
+                .map(|b| b.1.first_qname())
+                .map(|qname1| qname1[..qname1.len() - 2] != qname2[..qname2.len() - 2])
         },
         Some(false) => |best: &AlnBuffer, qname2: &[u8]| {
-            best.first().map(|b| b.1.first_qname()).map(|qname1| {
-                qname1 != qname2
-            })
+            best.first()
+                .map(|b| b.1.first_qname())
+                .map(|qname1| qname1 != qname2)
         },
         // This variant is currently unreachable, as the config enforces Some(true/false)
         // but could be useful if we want to allow input from mixed sources in the future.

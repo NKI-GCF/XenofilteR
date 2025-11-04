@@ -65,10 +65,7 @@ pub struct CigarOpIterator<'a> {
 
 impl<'a> CigarOpIterator<'a> {
     pub fn new(cigars: &'a [CigarOp]) -> Self {
-        CigarOpIterator {
-            cigars,
-            index: 0,
-        }
+        CigarOpIterator { cigars, index: 0 }
     }
 }
 
