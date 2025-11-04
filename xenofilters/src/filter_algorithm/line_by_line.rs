@@ -109,7 +109,9 @@ impl LineByLine {
                 b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
             });
             if best[0].1 > best[1].1 {
-                best.truncate(1); // Keep only the single best alignment.
+                for (i, state) in best.drain(1..) {
+                    self.filter_records(i, state)?;
+                }
             }
         }
         let best_state = (best.len() == 1).then_some(true);
