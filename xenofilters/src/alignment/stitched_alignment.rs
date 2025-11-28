@@ -3,6 +3,7 @@ use anyhow::{Result, anyhow};
 use rust_htslib::bam::record::{Aux, Cigar, CigarStringView, Record};
 use smallvec::{SmallVec, smallvec};
 
+#[allow(dead_code)]
 // A new struct to hold the combined alignment data
 pub struct StitchedAlignment<'a> {
     pub seq: Box<dyn Iterator<Item = u8> + 'a>,

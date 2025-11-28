@@ -69,7 +69,7 @@ impl FragmentState {
         let mut balance = None;
         for pair_result in iter {
             balance = match pair_result {
-                Ok(pair) => {
+                Ok(mut pair) => {
                     let s_perfect = pair.is_perfect_match(true);
                     let o_perfect = pair.is_perfect_match(false);
 
