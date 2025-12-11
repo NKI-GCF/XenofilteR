@@ -5,20 +5,24 @@ use crate::alignment::{PreparedAlignmentPairIter};
 
 pub struct FragmentState {
     pub records: SmallVec<[Record; 2]>,
+    pub species_nr: usize,
 }
-// TODO: if there are supplementary alignments, modify cigar to skip the clipped sections.
-//       may require a penalty for the placement of a secondary, elsewhere.
 
 impl FragmentState {
     #[must_use]
-    pub fn from_record(r: Record) -> Self {
+    pub fn from_record(r: Record, species_nr: usize) -> Self {
         FragmentState {
             records: smallvec![r],
+            species_nr,
         }
     }
     #[must_use]
     pub fn first_qname(&self) -> &[u8] {
         self.records.first().map_or(b"", |r| r.qname())
+    }
+    #[must_use]
+    pub fn get_nr(&self) -> usize {
+        self.species_nr
     }
 
     pub fn order_mates(&self) -> Vec<usize> {

@@ -11,8 +11,7 @@ use std::sync::OnceLock;
 // Usually two species compared so two alignments, two fragment states.
 
 type QnameCompareFn = fn(&AlnBuffer, &[u8]) -> Option<bool>;
-type AlnState = (usize, FragmentState);
-type AlnBuffer = SmallVec<[AlnState; 2]>;
+type AlnBuffer = SmallVec<[FragmentState; 2]>;
 
 static COMPARE_QNAME: OnceLock<QnameCompareFn> = OnceLock::new();
 static IS_UNMAPPED_SKIPPED: OnceLock<fn(&Record) -> bool> = OnceLock::new();
@@ -49,16 +48,18 @@ impl LineByLine {
             Some(Ordering::Greater) => {
                 let all_before_last = best.len() - 1;
                 best.drain(0..all_before_last).try_for_each(|mut b| {
-                    b.1.records
+                    let nr = b.get_nr();
+                    b.records
                         .drain(..)
-                        .try_for_each(|r| self.write_record(b.0, r, None))
+                        .try_for_each(|r| self.write_record(nr, r, None))
                 })
             }
             Some(Ordering::Less) => {
                 let mut last = best.pop().unwrap();
-                last.1.records
+                let nr = last.get_nr();
+                last.records
                     .drain(..)
-                    .try_for_each(|r| self.write_record(last.0, r, None))
+                    .try_for_each(|r| self.write_record(nr, r, None))
             }
             Some(Ordering::Equal) => {
                 // Neither is written. (FIXME: make configurable?)
@@ -67,10 +68,10 @@ impl LineByLine {
             None => {
                 // None of the alignments were fully unmapped or perfect matches,
                 // so we need to score them to find the best.
-                let first = &best.first().unwrap().1;
+                let first = &best.first().unwrap();
                 let first_ord = first.order_mates();
 
-                let last = &best.last().unwrap().1;
+                let last = &best.last().unwrap();
                 let last_ord = last.order_mates();
 
                 let first_score = stitched_fragment(&first.records, first_ord)?.score()?;
@@ -101,19 +102,19 @@ impl LineByLine {
                     self.aln[i].un_next(rec);
                     // FIXME: comparing more than 2 alignments?
                     if best.len() > 1 {
-                        let ord = best.last().unwrap().1.partial_cmp(&best[0].1);
+                        let ord = best.last().unwrap().partial_cmp(&best[0]);
                         self.handle_ordering(best, ord)?;
                     }
                     return Ok(true);
                 }
-                for (j, state) in best.iter_mut().rev() {
-                    if *j == i {
+                for state in best.iter_mut().rev() {
+                    if state.get_nr() == i {
                         state.records.push(rec);
                         return Ok(false);
                     }
                 }
             }
-            best.push((i, FragmentState::from_record(rec)));
+            best.push(FragmentState::from_record(rec, i));
         } // else skip secondary
 
         Ok(false)
@@ -122,22 +123,24 @@ impl LineByLine {
     fn handle_best(&mut self, best: &mut AlnBuffer) -> Result<()> {
         if best.len() > 1 {
             best.sort_unstable_by(|a, b| {
-                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+                b.partial_cmp(&a).unwrap_or(std::cmp::Ordering::Equal)
             });
-            if best[0].1 > best[1].1 {
+            if best[0] > best[1] {
                 best.drain(1..).try_for_each(|mut b| {
-                    b.1.records
+                    let nr = b.get_nr();
+                    b.records
                         .drain(..)
-                        .try_for_each(|r| self.write_record(b.0, r, None))
+                        .try_for_each(|r| self.write_record(nr, r, None))
                 })?;
             }
         }
         let best_state = (best.len() == 1).then_some(true);
 
         best.drain(..).try_for_each(|mut b| {
-            b.1.records
+            let nr = b.get_nr();
+            b.records
                 .drain(..)
-                .try_for_each(|r| self.write_record(b.0, r, best_state))
+                .try_for_each(|r| self.write_record(nr, r, best_state))
         })
     }
 
@@ -199,18 +202,18 @@ fn init_qname_comparer() -> fn(&AlnBuffer, &[u8]) -> Option<bool> {
     match CONFIG.get().unwrap().strip_read_suffix {
         Some(true) => |best: &AlnBuffer, qname2: &[u8]| {
             best.first()
-                .map(|b| b.1.first_qname())
+                .map(|b| b.first_qname())
                 .map(|qname1| qname1[..qname1.len() - 2] != qname2[..qname2.len() - 2])
         },
         Some(false) => |best: &AlnBuffer, qname2: &[u8]| {
             best.first()
-                .map(|b| b.1.first_qname())
+                .map(|b| b.first_qname())
                 .map(|qname1| qname1 != qname2)
         },
         // This variant is currently unreachable, as the config enforces Some(true/false)
         // but could be useful if we want to allow input from mixed sources in the future.
         None => |best: &AlnBuffer, qname2: &[u8]| {
-            best.first().map(|b| b.1.first_qname()).map(|qname1| {
+            best.first().map(|b| b.first_qname()).map(|qname1| {
                 if qname1.ends_with(b"/1") || qname1.ends_with(b"/2") {
                     qname1[..qname1.len() - 2] != qname2[..qname2.len() - 2]
                 } else {
