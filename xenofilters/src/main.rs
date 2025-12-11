@@ -23,7 +23,7 @@ use filter_algorithm::line_by_line::LineByLine;
 use smallvec::{SmallVec, smallvec};
 
 pub use alignment::{PreparedAlignmentPair, PreparedAlignmentPairIter};
-pub use fragment::{Evaluation, FragmentState};
+pub use fragment::FragmentState;
 
 const ARG_MAX: usize = 4;
 const MAX_Q: usize = 93;

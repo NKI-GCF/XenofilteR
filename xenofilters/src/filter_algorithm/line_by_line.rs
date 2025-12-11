@@ -1,23 +1,22 @@
 use anyhow::{Result, ensure};
 use rust_htslib::bam::record::Record;
 use smallvec::{SmallVec, smallvec};
-
 use crate::CONFIG;
 use crate::aln_stream::AlnStream;
 use crate::fragment::FragmentState;
+use crate::alignment::stitched_fragment;
+use std::cmp::Ordering;
+use std::sync::OnceLock;
 
 // Usually two species compared so two alignments, two fragment states.
 
-use std::sync::OnceLock;
-
 type QnameCompareFn = fn(&AlnBuffer, &[u8]) -> Option<bool>;
+type AlnState = (usize, FragmentState);
+type AlnBuffer = SmallVec<[AlnState; 2]>;
 
 static COMPARE_QNAME: OnceLock<QnameCompareFn> = OnceLock::new();
 static IS_UNMAPPED_SKIPPED: OnceLock<fn(&Record) -> bool> = OnceLock::new();
 static IS_SECONDARY_SKIPPED: OnceLock<fn(&Record) -> bool> = OnceLock::new();
-
-type AlnState = (usize, FragmentState);
-type AlnBuffer = SmallVec<[AlnState; 2]>;
 
 pub struct LineByLine {
     aln: SmallVec<[AlnStream; 2]>,
@@ -33,8 +32,8 @@ impl LineByLine {
     }
 
     fn write_record(&mut self, i: usize, rec: Record, best_state: Option<bool>) -> Result<()> {
-        let is_unmapped_skipped = IS_UNMAPPED_SKIPPED.get_or_init(init_unmapped_skipper);
-        if is_unmapped_skipped(&rec) {
+        let is_skipped_unmapped = IS_UNMAPPED_SKIPPED.get_or_init(init_unmapped_skipper);
+        if is_skipped_unmapped(&rec) {
             return Ok(());
         }
         match (i, best_state) {
@@ -45,35 +44,65 @@ impl LineByLine {
         self.aln[i].write_record(rec, best_state)
     }
 
+    fn handle_ordering(&mut self, best: &mut AlnBuffer, ord: Option<Ordering>) -> Result<()> {
+        match ord {
+            Some(Ordering::Greater) => {
+                let all_before_last = best.len() - 1;
+                best.drain(0..all_before_last).try_for_each(|mut b| {
+                    b.1.records
+                        .drain(..)
+                        .try_for_each(|r| self.write_record(b.0, r, None))
+                })
+            }
+            Some(Ordering::Less) => {
+                let mut last = best.pop().unwrap();
+                last.1.records
+                    .drain(..)
+                    .try_for_each(|r| self.write_record(last.0, r, None))
+            }
+            Some(Ordering::Equal) => {
+                // Neither is written. (FIXME: make configurable?)
+                Ok(())
+            }
+            None => {
+                // None of the alignments were fully unmapped or perfect matches,
+                // so we need to score them to find the best.
+                let first = &best.first().unwrap().1;
+                let first_ord = first.order_mates();
+
+                let last = &best.last().unwrap().1;
+                let last_ord = last.order_mates();
+
+                let first_score = stitched_fragment(&first.records, first_ord)?.score()?;
+                let last_score = stitched_fragment(&last.records, last_ord)?.score()?;
+
+                    
+                let mut ord = first_score.partial_cmp(&last_score);
+                if ord.is_none() {
+                    ord = Some(Ordering::Equal);
+                }
+                self.handle_ordering(best, ord)
+            }
+        }
+    }
+
     fn handle_record_is_fragment_finished(
         &mut self,
         i: usize,
         rec: Record,
         best: &mut AlnBuffer,
     ) -> Result<bool> {
-        let is_secondary_skipped = IS_SECONDARY_SKIPPED.get_or_init(init_secondary_skipper);
-        if is_secondary_skipped(&rec) {
+        let is_skipped_secondary = IS_SECONDARY_SKIPPED.get_or_init(init_secondary_skipper);
+        if !is_skipped_secondary(&rec) {
             let compare_qname = COMPARE_QNAME.get_or_init(init_qname_comparer);
             if let Some(new_readname) = compare_qname(best, rec.qname()) {
                 if new_readname {
-                    // end of round
+                    // end of round for this alignment
                     self.aln[i].un_next(rec);
-                    if best.len() > 1 && best.last().unwrap().1 != best[0].1 {
-                        let mut last = best.pop().unwrap();
-                        if last.1 > best[0].1 {
-                            // TODO: use best.splice(.., last) when stable
-                            best.drain(..).try_for_each(|mut b| {
-                                b.1.records
-                                    .drain(..)
-                                    .try_for_each(|r| self.write_record(b.0, r, None))
-                            })?;
-                            best.push(last);
-                        } else {
-                            last.1
-                                .records
-                                .drain(..)
-                                .try_for_each(|r| self.write_record(i, r, None))?;
-                        }
+                    // FIXME: comparing more than 2 alignments?
+                    if best.len() > 1 {
+                        let ord = best.last().unwrap().1.partial_cmp(&best[0].1);
+                        self.handle_ordering(best, ord)?;
                     }
                     return Ok(true);
                 }
@@ -89,6 +118,7 @@ impl LineByLine {
 
         Ok(false)
     }
+
     fn handle_best(&mut self, best: &mut AlnBuffer) -> Result<()> {
         if best.len() > 1 {
             best.sort_unstable_by(|a, b| {

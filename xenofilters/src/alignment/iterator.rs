@@ -37,13 +37,24 @@ impl<'a> AlignmentCompareIterator<'a> {
         let len = len1.min(len2);
         self.read_i += len as usize;
 
-        self.set_cigar_ops(op_fn(len1 - len), op_fn(len2 - len));
+        self.set_ops(op_fn(len1 - len), op_fn(len2 - len));
         AlnCmpOp::Equal
     }
 
-    fn set_cigar_ops(&'a mut self, op1: UnifiedOp, op2: UnifiedOp) {
+    fn set_ops(&'a mut self, op1: UnifiedOp, op2: UnifiedOp) {
         self.iter1.set_op(op1);
         self.iter2.set_op(op2);
+    }
+    fn handle_differing_left(&mut self, op: UnifiedOp) -> Result<AlnCmpOp, AlignmentError> {
+        self.get_qual().map(|q| AlnCmpOp::Left(op, q))
+    }
+
+    fn handle_differing_right(&mut self, op: UnifiedOp) -> Result<AlnCmpOp, AlignmentError> {
+        self.get_qual().map(|q| AlnCmpOp::Right(op, q))
+    }
+
+    fn handle_differing_both(&mut self, op1: UnifiedOp, op2: UnifiedOp) -> Option<Result<AlnCmpOp, AlignmentError>> {
+       Some(self.get_qual().map(|q| AlnCmpOp::UnEqual(op1, op2, q)))
     }
 
     /*fn next_md_ops(&mut self) -> (Option<MdOp>, Option<MdOp>) {
@@ -65,30 +76,7 @@ impl<'a> AlignmentCompareIterator<'a> {
         AlnCmpOp::Equal
     }
 
-    /// Handles the "slow path" where only iter1 has an operation.
-    fn handle_differing_left(&mut self, cigar1: UnifiedOp) -> Option<Result<AlnCmpOp, AlignmentError>> {
-        self.iter1
-            .get_next_op(cigar1)
-            .map(|res| res.and_then(|op| self.get_qual().map(|q| AlnCmpOp::Left(op, q))))
-            .or(self
-                .iter1
-                .next_cigar_op()
-                .and_then(|cigar| self.handle_differing_left(cigar)))
-    }
 
-    /// Handles the "slow path" where only iter2 has an operation.
-    fn handle_differing_right(
-        &mut self,
-        cigar2: UnifiedOp,
-    ) -> Option<Result<AlnCmpOp, AlignmentError>> {
-        self.iter2
-            .get_next_op(cigar2)
-            .map(|res| res.and_then(|op| self.get_qual().map(|q| AlnCmpOp::Right(op, q))))
-            .or(self
-                .iter2
-                .next_cigar_op()
-                .and_then(|cigar| self.handle_differing_right(cigar)))
-    }
 
     /// Handles the "slow path" where both iters have differing operations.
     fn handle_differing_both(
@@ -124,39 +112,50 @@ impl<'a> AlignmentCompareIterator<'a> {
     }*/
 }
 
-impl<'a> Iterator for AlignmentCompareIterator<'a> {
+/*impl<'a> Iterator for AlignmentCompareIterator<'a> {
     type Item = Result<AlnCmpOp, AlignmentError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match (self.iter1.peek(), self.iter2.peek()) {
+        let op1 = match self.iter1.next() {
+            Some(Ok(op)) => Some(op),
+            Some(Err(e)) => return Some(Err(e)),
+            None => None,
+        };
+        let op2 = match self.iter2.next() {
+            Some(Ok(op)) => Some(op),
+            Some(Err(e)) => return Some(Err(e)),
+            None => None,
+        };
+
+        match (op1, op2) {
             (Some(UnifiedOp::Match(l1)), Some(UnifiedOp::Match(l2))) => {
-                let skip = *l1.min(l2);
+                let skip = l1.min(l2);
                 self.read_i += skip as usize;
                 self.iter1.set_op(UnifiedOp::Match(l1 - skip));
                 self.iter2.set_op(UnifiedOp::Match(l2 - skip));
                 Some(Ok(AlnCmpOp::Equal))
             }
             (Some(UnifiedOp::Del(l1)), Some(UnifiedOp::Del(l2))) => {
-                let skip = *l1.min(l2);
+                let skip = l1.min(l2);
                 self.iter1.set_op(UnifiedOp::Del(l1 - skip));
                 self.iter2.set_op(UnifiedOp::Del(l2 - skip));
                 Some(Ok(AlnCmpOp::Equal))
             }
             (Some(UnifiedOp::Ins(l1)), Some(UnifiedOp::Ins(l2))) => {
-                let skip = *l1.min(l2);
+                let skip = l1.min(l2);
                 self.read_i += skip as usize;
                 self.iter1.set_op(UnifiedOp::Ins(l1 - skip));
                 self.iter2.set_op(UnifiedOp::Ins(l2 - skip));
                 Some(Ok(AlnCmpOp::Equal))
             }
             (Some(UnifiedOp::Mis(l1)), Some(UnifiedOp::Mis(l2))) => {
-                let skip = *l1.min(l2);
+                let skip = l1.min(l2);
                 self.read_i += skip as usize;
                 self.iter1.set_op(UnifiedOp::Mis(l1 - skip));
                 self.iter2.set_op(UnifiedOp::Mis(l2 - skip));
                 Some(Ok(AlnCmpOp::Equal))
-            }
-            (Some(UnifiedOp::Insertion(sv1)), Some(UnifiedOp::Insertion(sv2))) => {
+            }*/
+            /*(Some(UnifiedOp::Insertion(sv1)), Some(UnifiedOp::Insertion(sv2))) => {
                 //TODO: lookup variants to apply adapted score. Only if neither match, dothis:
 
                 let skip = sv1.len().min(sv2.len());
@@ -168,25 +167,15 @@ impl<'a> Iterator for AlignmentCompareIterator<'a> {
             (Some(UnifiedOp::Deletion(l1)), Some(UnifiedOp::Deletion(l2))) => {
 
                 Some(Ok(self.handle_equal_ops_del(l1, l2)))
-            }
-
-            (Some(UnifiedOp::HardClip(_) | UnifiedOp::Pad(_) | UnifiedOp::RefSkip(_)), Some(cigar2)) => {
-                self.iter2.set_cigar_op(cigar2); // Put c2 back, consume c1
-                self.next()
-            }
-            (Some(cigar1), Some(UnifiedOp::HardClip(_) | UnifiedOp::Pad(_) | UnifiedOp::RefSkip(_))) => {
-                self.iter1.set_cigar_op(cigar1); // Put c1 back, consume c2
-                self.next()
-            }
-
-            (Some(cigar1), None) => self.handle_differing_left(cigar1),
-            (None, Some(cigar2)) => self.handle_differing_right(cigar2),
-            (Some(cigar1), Some(cigar2)) => self.handle_differing_both(cigar1, cigar2),
+            }*/
+            /*(Some(op1), None) => Some(self.handle_differing_left(op1)),
+            (None, Some(op2)) => Some(self.handle_differing_right(op2)),
+            (Some(op1), Some(op2)) => self.handle_differing_both(op1, op2),
 
             (None, None) => None,
         }
     }
-}
+}*/
 
 
 

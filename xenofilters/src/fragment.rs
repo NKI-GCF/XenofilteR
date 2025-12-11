@@ -1,19 +1,7 @@
-use anyhow::Result;
-use rust_htslib::bam::record::Record;
+use rust_htslib::bam::record::{Record, Cigar};
 use smallvec::{SmallVec, smallvec};
 use std::cmp::Ordering;
-
-use crate::alignment::{PrepareError, PreparedAlignmentPair, PreparedAlignmentPairIter};
-
-type PreparedAlignmentPairIterBox<'a> =
-    Box<dyn Iterator<Item = Result<PreparedAlignmentPair<'a>, PrepareError>> + 'a>;
-
-pub enum Evaluation<'a> {
-    Greater,
-    Less,
-    Equal,
-    NeedsScoring(PreparedAlignmentPairIterBox<'a>),
-}
+use crate::alignment::{PreparedAlignmentPairIter};
 
 pub struct FragmentState {
     pub records: SmallVec<[Record; 2]>,
@@ -33,109 +21,91 @@ impl FragmentState {
         self.records.first().map_or(b"", |r| r.qname())
     }
 
-    fn try_needs_score(&self, iter: PreparedAlignmentPairIterBox<'_>) -> Option<f64> {
-        let mut total_score_diff = Some(0.0);
-
-        // We filter_map to skip pairs that had a PrepareError,
-        // as they won't contribute to the score.
-        for pair_result in iter.filter_map(std::result::Result::ok) {
-            match pair_result.score() {
-                Ok(score_diff) => total_score_diff = total_score_diff.map(|n| n + score_diff),
-                Err(_) => return None,
-            }
-        }
-        total_score_diff
+    pub fn order_mates(&self) -> Vec<usize> {
+        let mut indices: Vec<usize> = (0..self.records.len()).collect();
+        indices.sort_by(|&a, &b| order_mates(&self.records[a]).cmp(&order_mates(&self.records[b])));
+        indices
     }
-    fn try_quick_cmp<'a>(&'a self, other: &'a Self) -> Evaluation<'a> {
+}
+
+impl PartialEq for FragmentState {
+    fn eq(&self, other: &Self) -> bool {
+        self.partial_cmp(other) == Some(Ordering::Equal)
+    }
+}
+
+impl PartialOrd for FragmentState {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        // If the record is unmapped, it is always the first record.
         if self.records[0].is_unmapped() && self.records[0].is_mate_unmapped() {
             if other.records[0].is_unmapped() && other.records[0].is_mate_unmapped() {
-                return Evaluation::Equal;
+                return Some(Ordering::Equal);
             }
-            return Evaluation::Less;
+            return Some(Ordering::Less);
         }
+
         if other.records[0].is_unmapped() && other.records[0].is_mate_unmapped() {
-            return Evaluation::Greater;
+            return Some(Ordering::Greater);
+        }
+
+        if self.records[0].is_unmapped() && other.records[0].is_mate_unmapped() {
+            return None;
+        }
+        if self.records[0].is_mate_unmapped() && other.records[0].is_unmapped() {
+            return None;
         }
 
         let iter = PreparedAlignmentPairIter::new(&self.records, &other.records);
-
-        if self.records[0].is_unmapped() && other.records[0].is_mate_unmapped() {
-            return Evaluation::NeedsScoring(Box::new(iter));
-        }
-        if other.records[0].is_unmapped() && self.records[0].is_mate_unmapped() {
-            return Evaluation::NeedsScoring(Box::new(iter));
-        }
-
         let mut balance = None;
         for pair_result in iter {
             balance = match pair_result {
                 Ok(mut pair) => {
-                    let s_perfect = pair.is_perfect_match(true);
-                    let o_perfect = pair.is_perfect_match(false);
-
-                    if s_perfect {
-                        if o_perfect {
-                            Some(Evaluation::Equal)
+                    let (first, second) = pair.are_perfect_match();
+                    if first {
+                        if second {
+                            Some(Ordering::Equal)
                         } else {
                             match balance {
-                                Some(Evaluation::Less) => break,
-                                None => Some(Evaluation::Greater),
-                                _ => return Evaluation::Greater,
+                                Some(Ordering::Less) => break,
+                                None => Some(Ordering::Greater),
+                                _ => return Some(Ordering::Greater),
                             }
                         }
-                    } else if o_perfect {
+                    } else if second {
                         match balance {
-                            Some(Evaluation::Greater) => break,
-                            None => Some(Evaluation::Less),
-                            _ => return Evaluation::Less,
+                            Some(Ordering::Greater) => break,
+                            None => Some(Ordering::Less),
+                            _ => return Some(Ordering::Less),
                         }
                     } else {
                         // both mapped but not perfect means no quick balance.
                         break;
                     }
                 }
-                Err(_) => {
-                    // A PrepareError occurred (e.g., No MD tag).
-                    // We can't do a quick check, so break and go to full scoring.
-                    break;
-                }
+                Err(_) => return Some(Ordering::Equal),
             }
         }
-        Evaluation::NeedsScoring(Box::new(PreparedAlignmentPairIter::new(
-            &self.records,
-            &other.records,
-        )))
+        None
     }
 }
 
-impl Ord for FragmentState {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match self.try_quick_cmp(other) {
-            Evaluation::Greater => Ordering::Greater,
-            Evaluation::Less => Ordering::Less,
-            Evaluation::Equal => Ordering::Equal,
-            Evaluation::NeedsScoring(pair_iter) => {
-                match self.try_needs_score(pair_iter) {
-                    Some(score_diff) => {
-                        // Compare the final score difference to 0.0
-                        score_diff.partial_cmp(&0.0).unwrap_or(Ordering::Equal)
-                    }
-                    None => Ordering::Equal, // Error case
-                }
+fn order_mates(r: &Record) -> (u8, u32) {
+    let ord = u8::from(r.is_last_in_template()) * 2 + u8::from(r.is_secondary());
+    let mut read_start = 0;
+    if r.is_reverse() {
+        for op in r.cigar().iter().rev() {
+            match *op {
+                Cigar::SoftClip(len) | Cigar::HardClip(len) => read_start += len,
+                _ => break,
+            }
+        }
+    } else {
+        for op in r.cigar().iter() {
+            match *op {
+                Cigar::SoftClip(len) | Cigar::HardClip(len) => read_start += len,
+                _ => break,
             }
         }
     }
+    (ord, read_start)
 }
-
-impl PartialEq for FragmentState {
-    fn eq(&self, other: &Self) -> bool {
-        self.cmp(other) == Ordering::Equal
-    }
-}
-
-impl PartialOrd for FragmentState {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Eq for FragmentState {}

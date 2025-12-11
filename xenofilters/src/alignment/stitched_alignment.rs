@@ -1,54 +1,75 @@
-use crate::alignment::{UnifiedOp, lift_alignment_ops};
+use crate::alignment::{UnifiedOp, UnifiedOpIterator};
 use anyhow::{Result, anyhow};
-use rust_htslib::bam::record::{Aux, Cigar, CigarStringView, Record};
-use smallvec::{SmallVec, smallvec};
+use rust_htslib::bam::record::{Cigar, Record};
+use crate::{LOG_LIKELIHOOD_MISMATCH, LOG_LIKELIHOOD_MATCH, MAX_Q, CONFIG};
+use crate::alignment::AlignmentError;
+
 
 #[allow(dead_code)]
 // A new struct to hold the combined alignment data
-pub struct StitchedAlignment<'a> {
+pub struct StitchedFragment<'a> {
     pub seq: Box<dyn Iterator<Item = u8> + 'a>,
     pub qual: Box<dyn Iterator<Item = u8> + 'a>,
     pub tid: i32,
     pub pos: i64,
-    pub strand: bool,
-    pub stitched_ops: SmallVec<[UnifiedOp; 1]>, // A new, combined CIGAR
+    pub ops: Box<dyn Iterator<Item = Result<UnifiedOp, AlignmentError>> + 'a>,
 }
 
-pub fn stitch_alignment_segments<'a>(
-    records: &'a [Record],
-    gap_penalty: f64,
-) -> Result<(Option<StitchedAlignment<'a>>, Option<StitchedAlignment<'a>>)> {
-    // 1. Partition records into R1, R2, and other.
-    let mut groups: SmallVec<[SmallVec<[&'a Record; 1]>; 2]> = smallvec![SmallVec::new()];
-
-    for rec in records {
-        if rec.is_secondary() {
-            continue;
-        } // Skip secondaries
-        if rec.is_first_in_template() {
-            groups[0].push(rec); // R1 group
-        } else if rec.is_last_in_template() {
-            if groups.len() == 1 {
-                groups.push(SmallVec::new());
+impl<'a> StitchedFragment<'a> {
+    pub fn score(&mut self) -> Result<f64, AlignmentError> {
+        let mut total_score = 0.0;
+        let config = CONFIG.get().expect("CONFIG not initialized");
+        for op in self.ops.by_ref() {
+            match op? {
+                UnifiedOp::Match(len) => {
+                    let len_usize = len as usize;
+                    for _ in 0..len_usize {
+                        if let Some(q) = self.qual.next() {
+                            let q_idx = q as usize;
+                            if q_idx < MAX_Q {
+                                total_score += LOG_LIKELIHOOD_MATCH[q_idx];
+                            }
+                        }
+                    }
+                }
+                UnifiedOp::Mis(len) => {
+                    let len_usize = len as usize;
+                    for _ in 0..len_usize {
+                        if let Some(q) = self.qual.next() {
+                            let q_idx = q as usize;
+                            if q_idx < MAX_Q {
+                                let log_likelihood_mismatch = LOG_LIKELIHOOD_MISMATCH
+                                    .get().expect("LOG_LIKELIHOOD_MISMATCH not initialized");
+                                total_score += log_likelihood_mismatch[q_idx];
+                            }
+                        }
+                    }
+                }
+                UnifiedOp::Ins(len) => {
+                    let len_usize = len as usize;
+                    // Insertions do not consume reference bases, only read bases
+                    for _ in 0..len_usize {
+                        self.qual.next();
+                    }
+                    total_score += config.gap_open + (len as f64 - 1.0) * config.gap_extend;
+                }
+                UnifiedOp::Del(len) => {
+                    // Deletions consume reference bases, not read bases
+                    total_score += config.gap_open + (len as f64 - 1.0) * config.gap_extend;
+                }
+                UnifiedOp::RefSkip(_len) => {
+                    // RefSkips do not affect score
+                }
+                UnifiedOp::Trans(penalty) => {
+                    total_score -= penalty;
+                }
             }
-            groups[1].push(rec); // R2 group
         }
+        Ok(total_score)
     }
-
-    let r1_stitched = groups
-        .first()
-        .map(|r1_records| stitch_one_read(r1_records, gap_penalty))
-        .transpose()?;
-
-    let r2_stitched = groups
-        .get(1)
-        .map(|r2_records| stitch_one_read(r2_records, gap_penalty))
-        .transpose()?;
-
-    Ok((r1_stitched, r2_stitched))
 }
 
-const fn reverse_complement_base(base: u8) -> u8 {
+const fn revcmp(base: u8) -> u8 {
     match base {
         b'A' => b'T',
         b'T' => b'A',
@@ -59,89 +80,122 @@ const fn reverse_complement_base(base: u8) -> u8 {
     }
 }
 
-fn get_unclipped_read_start(cigar: CigarStringView) -> u32 {
-    let mut read_start = 0;
-    for op in cigar.iter() {
-        match *op {
-            Cigar::SoftClip(len) | Cigar::HardClip(len) => read_start += len,
-            _ => break,
-        }
+fn get_read_iterators<'a>(
+    rec: &'a Record,
+) -> (Box<dyn Iterator<Item = u8> + 'a>, Box<dyn Iterator<Item = u8> + 'a>) {
+    
+    let seq_encoded = rec.seq().encoded;
+    let qual = rec.qual();
+
+    if rec.is_reverse() {
+        (
+            Box::new(seq_encoded.iter().rev().map(|&b| revcmp(b))),
+            Box::new(qual.iter().rev().copied()),
+        )
+    } else {
+        (
+            Box::new(seq_encoded.iter().copied()),
+            Box::new(qual.iter().copied()),
+        )
     }
-    read_start
 }
 
-pub fn stitch_one_read<'a>(
-    records: &[&'a Record],
-    gap_penalty: f64,
-) -> Result<StitchedAlignment<'a>> {
-    let anchor = records
-        .iter()
-        .find(|r| !r.is_supplementary())
-        .ok_or_else(|| anyhow!("No primary record found for stitching"))?;
+/// Calculates the penalty for a translocation.
+/// This penalty is a trade-off between the cost of the unaligned/soft-clipped bases
+/// and the quality of the aligned segment.
+/// (Penalty for unaligned bases) - (Match Log-Likelihood Score)
+pub fn calculate_translocation_penalty(
+    record: &Record,
+) -> Result<f64> {
+    let cigar_view = record.cigar();
+    
+    let mut qual_iter = record.qual().iter().copied();
+    
+    let log_likelihood_mismatch = LOG_LIKELIHOOD_MISMATCH
+        .get()
+        .ok_or_else(|| anyhow!("LOG_LIKELIHOOD_MISMATCH not initialized"))?;
+    
+    let mut clipped_quality_penalty = 0.0;
+    let mut total_match_log_likelihood = 0.0;
 
-    let anchor_is_reverse = anchor.is_reverse();
-    let anchor_seq = anchor.seq();
-
-    let mut segments: SmallVec<[_; 1]> = records
-        .iter()
-        .map(|rec| {
-            let read_start = get_unclipped_read_start(rec.cigar());
-            Ok((read_start, *rec))
-        })
-        .collect::<Result<SmallVec<[_; 1]>>>()?;
-
-    segments.sort_by_key(|(start, _)| *start);
-
-    let mut stitched_ops: SmallVec<[UnifiedOp; 1]> = SmallVec::new();
-
-    for (i, (_, record)) in segments.iter().enumerate() {
-        if i > 0 {
-            stitched_ops.push(UnifiedOp::Translocate {
-                new_tid: record.tid(),
-                new_pos: record.pos(),
-                new_strand: !record.is_reverse(),
-                gap_score: gap_penalty,
-            });
+    for op in cigar_view.iter() {
+        let len = op.len() as usize;
+        match op {
+            Cigar::Match(_) | Cigar::Equal(_) | Cigar::Diff(_) => {
+                for q in qual_iter.by_ref().take(len) {
+                    let q_idx = q as usize;
+                    if q_idx < MAX_Q {
+                        total_match_log_likelihood += LOG_LIKELIHOOD_MATCH[q_idx]; 
+                    }
+                }
+            }
+            Cigar::Ins(_) => {
+                qual_iter.by_ref().nth(len.saturating_sub(1));
+            },
+            Cigar::SoftClip(_) => {
+                for q in qual_iter.by_ref().take(len) {
+                    let q_idx = q as usize;
+                    if q_idx < MAX_Q {
+                        clipped_quality_penalty += log_likelihood_mismatch[q_idx].abs();
+                    }
+                }
+            }
+            Cigar::Del(_) | Cigar::RefSkip(_) | Cigar::HardClip(_) | Cigar::Pad(_) => {}
         }
-
-        let md = match record.aux(b"MD")? {
-            Aux::String(md_bytes) => md_bytes.to_string(),
-            _ => return Err(anyhow!("MD tag not found or of unexpected type")),
-        };
-
-        let mut ops = lift_alignment_ops(record.cigar(), &md)?;
-
-        if anchor_is_reverse != record.is_reverse() {
-            ops.reverse();
-        }
-
-        stitched_ops.extend(ops);
     }
+    
+    let penalty = clipped_quality_penalty - total_match_log_likelihood;
+    Ok(penalty.max(0.0))
+}
 
-    let (seq, qual): (Box<dyn Iterator<Item = u8>>, Box<dyn Iterator<Item = u8>>) =
-        if anchor_is_reverse {
-            (
-                Box::new(
-                    anchor_seq
-                        .encoded
-                        .iter()
-                        .map(|&b| reverse_complement_base(b)),
-                ),
-                Box::new(anchor.qual().iter().rev().copied()),
-            )
+
+pub fn stitched_fragment<'a>(
+    records: &'a [Record],
+    order: Vec<usize>,
+) -> Result<StitchedFragment<'a>> {
+    // Hard clipped may occur in non-primary, so because we need all seq and qual:
+    let mut primary_it = order.iter().map(|&i| &records[i]).filter(|r| !r.is_supplementary() && !r.is_secondary());
+
+    let mut stitched = if let Some(anchor) = primary_it.next() {
+        let (mut seq, mut qual) = get_read_iterators(anchor);
+        if let Some(mate) = primary_it.next() {
+            let (s, q) = get_read_iterators(mate);
+            seq = Box::new(seq.chain(s));
+            qual = Box::new(qual.chain(q));
+        }
+        StitchedFragment {
+            seq,
+            qual,
+            tid: anchor.tid(),
+            pos: anchor.pos(),
+            ops: Box::new(std::iter::empty()),
+        }
+    } else {
+        return Err(anyhow!("No primary alignment found"));
+    };
+
+    let mut first_record = true;
+
+    for record in order.iter().map(|&i| &records[i]) {
+        if record.is_secondary() {
+            if !record.is_first_in_template() {
+                break;
+            }
+            continue;
+        }
+
+        if first_record {
+            first_record = false;
         } else {
-            (
-                Box::new(anchor.seq().encoded.iter().copied()),
-                Box::new(anchor.qual().iter().copied()),
-            )
-        };
+            if record.is_supplementary() {
+                let penalty = calculate_translocation_penalty(record)?;
+                stitched.ops = Box::new(stitched.ops.chain(std::iter::once(Ok(UnifiedOp::Trans(penalty)))))
+            }
+        }
 
-    Ok(StitchedAlignment {
-        seq,
-        qual,
-        tid: anchor.tid(),
-        pos: anchor.pos(),
-        strand: !anchor_is_reverse, // fastq-order strand
-        stitched_ops,
-    })
+        let ops = UnifiedOpIterator::new(record)?;
+
+        stitched.ops = Box::new(stitched.ops.chain(ops));
+    }
+    Ok(stitched)
 }

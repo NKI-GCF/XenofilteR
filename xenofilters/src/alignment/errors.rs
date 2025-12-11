@@ -1,4 +1,5 @@
 use thiserror::Error;
+use crate::alignment::MdOpIteratorError;
 
 #[derive(Debug, Error, PartialEq)]
 pub enum AlignmentError {
@@ -25,6 +26,9 @@ pub enum AlignmentError {
 
     #[error("Unexpected translocation operation in CIGAR string")]
     UnexpectedTranslocate,
+
+    #[error("Operation not implemented")]
+    UnImplemented,
 }
 
 #[derive(Debug, Error)]
@@ -37,4 +41,7 @@ pub enum PrepareError {
 
     #[error(transparent)]
     AlignmentError(#[from] AlignmentError),
+
+    #[error(transparent)]
+    MdOpIteratorError(#[from] MdOpIteratorError),
 }
