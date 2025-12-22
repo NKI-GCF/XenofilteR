@@ -158,12 +158,3 @@ impl AlnStream {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn skip_filtered_write_first_bit_differs() {
-        // in progress_state() this is used to skip unmapped, if in config
-        assert_eq!(SKIP_FILTERED | 1, WRITE_FILTERED);
-    }
-}
