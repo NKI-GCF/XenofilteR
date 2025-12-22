@@ -1,7 +1,7 @@
 use crate::alignment::{UnifiedOp, UnifiedOpIterator};
 use anyhow::{Result, anyhow};
 use rust_htslib::bam::record::{Cigar, Record};
-use crate::{LOG_LIKELIHOOD_MISMATCH, LOG_LIKELIHOOD_MATCH, MAX_Q, CONFIG};
+use crate::{Penalties, MAX_Q};
 use crate::alignment::AlignmentError;
 
 
@@ -13,12 +13,12 @@ pub struct StitchedFragment<'a> {
     pub tid: i32,
     pub pos: i64,
     pub ops: Box<dyn Iterator<Item = Result<UnifiedOp, AlignmentError>> + 'a>,
+    penalties: &'a Penalties,
 }
 
 impl<'a> StitchedFragment<'a> {
     pub fn score(&mut self) -> Result<f64, AlignmentError> {
         let mut total_score = 0.0;
-        let config = CONFIG.get().expect("CONFIG not initialized");
         for op in self.ops.by_ref() {
             match op? {
                 UnifiedOp::Match(len) => {
@@ -27,7 +27,7 @@ impl<'a> StitchedFragment<'a> {
                         if let Some(q) = self.qual.next() {
                             let q_idx = q as usize;
                             if q_idx < MAX_Q {
-                                total_score += LOG_LIKELIHOOD_MATCH[q_idx];
+                                total_score += self.penalties.log_likelihood_match[q_idx];
                             }
                         }
                     }
@@ -38,9 +38,7 @@ impl<'a> StitchedFragment<'a> {
                         if let Some(q) = self.qual.next() {
                             let q_idx = q as usize;
                             if q_idx < MAX_Q {
-                                let log_likelihood_mismatch = LOG_LIKELIHOOD_MISMATCH
-                                    .get().expect("LOG_LIKELIHOOD_MISMATCH not initialized");
-                                total_score += log_likelihood_mismatch[q_idx];
+                                total_score += self.penalties.log_likelihood_mismatch[q_idx];
                             }
                         }
                     }
@@ -51,11 +49,11 @@ impl<'a> StitchedFragment<'a> {
                     for _ in 0..len_usize {
                         self.qual.next();
                     }
-                    total_score += config.gap_open + (len as f64 - 1.0) * config.gap_extend;
+                    total_score += self.penalties.gap_open + (len as f64 - 1.0) * self.penalties.gap_extend;
                 }
                 UnifiedOp::Del(len) => {
                     // Deletions consume reference bases, not read bases
-                    total_score += config.gap_open + (len as f64 - 1.0) * config.gap_extend;
+                    total_score += self.penalties.gap_open + (len as f64 - 1.0) * self.penalties.gap_extend;
                 }
                 UnifiedOp::RefSkip(_len) => {
                     // RefSkips do not affect score
@@ -83,7 +81,7 @@ const fn revcmp(base: u8) -> u8 {
 fn get_read_iterators<'a>(
     rec: &'a Record,
 ) -> (Box<dyn Iterator<Item = u8> + 'a>, Box<dyn Iterator<Item = u8> + 'a>) {
-    
+
     let seq_encoded = rec.seq().encoded;
     let qual = rec.qual();
 
@@ -104,17 +102,14 @@ fn get_read_iterators<'a>(
 /// This penalty is a trade-off between the cost of the unaligned/soft-clipped bases
 /// and the quality of the aligned segment.
 /// (Penalty for unaligned bases) - (Match Log-Likelihood Score)
-pub fn calculate_translocation_penalty(
+fn calculate_translocation_penalty(
+    penalties: &Penalties,
     record: &Record,
 ) -> Result<f64> {
     let cigar_view = record.cigar();
-    
+
     let mut qual_iter = record.qual().iter().copied();
-    
-    let log_likelihood_mismatch = LOG_LIKELIHOOD_MISMATCH
-        .get()
-        .ok_or_else(|| anyhow!("LOG_LIKELIHOOD_MISMATCH not initialized"))?;
-    
+
     let mut clipped_quality_penalty = 0.0;
     let mut total_match_log_likelihood = 0.0;
 
@@ -136,20 +131,21 @@ pub fn calculate_translocation_penalty(
                 for q in qual_iter.by_ref().take(len) {
                     let q_idx = q as usize;
                     if q_idx < MAX_Q {
-                        clipped_quality_penalty += log_likelihood_mismatch[q_idx].abs();
+                        clipped_quality_penalty += penalties.log_likelihood_mismatch[q_idx].abs();
                     }
                 }
             }
             Cigar::Del(_) | Cigar::RefSkip(_) | Cigar::HardClip(_) | Cigar::Pad(_) => {}
         }
     }
-    
+
     let penalty = clipped_quality_penalty - total_match_log_likelihood;
     Ok(penalty.max(0.0))
 }
 
 
 pub fn stitched_fragment<'a>(
+    penalties: &'a Penalties,
     records: &'a [Record],
     order: Vec<usize>,
 ) -> Result<StitchedFragment<'a>> {
@@ -169,6 +165,7 @@ pub fn stitched_fragment<'a>(
             tid: anchor.tid(),
             pos: anchor.pos(),
             ops: Box::new(std::iter::empty()),
+            penalties,
         }
     } else {
         return Err(anyhow!("No primary alignment found"));
@@ -188,7 +185,7 @@ pub fn stitched_fragment<'a>(
             first_record = false;
         } else {
             if record.is_supplementary() {
-                let penalty = calculate_translocation_penalty(record)?;
+                let penalty = calculate_translocation_penalty(stitched.penalties, record)?;
                 stitched.ops = Box::new(stitched.ops.chain(std::iter::once(Ok(UnifiedOp::Trans(penalty)))))
             }
         }

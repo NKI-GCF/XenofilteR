@@ -2,8 +2,7 @@ use anyhow::{Result, anyhow};
 use rust_htslib::bcf::{Read, Reader, record::Record};
 use std::collections::HashMap;
 use std::path::Path;
-
-use crate::MAX_Q;
+use crate::Penalties
 
 #[allow(dead_code)]
 /// Trait for any object that can be scored against an alignment.
@@ -25,11 +24,11 @@ pub trait Variant {
 
     /// Provides an adjusted score for a read chunk that **matches the ALT allele**.
     /// This is called when the read *disagrees* with the reference but *agrees* with the variant.
-    fn score_alt_match(&self, quals: &[u8], log_likelihood_mismatch: &[f64; MAX_Q + 2]) -> f64;
+    fn score_alt_match(&self, penalties: &Penalties, quals: &[u8]) -> f64;
 
     /// Provides an adjusted score for a read chunk that **matches the REF allele**.
     /// This is called when a variant is present, but the read *agrees* with the reference.
-    fn score_ref_match(&self, quals: &[u8], log_likelihood_mismatch: &[f64; MAX_Q + 2]) -> f64;
+    fn score_ref_match(&self, penalties: &Penalties, quals: &[u8]) -> f64;
 }
 
 /// Generic VCF reader that accepts a parser function.

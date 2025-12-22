@@ -1,5 +1,5 @@
 use crate::vcf_format::Variant;
-use crate::{LOG_LIKELIHOOD_MATCH, MAX_Q};
+use crate::Penalties;
 use anyhow::Result;
 use rust_htslib::bcf::record::Record;
 
@@ -25,7 +25,7 @@ impl Variant for SampleVariant {
         &self.alt_a
     }
 
-    fn score_alt_match(&self, quals: &[u8], log_likelihood_mismatch: &[f64; MAX_Q + 2]) -> f64 {
+    fn score_alt_match(&self, penalties: &Penalties, quals: &[u8]) -> f64 {
         let len = quals.len();
         if len == 0 {
             return 0.0;
@@ -45,13 +45,13 @@ impl Variant for SampleVariant {
         let mut score_match = 0.0;
         let mut score_mismatch = 0.0;
         for q in quals {
-            score_match += LOG_LIKELIHOOD_MATCH[*q as usize];
-            score_mismatch += log_likelihood_mismatch[*q as usize];
+            score_match += penalties.log_likelihood_match[*q as usize];
+            score_mismatch += penalties.log_likelihood_mismatch[*q as usize];
         }
         p_variant * (score_match / len) + (1.0 - p_variant) * (score_mismatch / len)
     }
 
-    fn score_ref_match(&self, quals: &[u8], log_likelihood_mismatch: &[f64; MAX_Q + 2]) -> f64 {
+    fn score_ref_match(&self, penalties: &Penalties, quals: &[u8]) -> f64 {
         let len = quals.len();
         if len == 0 {
             return 0.0;
@@ -67,8 +67,8 @@ impl Variant for SampleVariant {
         let mut score_match = 0.0;
         let mut score_mismatch = 0.0;
         for q in quals {
-            score_match += LOG_LIKELIHOOD_MATCH[*q as usize];
-            score_mismatch += log_likelihood_mismatch[*q as usize];
+            score_match += penalties.log_likelihood_match[*q as usize];
+            score_mismatch += penalties.log_likelihood_mismatch[*q as usize];
         }
         (1.0 - p_variant) * (score_match / len) + p_variant * (score_mismatch / len)
     }

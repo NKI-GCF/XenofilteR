@@ -13,7 +13,6 @@ mod variant;
 mod vcf_format;
 
 use std::path::PathBuf;
-use std::sync::{LazyLock, OnceLock};
 
 use aln_stream::AlnStream;
 use anyhow::{Result, anyhow, ensure};
@@ -27,26 +26,6 @@ pub use fragment::FragmentState;
 
 const ARG_MAX: usize = 4;
 const MAX_Q: usize = 93;
-
-static ERROR_PROB: LazyLock<[f64; MAX_Q]> = LazyLock::new(|| {
-    let mut arr = [0.0_f64; MAX_Q];
-    for (q, item) in arr.iter_mut().enumerate() {
-        *item = 10f64.powf(-(q as f64) / 10.0); // x = 10^{-Q/10}
-    }
-    arr
-});
-
-static LOG_LIKELIHOOD_MATCH: LazyLock<[f64; MAX_Q]> = LazyLock::new(|| {
-    let mut arr = [0.0_f64; MAX_Q];
-    for (q, item) in arr.iter_mut().enumerate() {
-        *item = (1.0 - ERROR_PROB[q]).log10();
-    }
-    arr
-});
-
-static CONFIG: OnceLock<Config> = OnceLock::new();
-
-static LOG_LIKELIHOOD_MISMATCH: OnceLock<[f64; MAX_Q]> = OnceLock::new();
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about=None)]
@@ -121,6 +100,19 @@ pub struct Config {
     pub is_paired: Option<bool>,
 }
 
+struct Penalties {
+    pub gap_open: f64,
+    pub gap_extend: f64,
+    pub log_likelihood_mismatch: [f64; MAX_Q],
+    pub log_likelihood_match: [f64; MAX_Q],
+}
+
+impl Config {
+    pub fn strip_read_suffix(&self) -> bool {
+        self.strip_read_suffix.unwrap()
+    }
+}
+
 impl Config {
     pub fn nreads(&self) -> usize {
         match self.is_paired {
@@ -162,18 +154,34 @@ impl Config {
                 "Gap open/mismatch penalties must be positive"
             ));
         }
-        let mut arr = [0.0f64; MAX_Q];
+        Ok(())
+    }
+    fn to_penalties(&self) -> Penalties {
+
+        let mut error_prob = [0.0_f64; MAX_Q];
+        for (q, item) in error_prob.iter_mut().enumerate() {
+            *item = 10f64.powf(-(q as f64) / 10.0); // x = 10^{-Q/10}
+        }
+
+        let mut log_likelihood_match = [0.0_f64; MAX_Q];
+        for (q, item) in log_likelihood_match.iter_mut().enumerate() {
+            *item = (1.0 - error_prob[q]).log10();
+        }
+
         let reference_penalty = 4.0;
         let scaling_factor = self.mismatch_penalty / reference_penalty;
 
-        for (q, item) in arr.iter_mut().enumerate() {
+        let mut log_likelihood_mismatch = [0.0f64; MAX_Q];
+        for (q, item) in log_likelihood_mismatch.iter_mut().enumerate() {
             *item = -(q as f64) / 10.0 * scaling_factor;
         }
-        LOG_LIKELIHOOD_MISMATCH
-            .set(arr)
-            .map_err(|_| anyhow::anyhow!("LOG_LIKELIHOOD_MISMATCH already set"))?;
 
-        Ok(())
+        Penalties {
+            gap_open: self.gap_open,
+            gap_extend: self.gap_extend,
+            log_likelihood_mismatch,
+            log_likelihood_match,
+        }
     }
 }
 
@@ -182,7 +190,7 @@ fn main() -> Result<()> {
     config.validate_and_init()?;
 
     // first alignment to quick check readnames are in same name order
-    let mut aln: SmallVec<[AlnStream; 2]> = smallvec![];
+    let mut aln: SmallVec<[AqlnStream; 2]> = smallvec![];
     for i in 0..config.alignment.len() {
         aln.push(AlnStream::new(&mut config, i)?);
         ensure!(
@@ -190,9 +198,6 @@ fn main() -> Result<()> {
             "Input alignments must have the same read order."
         );
     }
-    CONFIG
-        .set(config)
-        .map_err(|_| anyhow!("CONFIG already set"))?;
 
-    LineByLine::new(aln).process()
+    LineByLine::new(config, aln).process()
 }

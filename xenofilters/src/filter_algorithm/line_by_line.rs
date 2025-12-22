@@ -1,7 +1,7 @@
 use anyhow::{Result, ensure};
 use rust_htslib::bam::record::Record;
 use smallvec::{SmallVec, smallvec};
-use crate::CONFIG;
+use crate::{Options, Penalties};
 use crate::aln_stream::AlnStream;
 use crate::fragment::FragmentState;
 use crate::alignment::stitched_fragment;
@@ -13,26 +13,59 @@ use std::sync::OnceLock;
 type QnameCompareFn = fn(&AlnBuffer, &[u8]) -> Option<bool>;
 type AlnBuffer = SmallVec<[FragmentState; 2]>;
 
-static COMPARE_QNAME: OnceLock<QnameCompareFn> = OnceLock::new();
-static IS_UNMAPPED_SKIPPED: OnceLock<fn(&Record) -> bool> = OnceLock::new();
-static IS_SECONDARY_SKIPPED: OnceLock<fn(&Record) -> bool> = OnceLock::new();
-
 pub struct LineByLine {
     aln: SmallVec<[AlnStream; 2]>,
     branch_counters: [u64; 32],
+    is_secondary_skipped: fn(&Record) -> bool,
+    is_unmapped_skipped: fn(&Record) -> bool,
+    compare_qname: fn($AlnBuffer, &[u8]) -> bool,
+    penalties: Penalties
 }
 
 impl LineByLine {
-    pub fn new(aln: SmallVec<[AlnStream; 2]>) -> Self {
+    pub fn new(config: Config, aln: SmallVec<[AlnStream; 2]>) -> Self {
+        let is_unmapped_skipped = match self.discard_unmapped {
+            true => |rec: &Record| rec.is_unmapped() && rec.is_mate_unmapped(),
+            false => |_| false,
+        };
+
+        let is_secondary_skipped = match self.skip_secondary {
+            true => |rec: &Record| rec.is_secondary(),
+            false => |_| false,
+        };
+        let compare_qname = match self.strip_read_suffix {
+            Some(true) => |best: &AlnBuffer, qname2: &[u8]| {
+                best.first()
+                    .map(|b| b.first_qname())
+                    .map(|qname1| qname1[..qname1.len() - 2] != qname2[..qname2.len() - 2])
+            },
+            Some(false) => |best: &AlnBuffer, qname2: &[u8]| {
+                best.first()
+                    .map(|b| b.first_qname())
+                    .map(|qname1| qname1 != qname2)
+            },
+            None => |best: &AlnBuffer, qname2: &[u8]| {
+                best.first().map(|b| b.first_qname()).map(|qname1| {
+                    if qname1.ends_with(b"/1") || qname1.ends_with(b"/2") {
+                        qname1[..qname1.len() - 2] != qname2[..qname2.len() - 2]
+                    } else {
+                        qname1 != qname2
+                    }
+               })
+           },
+        };
         LineByLine {
             aln,
             branch_counters: [0; 32],
+            is_secondary_skipped,
+            is_unmapped_skipped,
+            compare_qname,
+            penalties: config.to_penalties()
         }
     }
 
     fn write_record(&mut self, i: usize, rec: Record, best_state: Option<bool>) -> Result<()> {
-        let is_skipped_unmapped = IS_UNMAPPED_SKIPPED.get_or_init(init_unmapped_skipper);
-        if is_skipped_unmapped(&rec) {
+        if self.is_skipped_unmapped(&rec) {
             return Ok(());
         }
         match (i, best_state) {
@@ -74,10 +107,9 @@ impl LineByLine {
                 let last = &best.last().unwrap();
                 let last_ord = last.order_mates();
 
-                let first_score = stitched_fragment(&first.records, first_ord)?.score()?;
-                let last_score = stitched_fragment(&last.records, last_ord)?.score()?;
+                let first_score = stitched_fragment(&self.penalties, &first.records, first_ord)?.score()?;
+                let last_score = stitched_fragment(&self.penalties, &last.records, last_ord)?.score()?;
 
-                    
                 let mut ord = first_score.partial_cmp(&last_score);
                 if ord.is_none() {
                     ord = Some(Ordering::Equal);
@@ -93,10 +125,8 @@ impl LineByLine {
         rec: Record,
         best: &mut AlnBuffer,
     ) -> Result<bool> {
-        let is_skipped_secondary = IS_SECONDARY_SKIPPED.get_or_init(init_secondary_skipper);
-        if !is_skipped_secondary(&rec) {
-            let compare_qname = COMPARE_QNAME.get_or_init(init_qname_comparer);
-            if let Some(new_readname) = compare_qname(best, rec.qname()) {
+        if !self.is_skipped_secondary(&rec) {
+            if let Some(new_readname) = self.ompare_qname(best, rec.qname()) {
                 if new_readname {
                     // end of round for this alignment
                     self.aln[i].un_next(rec);
@@ -181,45 +211,5 @@ impl LineByLine {
             );
         }
         Ok(())
-    }
-}
-
-fn init_secondary_skipper() -> fn(&Record) -> bool {
-    match CONFIG.get().unwrap().skip_secondary {
-        true => |rec: &Record| rec.is_secondary(),
-        false => |_| false,
-    }
-}
-
-fn init_unmapped_skipper() -> fn(&Record) -> bool {
-    match CONFIG.get().unwrap().discard_unmapped {
-        true => |rec: &Record| rec.is_unmapped() && rec.is_mate_unmapped(),
-        false => |_| false,
-    }
-}
-
-fn init_qname_comparer() -> fn(&AlnBuffer, &[u8]) -> Option<bool> {
-    match CONFIG.get().unwrap().strip_read_suffix {
-        Some(true) => |best: &AlnBuffer, qname2: &[u8]| {
-            best.first()
-                .map(|b| b.first_qname())
-                .map(|qname1| qname1[..qname1.len() - 2] != qname2[..qname2.len() - 2])
-        },
-        Some(false) => |best: &AlnBuffer, qname2: &[u8]| {
-            best.first()
-                .map(|b| b.first_qname())
-                .map(|qname1| qname1 != qname2)
-        },
-        // This variant is currently unreachable, as the config enforces Some(true/false)
-        // but could be useful if we want to allow input from mixed sources in the future.
-        None => |best: &AlnBuffer, qname2: &[u8]| {
-            best.first().map(|b| b.first_qname()).map(|qname1| {
-                if qname1.ends_with(b"/1") || qname1.ends_with(b"/2") {
-                    qname1[..qname1.len() - 2] != qname2[..qname2.len() - 2]
-                } else {
-                    qname1 != qname2
-                }
-            })
-        },
     }
 }

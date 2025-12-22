@@ -3,6 +3,7 @@ use smallvec::{SmallVec, smallvec};
 use std::cmp::Ordering;
 use crate::alignment::{PreparedAlignmentPairIter};
 
+#[derive(PartialEq)]
 pub struct FragmentState {
     pub records: SmallVec<[Record; 2]>,
     pub species_nr: usize,
@@ -29,12 +30,6 @@ impl FragmentState {
         let mut indices: Vec<usize> = (0..self.records.len()).collect();
         indices.sort_by(|&a, &b| order_mates(&self.records[a]).cmp(&order_mates(&self.records[b])));
         indices
-    }
-}
-
-impl PartialEq for FragmentState {
-    fn eq(&self, other: &Self) -> bool {
-        self.partial_cmp(other) == Some(Ordering::Equal)
     }
 }
 
