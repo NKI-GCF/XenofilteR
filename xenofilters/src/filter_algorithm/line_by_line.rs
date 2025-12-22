@@ -1,39 +1,50 @@
+use crate::alignment::stitched_fragment;
+use crate::aln_stream::AlnStream;
+use crate::fragment::FragmentState;
+use crate::{Config, Penalties};
 use anyhow::{Result, ensure};
 use rust_htslib::bam::record::Record;
 use smallvec::{SmallVec, smallvec};
-use crate::{Options, Penalties};
-use crate::aln_stream::AlnStream;
-use crate::fragment::FragmentState;
-use crate::alignment::stitched_fragment;
 use std::cmp::Ordering;
-use std::sync::OnceLock;
 
 // Usually two species compared so two alignments, two fragment states.
 
-type QnameCompareFn = fn(&AlnBuffer, &[u8]) -> Option<bool>;
+type RecordEvalFn = fn(&Record) -> bool;
 type AlnBuffer = SmallVec<[FragmentState; 2]>;
+
+fn always_false(_: &Record) -> bool {
+    false
+}
+
+fn unmapped_and_mate_unmapped(rec: &Record) -> bool {
+    rec.is_unmapped() && rec.is_mate_unmapped()
+}
+
+fn is_secondary(rec: &Record) -> bool {
+    rec.is_secondary()
+}
 
 pub struct LineByLine {
     aln: SmallVec<[AlnStream; 2]>,
     branch_counters: [u64; 32],
-    is_secondary_skipped: fn(&Record) -> bool,
-    is_unmapped_skipped: fn(&Record) -> bool,
-    compare_qname: fn($AlnBuffer, &[u8]) -> bool,
-    penalties: Penalties
+    is_secondary_skipped: RecordEvalFn,
+    is_unmapped_skipped: RecordEvalFn,
+    compare_qname: fn(&AlnBuffer, &[u8]) -> Option<bool>,
+    penalties: Penalties,
 }
 
 impl LineByLine {
     pub fn new(config: Config, aln: SmallVec<[AlnStream; 2]>) -> Self {
-        let is_unmapped_skipped = match self.discard_unmapped {
-            true => |rec: &Record| rec.is_unmapped() && rec.is_mate_unmapped(),
-            false => |_| false,
+        let is_unmapped_skipped = match config.discard_unmapped {
+            true => unmapped_and_mate_unmapped,
+            false => always_false,
         };
 
-        let is_secondary_skipped = match self.skip_secondary {
-            true => |rec: &Record| rec.is_secondary(),
-            false => |_| false,
+        let is_secondary_skipped = match config.skip_secondary {
+            true => is_secondary,
+            false => always_false,
         };
-        let compare_qname = match self.strip_read_suffix {
+        let compare_qname = match config.strip_read_suffix {
             Some(true) => |best: &AlnBuffer, qname2: &[u8]| {
                 best.first()
                     .map(|b| b.first_qname())
@@ -51,8 +62,8 @@ impl LineByLine {
                     } else {
                         qname1 != qname2
                     }
-               })
-           },
+                })
+            },
         };
         LineByLine {
             aln,
@@ -60,12 +71,12 @@ impl LineByLine {
             is_secondary_skipped,
             is_unmapped_skipped,
             compare_qname,
-            penalties: config.to_penalties()
+            penalties: config.to_penalties(),
         }
     }
 
     fn write_record(&mut self, i: usize, rec: Record, best_state: Option<bool>) -> Result<()> {
-        if self.is_skipped_unmapped(&rec) {
+        if (self.is_unmapped_skipped)(&rec) {
             return Ok(());
         }
         match (i, best_state) {
@@ -107,8 +118,10 @@ impl LineByLine {
                 let last = &best.last().unwrap();
                 let last_ord = last.order_mates();
 
-                let first_score = stitched_fragment(&self.penalties, &first.records, first_ord)?.score()?;
-                let last_score = stitched_fragment(&self.penalties, &last.records, last_ord)?.score()?;
+                let first_score =
+                    stitched_fragment(&self.penalties, &first.records, first_ord)?.score()?;
+                let last_score =
+                    stitched_fragment(&self.penalties, &last.records, last_ord)?.score()?;
 
                 let mut ord = first_score.partial_cmp(&last_score);
                 if ord.is_none() {
@@ -125,8 +138,8 @@ impl LineByLine {
         rec: Record,
         best: &mut AlnBuffer,
     ) -> Result<bool> {
-        if !self.is_skipped_secondary(&rec) {
-            if let Some(new_readname) = self.ompare_qname(best, rec.qname()) {
+        if !(self.is_secondary_skipped)(&rec) {
+            if let Some(new_readname) = (self.compare_qname)(best, rec.qname()) {
                 if new_readname {
                     // end of round for this alignment
                     self.aln[i].un_next(rec);
@@ -152,9 +165,7 @@ impl LineByLine {
 
     fn handle_best(&mut self, best: &mut AlnBuffer) -> Result<()> {
         if best.len() > 1 {
-            best.sort_unstable_by(|a, b| {
-                b.partial_cmp(&a).unwrap_or(std::cmp::Ordering::Equal)
-            });
+            best.sort_unstable_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
             if best[0] > best[1] {
                 best.drain(1..).try_for_each(|mut b| {
                     let nr = b.get_nr();

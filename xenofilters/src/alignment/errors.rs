@@ -1,5 +1,5 @@
-use thiserror::Error;
 use crate::alignment::MdOpIteratorError;
+use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq)]
 pub enum AlignmentError {

@@ -1,8 +1,8 @@
+use crate::Penalties;
 use anyhow::{Result, anyhow};
 use rust_htslib::bcf::{Read, Reader, record::Record};
 use std::collections::HashMap;
 use std::path::Path;
-use crate::Penalties
 
 #[allow(dead_code)]
 /// Trait for any object that can be scored against an alignment.

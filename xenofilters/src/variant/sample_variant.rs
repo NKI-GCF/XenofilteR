@@ -1,5 +1,5 @@
-use crate::vcf_format::Variant;
 use crate::Penalties;
+use crate::vcf_format::Variant;
 use anyhow::Result;
 use rust_htslib::bcf::record::Record;
 

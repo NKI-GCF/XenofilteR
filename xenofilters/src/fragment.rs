@@ -1,7 +1,7 @@
-use rust_htslib::bam::record::{Record, Cigar};
+use crate::alignment::PreparedAlignmentPairIter;
+use rust_htslib::bam::record::{Cigar, Record};
 use smallvec::{SmallVec, smallvec};
 use std::cmp::Ordering;
-use crate::alignment::{PreparedAlignmentPairIter};
 
 #[derive(PartialEq)]
 pub struct FragmentState {

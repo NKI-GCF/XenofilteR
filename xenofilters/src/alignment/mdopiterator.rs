@@ -293,4 +293,3 @@ mod tests {
         assert_eq!(md_ops, vec![MdOp::Match(100),]);
     }
 }
-

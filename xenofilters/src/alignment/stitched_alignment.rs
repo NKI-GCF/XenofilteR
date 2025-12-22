@@ -1,9 +1,8 @@
+use crate::alignment::AlignmentError;
 use crate::alignment::{UnifiedOp, UnifiedOpIterator};
+use crate::{MAX_Q, Penalties};
 use anyhow::{Result, anyhow};
 use rust_htslib::bam::record::{Cigar, Record};
-use crate::{Penalties, MAX_Q};
-use crate::alignment::AlignmentError;
-
 
 #[allow(dead_code)]
 // A new struct to hold the combined alignment data
@@ -49,11 +48,13 @@ impl<'a> StitchedFragment<'a> {
                     for _ in 0..len_usize {
                         self.qual.next();
                     }
-                    total_score += self.penalties.gap_open + (len as f64 - 1.0) * self.penalties.gap_extend;
+                    total_score +=
+                        self.penalties.gap_open + (len as f64 - 1.0) * self.penalties.gap_extend;
                 }
                 UnifiedOp::Del(len) => {
                     // Deletions consume reference bases, not read bases
-                    total_score += self.penalties.gap_open + (len as f64 - 1.0) * self.penalties.gap_extend;
+                    total_score +=
+                        self.penalties.gap_open + (len as f64 - 1.0) * self.penalties.gap_extend;
                 }
                 UnifiedOp::RefSkip(_len) => {
                     // RefSkips do not affect score
@@ -80,8 +81,10 @@ const fn revcmp(base: u8) -> u8 {
 
 fn get_read_iterators<'a>(
     rec: &'a Record,
-) -> (Box<dyn Iterator<Item = u8> + 'a>, Box<dyn Iterator<Item = u8> + 'a>) {
-
+) -> (
+    Box<dyn Iterator<Item = u8> + 'a>,
+    Box<dyn Iterator<Item = u8> + 'a>,
+) {
     let seq_encoded = rec.seq().encoded;
     let qual = rec.qual();
 
@@ -102,10 +105,7 @@ fn get_read_iterators<'a>(
 /// This penalty is a trade-off between the cost of the unaligned/soft-clipped bases
 /// and the quality of the aligned segment.
 /// (Penalty for unaligned bases) - (Match Log-Likelihood Score)
-fn calculate_translocation_penalty(
-    penalties: &Penalties,
-    record: &Record,
-) -> Result<f64> {
+fn calculate_translocation_penalty(penalties: &Penalties, record: &Record) -> Result<f64> {
     let cigar_view = record.cigar();
 
     let mut qual_iter = record.qual().iter().copied();
@@ -120,13 +120,13 @@ fn calculate_translocation_penalty(
                 for q in qual_iter.by_ref().take(len) {
                     let q_idx = q as usize;
                     if q_idx < MAX_Q {
-                        total_match_log_likelihood += LOG_LIKELIHOOD_MATCH[q_idx]; 
+                        total_match_log_likelihood += penalties.log_likelihood_match[q_idx];
                     }
                 }
             }
             Cigar::Ins(_) => {
                 qual_iter.by_ref().nth(len.saturating_sub(1));
-            },
+            }
             Cigar::SoftClip(_) => {
                 for q in qual_iter.by_ref().take(len) {
                     let q_idx = q as usize;
@@ -143,14 +143,16 @@ fn calculate_translocation_penalty(
     Ok(penalty.max(0.0))
 }
 
-
 pub fn stitched_fragment<'a>(
     penalties: &'a Penalties,
     records: &'a [Record],
     order: Vec<usize>,
 ) -> Result<StitchedFragment<'a>> {
     // Hard clipped may occur in non-primary, so because we need all seq and qual:
-    let mut primary_it = order.iter().map(|&i| &records[i]).filter(|r| !r.is_supplementary() && !r.is_secondary());
+    let mut primary_it = order
+        .iter()
+        .map(|&i| &records[i])
+        .filter(|r| !r.is_supplementary() && !r.is_secondary());
 
     let mut stitched = if let Some(anchor) = primary_it.next() {
         let (mut seq, mut qual) = get_read_iterators(anchor);
@@ -183,11 +185,13 @@ pub fn stitched_fragment<'a>(
 
         if first_record {
             first_record = false;
-        } else {
-            if record.is_supplementary() {
-                let penalty = calculate_translocation_penalty(stitched.penalties, record)?;
-                stitched.ops = Box::new(stitched.ops.chain(std::iter::once(Ok(UnifiedOp::Trans(penalty)))))
-            }
+        } else if record.is_supplementary() {
+            let penalty = calculate_translocation_penalty(stitched.penalties, record)?;
+            stitched.ops = Box::new(
+                stitched
+                    .ops
+                    .chain(std::iter::once(Ok(UnifiedOp::Trans(penalty)))),
+            )
         }
 
         let ops = UnifiedOpIterator::new(record)?;

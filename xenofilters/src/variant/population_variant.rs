@@ -1,5 +1,5 @@
-use crate::vcf_format::Variant;
 use crate::Penalties;
+use crate::vcf_format::Variant;
 use anyhow::{Result, anyhow};
 use rust_htslib::bcf::record::Record;
 
@@ -37,7 +37,7 @@ impl Variant for PopulationVariant {
         let mut score_mismatch = 0.0;
         for q in quals {
             score_match += penalties.log_likelihood_match[*q as usize];
-            score_mismatch += penaltieslog_likelihood_mismatch[*q as usize];
+            score_mismatch += penalties.log_likelihood_mismatch[*q as usize];
         }
         p_variant * (score_match / len) + (1.0 - p_variant) * (score_mismatch / len)
     }

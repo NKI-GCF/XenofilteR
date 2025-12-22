@@ -15,7 +15,7 @@ mod vcf_format;
 use std::path::PathBuf;
 
 use aln_stream::AlnStream;
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{Result, ensure};
 use bam_format::BamFormat;
 use clap::Parser;
 use filter_algorithm::line_by_line::LineByLine;
@@ -157,7 +157,6 @@ impl Config {
         Ok(())
     }
     fn to_penalties(&self) -> Penalties {
-
         let mut error_prob = [0.0_f64; MAX_Q];
         for (q, item) in error_prob.iter_mut().enumerate() {
             *item = 10f64.powf(-(q as f64) / 10.0); // x = 10^{-Q/10}
@@ -190,7 +189,7 @@ fn main() -> Result<()> {
     config.validate_and_init()?;
 
     // first alignment to quick check readnames are in same name order
-    let mut aln: SmallVec<[AqlnStream; 2]> = smallvec![];
+    let mut aln: SmallVec<[AlnStream; 2]> = smallvec![];
     for i in 0..config.alignment.len() {
         aln.push(AlnStream::new(&mut config, i)?);
         ensure!(

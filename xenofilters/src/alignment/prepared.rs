@@ -1,6 +1,6 @@
-use rust_htslib::bam::record::{Aux, Record};
 use super::PrepareError;
-use crate::alignment::{UnifiedOpIterator, UnifiedOp};
+use crate::alignment::{UnifiedOp, UnifiedOpIterator};
+use rust_htslib::bam::record::{Aux, Record};
 
 #[allow(dead_code)]
 pub fn print_req(i: usize, rec: &Record) {
@@ -81,15 +81,19 @@ impl<'a> Iterator for PreparedAlignmentPairIter<'a> {
             false => match UnifiedOpIterator::new(read_host) {
                 Ok(iter) => iter,
                 Err(e) => return Some(Err(e)),
-            }
+            },
         };
         let iter2 = match read_graft.is_unmapped() {
             true => UnifiedOpIterator::empty(read_graft.is_reverse()),
             false => match UnifiedOpIterator::new(read_graft) {
                 Ok(iter) => iter,
                 Err(e) => return Some(Err(e)),
-            }
+            },
         };
-        return Some(Ok(PreparedAlignmentPair { iter1, iter2, seq_len: seq_len as u32 }))
+        Some(Ok(PreparedAlignmentPair {
+            iter1,
+            iter2,
+            seq_len: seq_len as u32,
+        }))
     }
 }
