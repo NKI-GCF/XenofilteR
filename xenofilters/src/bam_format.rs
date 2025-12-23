@@ -34,6 +34,12 @@ impl From<BamFormat> for Format {
     }
 }
 
+impl Default for BamFormat {
+    fn default() -> Self {
+        BamFormat::Bam
+    }
+}
+
 pub(crate) fn out_from_file(f: &PathBuf, hdr_view: &HeaderView) -> Result<bam::Writer> {
     let f_str = f.extension().and_then(|e| e.to_str()).unwrap_or("bam");
     let fmt = <BamFormat as FromStr>::from_str(f_str)

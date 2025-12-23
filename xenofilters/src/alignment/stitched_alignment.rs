@@ -200,3 +200,60 @@ pub fn stitched_fragment<'a>(
     }
     Ok(stitched)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Config;
+    use rust_htslib::bam::record::CigarString;
+
+    fn setup_penalties() -> Penalties {
+        let c = Config::default();
+        let mut p = c.to_penalties();
+        p.log_likelihood_match = [0.0; 93]; // 0 log-lik for match
+        p.log_likelihood_mismatch = [-1.0; 93];
+        p.gap_open = -2.0;
+        p.gap_extend = -0.5;
+        p
+    }
+
+    #[test]
+    fn test_stitched_fragment_scoring() {
+        let penalties = setup_penalties();
+        let mut fragment = StitchedFragment {
+            seq: Box::new(std::iter::empty()),
+            qual: Box::new(vec![30, 30, 30, 30].into_iter()),
+            tid: 0,
+            pos: 100,
+            ops: Box::new(vec![
+                Ok(UnifiedOp::Match(2)),
+                Ok(UnifiedOp::Mis(1)),
+                Ok(UnifiedOp::Ins(1)), // Gap open
+                Ok(UnifiedOp::Del(2)), // Gap open + 1 extend
+            ].into_iter()),
+            penalties: &penalties,
+        };
+
+        let score = fragment.score().unwrap();
+        // Match(2)*0 + Mis(1)*-1 + Ins(1)*-2 + Del(2)*(-2 + -0.5) = -5.5
+        assert_eq!(score, -5.5);
+    }
+
+    #[test]
+    fn test_translocation_penalty_logic() {
+        let penalties = setup_penalties();
+        // Create a record with 10M (perfect) and 5S (soft clip)
+        // High quality on soft clip = high penalty
+        // High quality on matches = offsets penalty (lowers it)
+        let mut record = Record::new();
+        let vec_cig = vec![Cigar::Match(10), Cigar::SoftClip(5)];
+        let cigar = CigarString(vec_cig);
+        record.set(b"read1", Some(&cigar), &[b'A'; 15], &[30; 15]);
+        
+        let penalty = calculate_translocation_penalty(&penalties, &record).unwrap();
+        
+        // 5 * |-1.0| (mismatch for softclips) - 10 * 0.0 (match for matches) = 5.0
+        assert!(penalty > 0.0);
+        assert_eq!(penalty, 5.0);
+    }
+}

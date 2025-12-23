@@ -27,7 +27,7 @@ pub use fragment::FragmentState;
 const ARG_MAX: usize = 4;
 const MAX_Q: usize = 93;
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Default, Clone)]
 #[clap(author, version, about, long_about=None)]
 pub struct Config {
     /// Assign fragments matching alignment to these respective files. Writes first alignment to stdout when omitted
