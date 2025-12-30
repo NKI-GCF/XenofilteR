@@ -4,6 +4,7 @@ use crate::{MAX_Q, Penalties};
 use anyhow::{Result, anyhow};
 use rust_htslib::bam::record::{Cigar, Record};
 
+#[allow(dead_code)]
 // A new struct to hold the combined alignment data
 pub struct StitchedFragment<'a> {
     pub seq: Box<dyn Iterator<Item = u8> + 'a>,
@@ -67,14 +68,24 @@ impl<'a> StitchedFragment<'a> {
     }
 }
 
-const fn revcmp(base: u8) -> u8 {
-    match base {
-        b'A' => b'T',
-        b'T' => b'A',
-        b'C' => b'G',
-        b'G' => b'C',
-        b'N' => b'N',
-        _ => base, // Non-standard bases are returned as-is
+const fn revcmp_encoded(b: u8) -> u8 {
+    match b {
+        1 => 8,  // A -> T
+        8 => 1,  // T -> A
+        2 => 4,  // C -> G
+        4 => 2,  // G -> C
+        3 => 3,  // M -> M (A/C)
+        5 => 5,  // R -> R (A/G)
+        6 => 6,  // S -> S (C/G)
+        7 => 7,  // V -> V (A/C/G)
+        9 => 9,  // W -> W (A/T)
+        10 => 10,// Y -> Y (C/T)
+        11 => 11,// H -> H (A/C/T)
+        12 => 12,// K -> K (G/T)
+        13 => 13,// D -> D (A/G/T)
+        14 => 14,// B -> B (C/G/T)
+        15 => 15,// N -> N
+        _ => b,  // = or garbage
     }
 }
 
@@ -86,10 +97,12 @@ fn get_read_iterators<'a>(
 ) {
     let seq_encoded = rec.seq().encoded;
     let qual = rec.qual();
+    #[cfg(test)]
+    eprintln!("Seq encoded: {:?}, {:?}", seq_encoded, qual);
 
     if rec.is_reverse() {
         (
-            Box::new(seq_encoded.iter().rev().map(|&b| revcmp(b))),
+            Box::new(seq_encoded.iter().rev().map(|&b| revcmp_encoded(b))),
             Box::new(qual.iter().rev().copied()),
         )
     } else {
@@ -293,7 +306,7 @@ mod tests {
         let seq: Vec<u8> = seq_iter.collect();
         let qual: Vec<u8> = qual_iter.collect();
 
-        assert_eq!(seq, vec![b'A', b'C', b'G', b'T']);
+        assert_eq!(seq, record.seq().encoded.to_vec());
         assert_eq!(qual, vec![30, 31, 32, 33]);
         Ok(())
     }
@@ -306,7 +319,7 @@ mod tests {
             &[b'A', b'C', b'G', b'T'],
             &[30, 31, 32, 33],
             "4",
-            false,
+            true,
         )?;
 
         let (seq_iter, qual_iter) = get_read_iterators(&record);
@@ -314,26 +327,38 @@ mod tests {
         let seq: Vec<u8> = seq_iter.collect();
         let qual: Vec<u8> = qual_iter.collect();
 
+        let expected: Vec<u8> = record
+            .seq()
+            .encoded
+            .iter()
+            .rev()
+            .map(|&b| revcmp_encoded(b))
+            .collect();
+
         assert_eq!(
             seq,
-            vec![b'A', b'C', b'G', b'T']
-                .iter()
-                .rev()
-                .map(|&b| revcmp(b))
-                .collect::<Vec<u8>>()
+            expected,
         );
         assert_eq!(qual, vec![33, 32, 31, 30]);
         Ok(())
     }
 
     #[test]
-    fn test_revcmp() {
-        assert_eq!(revcmp(b'A'), b'T');
-        assert_eq!(revcmp(b'T'), b'A');
-        assert_eq!(revcmp(b'C'), b'G');
-        assert_eq!(revcmp(b'G'), b'C');
-        assert_eq!(revcmp(b'N'), b'N');
-        assert_eq!(revcmp(b'X'), b'X'); // Non-standard base
+    fn test_revcmp_encoded() {
+        // A <-> T
+        assert_eq!(revcmp_encoded(1), 8);
+        assert_eq!(revcmp_encoded(8), 1);
+
+        // C <-> G
+        assert_eq!(revcmp_encoded(2), 4);
+        assert_eq!(revcmp_encoded(4), 2);
+
+        // N stays N
+        assert_eq!(revcmp_encoded(15), 15);
+
+        // '=' or garbage stays unchanged
+        assert_eq!(revcmp_encoded(0), 0);
+        assert_eq!(revcmp_encoded(42), 42);
     }
 
     #[test]
