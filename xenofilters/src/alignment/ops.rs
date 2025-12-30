@@ -37,21 +37,6 @@ pub enum UnifiedOp {
     },*/
 }
 
-impl UnifiedOp {
-    #[must_use]
-    pub fn len(&self) -> u32 {
-        match self {
-            UnifiedOp::Match(len)
-            | UnifiedOp::Mis(len)
-            | UnifiedOp::Ins(len)
-            | UnifiedOp::Del(len)
-            | UnifiedOp::RefSkip(len) => *len,
-            //UnifiedOp::Mismatch(seq) | UnifiedOp::Insertion(seq) | UnifiedOp::Deletion(seq) => seq.len(),
-            _ => 0,
-        }
-    }
-}
-
 impl TryFrom<Cigar> for UnifiedOp {
     type Error = AlignmentError;
 
@@ -64,6 +49,7 @@ impl TryFrom<Cigar> for UnifiedOp {
     }
 }
 
+#[cfg_attr(test, derive(Debug))]
 pub struct UnifiedOpIterator<'a> {
     cigar_iter: std::vec::IntoIter<Cigar>,
     md_iter: MdOpIterator<'a>,
@@ -97,7 +83,7 @@ impl<'a> UnifiedOpIterator<'a> {
         }
     }
 
-    pub fn peek(&'a mut self) -> Option<&'a UnifiedOp> {
+    /*pub fn peek(&'a mut self) -> Option<&'a UnifiedOp> {
         if self.next_op.is_none() {
             match self.next() {
                 Some(Ok(op)) => self.next_op = Some(op),
@@ -106,7 +92,7 @@ impl<'a> UnifiedOpIterator<'a> {
             }
         }
         self.next_op.as_ref()
-    }
+    }*/
 
     fn match_md_op(&mut self, md_op: MdOp, cig_len: u32) -> Result<UnifiedOp, AlignmentError> {
         match md_op {
@@ -129,6 +115,20 @@ impl<'a> UnifiedOpIterator<'a> {
             MdOp::Deletion(_) => Err(AlignmentError::MdCigarMismatch),
         }
     }
+    pub fn is_single_match(&self) -> bool {
+        #[cfg(test)]
+        let cig_ct: usize = self
+            .cigar_iter
+            .clone()
+            .map(|c| {
+                eprintln!("CIGAR op: {:?}", c);
+                1
+            })
+            .sum();
+        #[cfg(not(test))]
+        let cig_ct: usize = self.cigar_iter.as_slice().len();
+        cig_ct == 1 && self.md_iter.is_single_operation()
+    }
 }
 
 impl<'a> Iterator for UnifiedOpIterator<'a> {
@@ -145,8 +145,8 @@ impl<'a> Iterator for UnifiedOpIterator<'a> {
         } else {
             self.cigar_iter.next()
         };
-        match next_cig? {
-            Cigar::Match(len) | Cigar::Equal(len) | Cigar::Diff(len) => {
+        match next_cig {
+            Some(Cigar::Match(len) | Cigar::Equal(len) | Cigar::Diff(len)) => {
                 let next_md_op = if self.next_md_op.is_some() {
                     self.next_md_op.take().map(Ok)
                 } else if self.is_rev {
@@ -155,71 +155,145 @@ impl<'a> Iterator for UnifiedOpIterator<'a> {
                     self.md_iter.next()
                 };
                 if let Some(Ok(md_op)) = next_md_op {
+                    #[cfg(test)]
+                    eprintln!("Matching CIGAR {:?} with MD {:?}", next_cig, &md_op);
                     return Some(self.match_md_op(md_op, len));
                 };
                 Some(Err(AlignmentError::MdCigarMismatch))
             }
-            Cigar::SoftClip(len) => Some(Ok(UnifiedOp::Mis(len))),
-            Cigar::Del(len) => match self.md_iter.next() {
+            Some(Cigar::SoftClip(len)) => {
+                #[cfg(test)]
+                eprintln!("Handling CIGAR SoftClip {:?}", len);
+                Some(Ok(UnifiedOp::Mis(len)))
+            }
+            Some(Cigar::Del(len)) => match self.md_iter.next() {
                 Some(Ok(MdOp::Deletion(d))) if d.len() as u32 == len => {
+                    #[cfg(test)]
+                    eprintln!("Matching CIGAR Deletion {:?} with MD Deletion {:?}", len, d);
                     Some(Ok(UnifiedOp::Del(len)))
                 }
                 _ => Some(Err(AlignmentError::MdCigarMismatch)),
             },
-            Cigar::HardClip(_) | Cigar::Pad(_) => self.next(),
-            x => Some(UnifiedOp::try_from(x)), // RefSkip, Ins
+            Some(Cigar::HardClip(_) | Cigar::Pad(_)) => {
+                #[cfg(test)]
+                eprintln!("Skipping CIGAR HardClip/Pad {:?}", next_cig);
+                self.next()
+            }
+            Some(x) => {
+                #[cfg(test)]
+                eprintln!("Handling Refskip/Ins CIGAR {:?}", x);
+                Some(UnifiedOp::try_from(x))
+            } // RefSkip, Ins
+            None => {
+                if let Some(Ok(md_op)) = if self.next_md_op.is_some() {
+                    self.next_md_op.take().map(Ok)
+                } else if self.is_rev {
+                    self.md_iter.next_back()
+                } else {
+                    self.md_iter.next()
+                } {
+                    #[cfg(test)]
+                    eprintln!("Excess MD operation after CIGAR end: {:?}", md_op);
+                    match md_op {
+                        MdOp::Match(_) | MdOp::Mismatch(_) => {
+                            Some(Err(AlignmentError::MdCigarMismatch))
+                        }
+                        MdOp::Deletion(_) => Some(Err(AlignmentError::MissingMdDeletion)),
+                    }
+                } else {
+                    None
+                }
+            }
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
+    use crate::tests::read_len_from_cigar;
+    use anyhow::Result;
     use rust_htslib::bam::record::{Aux, CigarString};
+
+    impl UnifiedOp {
+        #[must_use]
+        pub fn len(&self) -> u32 {
+            match self {
+                UnifiedOp::Match(len)
+                | UnifiedOp::Mis(len)
+                | UnifiedOp::Ins(len)
+                | UnifiedOp::Del(len)
+                | UnifiedOp::RefSkip(len) => *len,
+                //UnifiedOp::Mismatch(seq) | UnifiedOp::Insertion(seq) | UnifiedOp::Deletion(seq) => seq.len(),
+                _ => 0,
+            }
+        }
+    }
+
+    impl UnifiedOpIterator<'_> {
+        pub fn seq_len(&self) -> u32 {
+            self.cigar_iter
+                .as_slice()
+                .iter()
+                .map(|c| match c {
+                    Cigar::Match(len)
+                    | Cigar::Equal(len)
+                    | Cigar::Diff(len)
+                    | Cigar::Ins(len)
+                    | Cigar::SoftClip(len) => *len,
+                    Cigar::Del(_) | Cigar::RefSkip(_) | Cigar::HardClip(_) | Cigar::Pad(_) => 0,
+                })
+                .sum()
+        }
+    }
 
     pub fn create_record(
         qname: &[u8],
-        vec_cig: Vec<Cigar>,
+        cig_str: &str,
+        seq: &[u8],
         qual: &[u8],
         md: &str,
         is_rev: bool,
-    ) -> rust_htslib::bam::Record {
+    ) -> Result<rust_htslib::bam::Record> {
         let mut record = Record::new();
+        let cigar_string = CigarString::try_from(cig_str)?;
+        let cigstringview = cigar_string.into_view(0);
+        let vec_cig = cigstringview.iter().map(|&c| c).collect();
         let cigar_string = CigarString(vec_cig);
+        let rl = read_len_from_cigar(cig_str);
+        match (seq.len(), qual.len()) {
+            (0, 0) => record.set(qname, Some(&cigar_string), &vec![b'A'; rl], &vec![30; rl]),
+            (0, _) => record.set(qname, Some(&cigar_string), &vec![b'A'; rl], qual),
+            (_, 0) => record.set(qname, Some(&cigar_string), seq, &vec![30; rl]),
+            _ => record.set(qname, Some(&cigar_string), seq, qual),
+        }
 
-        // Set basic fields
-        record.set(qname, Some(&cigar_string), &vec![b'A'; qual.len()], qual);
         if is_rev {
             record.set_reverse();
         }
 
         // HTSlib requires the MD tag to be set manually for tests
-        record.push_aux(b"MD", Aux::String(md)).unwrap();
-        record
+        record.push_aux(b"MD", Aux::String(md))?;
+        Ok(record)
     }
 
     #[test]
-    fn simple_match_cig_10m_md_10() {
-        let rec = create_record(b"read1", vec![Cigar::Match(10)], &vec![30; 10], "10", false);
+    fn simple_match_cig_10m_md_10() -> Result<()> {
+        let rec = create_record(b"read1", "10M", &[], &vec![30; 10], "10", false)?;
         let uop_iter = UnifiedOpIterator::new(&rec).unwrap();
         let ops: Vec<UnifiedOp> = uop_iter.map(|r| r.unwrap()).collect();
         assert_eq!(ops, vec![UnifiedOp::Match(10)]);
 
-        let rec = create_record(b"read2", vec![Cigar::Match(10)], &vec![30; 10], "10", true);
+        let rec = create_record(b"read2", "10M", &[], &vec![30; 10], "10", true)?;
         let uop_iter = UnifiedOpIterator::new(&rec).unwrap();
         let ops: Vec<UnifiedOp> = uop_iter.map(|r| r.unwrap()).collect();
         assert_eq!(ops, vec![UnifiedOp::Match(10)]);
+        Ok(())
     }
 
     #[test]
-    fn mismatch_cig_10m_md_5a4() {
-        let rec = create_record(
-            b"read1",
-            vec![Cigar::Match(10)],
-            &vec![30; 10],
-            "5A4",
-            false,
-        );
+    fn mismatch_cig_10m_md_5a4() -> Result<()> {
+        let rec = create_record(b"read1", "10M", &[], &vec![30; 10], "5A4", false)?;
         let uop_iter = UnifiedOpIterator::new(&rec).unwrap();
         let ops: Vec<UnifiedOp> = uop_iter.map(|r| r.unwrap()).collect();
         assert_eq!(
@@ -227,24 +301,19 @@ mod tests {
             vec![UnifiedOp::Match(5), UnifiedOp::Mis(1), UnifiedOp::Match(4)]
         );
 
-        let rec = create_record(b"read2", vec![Cigar::Match(10)], &vec![30; 10], "5A4", true);
+        let rec = create_record(b"read2", "10M", &[], &vec![30; 10], "5A4", true)?;
         let uop_iter = UnifiedOpIterator::new(&rec).unwrap();
         let ops: Vec<UnifiedOp> = uop_iter.map(|r| r.unwrap()).collect();
         assert_eq!(
             ops,
             vec![UnifiedOp::Match(4), UnifiedOp::Mis(1), UnifiedOp::Match(5)]
         );
+        Ok(())
     }
 
     #[test]
-    fn indels_cig_5m2i3m_md_10() -> Result<(), PrepareError> {
-        let rec = create_record(
-            b"read3",
-            vec![Cigar::Match(5), Cigar::Ins(2), Cigar::Match(3)],
-            &vec![30; 10],
-            "10",
-            false,
-        );
+    fn indels_cig_5m2i3m_md_8() -> Result<()> {
+        let rec = create_record(b"read3", "5M2I3M", &[], &vec![30; 10], "8", false)?;
         let uop_iter = UnifiedOpIterator::new(&rec)?;
         let ops: Vec<UnifiedOp> = uop_iter
             .map(|r| r)
@@ -257,28 +326,17 @@ mod tests {
     }
 
     #[test]
-    fn soft_clip_cig_5s5m_md_5() {
-        let rec = create_record(
-            b"read4",
-            vec![Cigar::SoftClip(5), Cigar::Match(5)],
-            &vec![30; 10],
-            "5",
-            false,
-        );
+    fn soft_clip_cig_5s5m_md_5() -> Result<()> {
+        let rec = create_record(b"read4", "5S5M", &[], &vec![30; 10], "5", false)?;
         let uop_iter = UnifiedOpIterator::new(&rec).unwrap();
         let ops: Vec<UnifiedOp> = uop_iter.map(|r| r.unwrap()).collect();
         assert_eq!(ops, vec![UnifiedOp::Mis(5), UnifiedOp::Match(5)]);
+        Ok(())
     }
 
     #[test]
-    fn deletion_cig_5m3d5m_md_5daaa5() -> Result<(), PrepareError> {
-        let rec = create_record(
-            b"read5",
-            vec![Cigar::Match(5), Cigar::Del(3), Cigar::Match(5)],
-            &vec![30; 10],
-            "5^AAA5",
-            false,
-        );
+    fn deletion_cig_5m3d5m_md_5daaa5() -> Result<()> {
+        let rec = create_record(b"read5", "5M3D5M", &[], &vec![30; 10], "5^AAA5", false)?;
         let uop_iter = UnifiedOpIterator::new(&rec)?;
         let ops: Vec<UnifiedOp> = uop_iter
             .map(|r| r)
@@ -291,19 +349,14 @@ mod tests {
     }
 
     #[test]
-    fn test_length_invariants() {
+    fn test_length_invariants() -> Result<()> {
         // "50M10I40M"
-        let rec = create_record(
-            b"read1",
-            vec![Cigar::Match(50), Cigar::Ins(10), Cigar::Match(40)],
-            &[30; 100],
-            "90",
-            false,
-        );
+        let rec = create_record(b"read1", "50M10I40M", &[], &[30; 100], "90", false)?;
         let iter = UnifiedOpIterator::new(&rec).unwrap();
 
         let total_len: u32 = iter.map(|r| r.unwrap().len()).sum();
         // Sum of Match/Mis/Ins/Del should match the logical alignment footprint
         assert_eq!(total_len, 100);
+        Ok(())
     }
 }

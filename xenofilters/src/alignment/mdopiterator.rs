@@ -1,19 +1,7 @@
+use crate::alignment::MdOpIteratorError;
 use rust_htslib::bam::record::{Aux, Record};
 use smallvec::SmallVec;
 use std::str::Chars;
-use thiserror::Error;
-
-#[derive(Debug, Error)]
-pub enum MdOpIteratorError {
-    #[error("No MD tag found")]
-    NoMdTag,
-
-    #[error("Aux error {0}")]
-    AuxError(String),
-
-    #[error("MD parsing error: invalid character '{0}'")]
-    MdParseError(char),
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MdOp {
@@ -22,6 +10,7 @@ pub enum MdOp {
     Deletion(SmallVec<[u8; 1]>),
 }
 
+#[cfg_attr(test, derive(Debug))]
 pub struct MdOpIterator<'a> {
     chars: Chars<'a>,
     peeked: String,
@@ -32,7 +21,7 @@ impl<'a> MdOpIterator<'a> {
         let chars = match rec.aux(b"MD") {
             Ok(Aux::String(md)) => md.chars(),
             Ok(_) => return Err(MdOpIteratorError::NoMdTag),
-            Err(e) => return Err(MdOpIteratorError::AuxError(e.to_string())),
+            Err(e) => return Err(MdOpIteratorError::Aux(e.to_string())),
         };
         Ok(MdOpIterator {
             chars,
@@ -44,6 +33,22 @@ impl<'a> MdOpIterator<'a> {
             chars: "".chars(),
             peeked: String::new(),
         }
+    }
+    pub fn is_single_operation(&self) -> bool {
+        let mut ret = true;
+        for c in self.chars.clone() {
+            #[cfg(test)]
+            eprintln!("Checking char: {}", c);
+            match c {
+                n if n.is_ascii_digit() => continue,
+                _ => {
+                    ret = false;
+                    #[cfg(not(test))]
+                    break;
+                }
+            }
+        }
+        ret
     }
 }
 
@@ -82,7 +87,7 @@ impl<'a> Iterator for MdOpIterator<'a> {
                 }
                 Some(Ok(MdOp::Match(num)))
             }
-            x => Some(Err(MdOpIteratorError::MdParseError(x))),
+            x => Some(Err(MdOpIteratorError::MdParse(x))),
         }
     }
 }
@@ -129,7 +134,7 @@ impl DoubleEndedIterator for MdOpIterator<'_> {
                 }
                 Some(Ok(MdOp::Mismatch(m as u8)))
             }
-            x => Some(Err(MdOpIteratorError::MdParseError(x))),
+            x => Some(Err(MdOpIteratorError::MdParse(x))),
         }
     }
 }

@@ -1,4 +1,4 @@
-use crate::alignment::MdOpIteratorError;
+use rust_htslib::errors::Error as HtslibError;
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq)]
@@ -37,11 +37,38 @@ pub enum PrepareError {
     NoMdTag,
 
     #[error("Aux error {0}")]
-    AuxError(String),
+    Aux(String),
 
     #[error(transparent)]
-    AlignmentError(#[from] AlignmentError),
+    Alignment(#[from] AlignmentError),
 
     #[error(transparent)]
-    MdOpIteratorError(#[from] MdOpIteratorError),
+    MdOpIterator(#[from] MdOpIteratorError),
+
+    #[error("{0}")]
+    InvalidAlignment(String),
+}
+
+#[derive(Debug, Error)]
+pub enum BamError {
+    #[error("BAM read error: {0}")]
+    Read(String),
+
+    #[error("BAM write error: {0}")]
+    Write(String),
+
+    #[error(transparent)]
+    Htslib(#[from] HtslibError),
+}
+
+#[derive(Debug, Error)]
+pub enum MdOpIteratorError {
+    #[error("No MD tag found")]
+    NoMdTag,
+
+    #[error("Aux error {0}")]
+    Aux(String),
+
+    #[error("MD parsing error: invalid character '{0}'")]
+    MdParse(char),
 }

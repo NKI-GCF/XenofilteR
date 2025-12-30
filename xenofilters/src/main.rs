@@ -14,10 +14,10 @@ mod vcf_format;
 
 use std::path::PathBuf;
 
-use aln_stream::AlnStream;
+use aln_stream::{AlignmentStream, AlnStream};
 use anyhow::{Result, ensure};
 use bam_format::BamFormat;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use filter_algorithm::line_by_line::LineByLine;
 use smallvec::{SmallVec, smallvec};
 
@@ -26,6 +26,15 @@ pub use fragment::FragmentState;
 
 const ARG_MAX: usize = 4;
 const MAX_Q: usize = 93;
+
+#[derive(Copy, Clone, Debug, ValueEnum, PartialEq, Default)]
+pub enum StripReadSuffix {
+    #[default]
+    Auto,
+    True,
+    False,
+    Variable,
+}
 
 #[derive(Parser, Debug, Default, Clone)]
 #[clap(author, version, about, long_about=None)]
@@ -43,7 +52,7 @@ pub struct Config {
     pub ambiguous_output: Vec<PathBuf>,
 
     /// ouput format of stdout
-    #[clap(short = 'O', long, default_value = "bam")]
+    #[clap(short = 'O', long, default_value = "sam")]
     pub stdout_format: BamFormat,
 
     /// Input alignments to compare. If the same readnames are consecutive and in the same order for
@@ -72,8 +81,8 @@ pub struct Config {
     pub mismatch_penalty: f64,
 
     /// strip fastq-style /1 and /2 from read names when comparing
-    #[clap(short = 'R', long)]
-    pub strip_read_suffix: Option<bool>,
+    #[clap(short = 'R', long, default_value = "Auto")]
+    pub strip_read_suffix: StripReadSuffix,
 
     #[clap(short, long, num_args = 0..ARG_MAX)]
     pub sample_variants: Vec<PathBuf>,
@@ -105,12 +114,6 @@ struct Penalties {
     pub gap_extend: f64,
     pub log_likelihood_mismatch: [f64; MAX_Q],
     pub log_likelihood_match: [f64; MAX_Q],
-}
-
-impl Config {
-    pub fn strip_read_suffix(&self) -> bool {
-        self.strip_read_suffix.unwrap()
-    }
 }
 
 impl Config {
@@ -189,9 +192,9 @@ fn main() -> Result<()> {
     config.validate_and_init()?;
 
     // first alignment to quick check readnames are in same name order
-    let mut aln: SmallVec<[AlnStream; 2]> = smallvec![];
+    let mut aln: SmallVec<[Box<dyn AlignmentStream>; 2]> = smallvec![];
     for i in 0..config.alignment.len() {
-        aln.push(AlnStream::new(&mut config, i)?);
+        aln.push(Box::new(AlnStream::new(&mut config, i)?));
         ensure!(
             aln[i].next_qname() == aln[0].next_qname(),
             "Input alignments must have the same read order."
@@ -199,4 +202,19 @@ fn main() -> Result<()> {
     }
 
     LineByLine::new(config, aln).process()
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    pub use alignment::tests::*;
+    pub use aln_stream::tests::*;
+    pub use bam_format::BamFormat;
+    impl Config {
+        pub fn default_no_strip() -> Self {
+            let mut c = Config::default();
+            c.strip_read_suffix = StripReadSuffix::False;
+            c
+        }
+    }
 }

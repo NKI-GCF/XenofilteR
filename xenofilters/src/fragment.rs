@@ -63,10 +63,12 @@ impl PartialOrd for FragmentState {
         for pair_result in iter {
             balance = match pair_result {
                 Ok(mut pair) => {
+                    #[cfg(test)]
+                    let pair_str = format!("{:?}", pair);
                     let (first, second) = pair.are_perfect_match();
+                    #[cfg(test)]
                     eprintln!(
-                        "Comparing fragment states: first perfect: {}, second perfect: {}",
-                        first, second
+                        "Comparing fragment states:first perfect: {first}, second perfect: {second}\npair: {pair_str}",
                     );
                     if first {
                         if second {
@@ -124,217 +126,197 @@ fn order_mates(r: &Record) -> (u8, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rust_htslib::bam::record::{Aux, CigarString};
-
-    pub fn create_record(
-        qname: &[u8],
-        vec_cig: Vec<Cigar>,
-        qual: &[u8],
-        md: &str,
-        is_rev: bool,
-    ) -> rust_htslib::bam::Record {
-        let mut record = Record::new();
-        let cigar_string = CigarString(vec_cig);
-
-        // Set basic fields
-        record.set(qname, Some(&cigar_string), &vec![b'A'; qual.len()], qual);
-        if is_rev {
-            record.set_reverse();
-        }
-
-        // HTSlib requires the MD tag to be set manually for tests
-        record.push_aux(b"MD", Aux::String(md)).unwrap();
-        record
-    }
+    use crate::tests::create_record;
+    use anyhow::Result;
 
     #[test]
-    fn test_fragment_state_ordering() {
+    fn test_fragment_state_ordering() -> Result<()> {
         let qual = vec![37; 100];
-        let rec1 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "100", false);
-        let rec2 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "100", false);
+        let rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
+        let rec2 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
         let state1 = FragmentState::from_record(rec1, 0);
         let state2 = FragmentState::from_record(rec2, 1);
         assert_eq!(state1.partial_cmp(&state2), Some(Ordering::Equal));
+        Ok(())
     }
 
     #[test]
-    fn test_order_mates_function() {
+    fn test_order_mates_function() -> Result<()> {
         let qual = vec![37; 100];
-        let mut rec1 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "100", false);
-        let mut rec2 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "100", true);
+        let mut rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
+        let mut rec2 = create_record(b"read1", "100M", &[], &qual, "100", true)?;
         rec1.set_first_in_template();
         rec2.set_last_in_template();
         let order1 = order_mates(&rec1);
         let order2 = order_mates(&rec2);
         assert!(order1 < order2); // Forward read should come before reverse read
+        Ok(())
     }
 
     #[test]
-    fn test_fragment_state_first_qname() {
+    fn test_fragment_state_first_qname() -> Result<()> {
         let qual = vec![37; 100];
-        let rec = create_record(b"read1", vec![Cigar::Match(100)], &qual, "100", false);
+        let rec = create_record(b"read1", "100M", &[], &qual, "100", false)?;
         let state = FragmentState::from_record(rec, 0);
         assert_eq!(state.first_qname(), b"read1");
+        Ok(())
     }
 
     #[test]
-    fn test_fragment_state_get_nr() {
+    fn test_fragment_state_get_nr() -> Result<()> {
         let qual = vec![37; 100];
-        let rec = create_record(b"read1", vec![Cigar::Match(100)], &qual, "100", false);
+        let rec = create_record(b"read1", "100M", &[], &qual, "100", false)?;
         let state = FragmentState::from_record(rec, 42);
         assert_eq!(state.get_nr(), 42);
+        Ok(())
     }
 
     #[test]
-    fn test_fragment_state_equality() {
+    fn test_fragment_state_equality() -> Result<()> {
         let qual = vec![37; 100];
-        let rec1 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "100", false);
-        let rec2 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "100", false);
+        let rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
+        let rec2 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
         let state1 = FragmentState::from_record(rec1, 0);
         let state2 = FragmentState::from_record(rec2, 0);
         assert_eq!(state1, state2);
+        Ok(())
     }
 
     #[test]
-    fn test_fragment_state_inequality() {
+    fn test_fragment_state_inequality() -> Result<()> {
         let qual = vec![37; 100];
-        let rec1 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "100", false);
-        let rec2 = create_record(b"read2", vec![Cigar::Match(100)], &qual, "100", false);
+        let rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
+        let rec2 = create_record(b"read2", "100M", &[], &qual, "100", false)?;
         let state1 = FragmentState::from_record(rec1, 0);
         let state2 = FragmentState::from_record(rec2, 0);
         assert_ne!(state1, state2);
+        Ok(())
     }
 
     #[test]
-    fn test_fragment_state_multiple_records() {
+    fn test_fragment_state_multiple_records() -> Result<()> {
         let qual = vec![37; 100];
-        let rec1 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "100", false);
-        let rec2 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "100", false);
+        let rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
+        let rec2 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
         let mut state = FragmentState::from_record(rec1, 0);
         state.records.push(rec2);
         assert_eq!(state.records.len(), 2);
         assert_eq!(state.first_qname(), b"read1");
+        Ok(())
     }
 
     #[test]
-    fn test_fragment_state_order_mates_multiple_records() {
+    fn test_fragment_state_order_mates_multiple_records() -> Result<()> {
         let qual = vec![37; 100];
-        let rec1 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "100", false);
-        let rec2 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "100", true);
+        let rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
+        let rec2 = create_record(b"read1", "100M", &[], &qual, "100", true)?;
         let mut state = FragmentState::from_record(rec1, 0);
         state.records.push(rec2);
         let order = state.order_mates();
         assert_eq!(order, vec![0, 1]); // Forward read should come before reverse read
+        Ok(())
     }
 
     #[test]
-    fn test_fragment_state_partial_ord_with_unmapped() {
+    fn test_fragment_state_partial_ord_with_unmapped() -> Result<()> {
         let qual = vec![37; 100];
-        let mut rec1 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "100", false);
+        let mut rec1 = create_record(b"read1", "", &[], &qual, "100", false)?;
         rec1.set_unmapped();
-        let rec2 = create_record(b"read2", vec![Cigar::Match(100)], &qual, "100", false);
+        let rec2 = create_record(b"read2", "100M", &[], &qual, "100", false)?;
         let state1 = FragmentState::from_record(rec1, 0);
         let state2 = FragmentState::from_record(rec2, 0);
         assert_eq!(state1.partial_cmp(&state2), Some(Ordering::Less));
+        Ok(())
     }
 
     #[test]
-    fn test_fragment_state_partial_ord_both_unmapped() {
+    fn test_fragment_state_partial_ord_both_unmapped() -> Result<()> {
         let qual = vec![37; 100];
-        let mut rec1 = create_record(b"read1", vec![], &qual, "100", false);
+        let mut rec1 = create_record(b"read1", "", &[], &qual, "100", false)?;
         rec1.set_unmapped();
-        let mut rec2 = create_record(b"read2", vec![], &qual, "100", false);
+        let mut rec2 = create_record(b"read2", "", &[], &qual, "100", false)?;
         rec2.set_unmapped();
         let state1 = FragmentState::from_record(rec1, 0);
         let state2 = FragmentState::from_record(rec2, 0);
         assert_eq!(state1.partial_cmp(&state2), Some(Ordering::Equal));
+        Ok(())
     }
 
     #[test]
-    fn test_fragment_state_partial_ord_no_quick_balance() {
+    fn test_fragment_state_partial_ord_no_quick_balance() -> Result<()> {
         let qual = vec![37; 100];
-        let rec1 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "90A10", false);
-        let rec2 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "80T20", false);
+        let rec1 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
+        let rec2 = create_record(b"read1", "100M", &[], &qual, "80T20", false)?;
         let state1 = FragmentState::from_record(rec1, 0);
         let state2 = FragmentState::from_record(rec2, 0);
         assert_eq!(state1.partial_cmp(&state2), None); // No quick balance
+        Ok(())
     }
 
     #[test]
-    fn test_fragment_state_partial_ord_perfect_vs_imperfect() {
+    fn test_fragment_state_partial_ord_perfect_vs_imperfect() -> Result<()> {
         let qual = vec![37; 100];
-        let rec1 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "100", false);
-        let rec2 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "90A10", false);
+        let rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
+        let rec2 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
         let state1 = FragmentState::from_record(rec1, 0);
         let state2 = FragmentState::from_record(rec2, 0);
         assert_eq!(state1.partial_cmp(&state2), Some(Ordering::Greater)); // Perfect match is better
+        Ok(())
     }
 
     #[test]
-    fn test_fragment_state_partial_ord_imperfect_vs_perfect() {
+    fn test_fragment_state_partial_ord_imperfect_vs_perfect() -> Result<()> {
         let qual = vec![37; 100];
-        let rec1 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "90A10", false);
-        let rec2 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "100", false);
+        let rec1 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
+        let rec2 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
         let state1 = FragmentState::from_record(rec1, 0);
         let state2 = FragmentState::from_record(rec2, 0);
         assert_eq!(state1.partial_cmp(&state2), Some(Ordering::Less)); // Perfect match is better
+        Ok(())
     }
 
     #[test]
-    fn test_fragment_state_partial_ord_equal_imperfects() {
+    fn test_fragment_state_partial_ord_equal_imperfects() -> Result<()> {
         let qual = vec![37; 100];
-        let rec1 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "90A10", false);
-        let rec2 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "90A10", false);
+        let rec1 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
+        let rec2 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
         let state1 = FragmentState::from_record(rec1, 0);
         let state2 = FragmentState::from_record(rec2, 0);
         assert_eq!(state1.partial_cmp(&state2), None); // Same imperfect matches
+        Ok(())
     }
 
     #[test]
-    fn test_fragment_state_partial_ord_multiple_records() {
+    fn test_fragment_state_partial_ord_multiple_records() -> Result<()> {
         let qual = vec![37; 100];
-        let rec1 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "100", false);
-        let rec2 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "90A10", false);
+        let rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
+        let rec2 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
         let mut state1 = FragmentState::from_record(rec1, 0);
-        state1.records.push(create_record(
-            b"read1",
-            vec![Cigar::Match(100)],
-            &qual,
-            "100",
-            false,
-        ));
+        state1
+            .records
+            .push(create_record(b"read1", "100M", &[], &qual, "100", false)?);
         let mut state2 = FragmentState::from_record(rec2, 0);
-        state2.records.push(create_record(
-            b"read1",
-            vec![Cigar::Match(100)],
-            &qual,
-            "90A10",
-            false,
-        ));
+        state2
+            .records
+            .push(create_record(b"read1", "100M", &[], &qual, "90A10", false)?);
         assert_eq!(state1.partial_cmp(&state2), Some(Ordering::Greater)); // Perfect matches are better
+        Ok(())
     }
 
     #[test]
-    fn test_fragment_state_partial_ord_multiple_records_no_quick_balance() {
+    fn test_fragment_state_partial_ord_multiple_records_no_quick_balance() -> Result<()> {
         let qual = vec![37; 100];
-        let rec1 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "90A10", false);
-        let rec2 = create_record(b"read1", vec![Cigar::Match(100)], &qual, "80T20", false);
+        let rec1 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
+        let rec2 = create_record(b"read1", "100M", &[], &qual, "80T20", false)?;
         let mut state1 = FragmentState::from_record(rec1, 0);
-        state1.records.push(create_record(
-            b"read1",
-            vec![Cigar::Match(100)],
-            &qual,
-            "85G15",
-            false,
-        ));
+        state1
+            .records
+            .push(create_record(b"read1", "100M", &[], &qual, "85G15", false)?);
         let mut state2 = FragmentState::from_record(rec2, 0);
-        state2.records.push(create_record(
-            b"read1",
-            vec![Cigar::Match(100)],
-            &qual,
-            "80T20",
-            false,
-        ));
+        state2
+            .records
+            .push(create_record(b"read1", "100M", &[], &qual, "80T20", false)?);
         assert_eq!(state1.partial_cmp(&state2), None); // No quick balance
+        Ok(())
     }
 }

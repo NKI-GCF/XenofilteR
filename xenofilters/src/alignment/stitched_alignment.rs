@@ -4,7 +4,6 @@ use crate::{MAX_Q, Penalties};
 use anyhow::{Result, anyhow};
 use rust_htslib::bam::record::{Cigar, Record};
 
-#[allow(dead_code)]
 // A new struct to hold the combined alignment data
 pub struct StitchedFragment<'a> {
     pub seq: Box<dyn Iterator<Item = u8> + 'a>,
@@ -205,6 +204,7 @@ pub fn stitched_fragment<'a>(
 mod tests {
     use super::*;
     use crate::Config;
+    use crate::tests::create_record;
     use rust_htslib::bam::record::CigarString;
 
     fn setup_penalties() -> Penalties {
@@ -225,12 +225,15 @@ mod tests {
             qual: Box::new(vec![30, 30, 30, 30].into_iter()),
             tid: 0,
             pos: 100,
-            ops: Box::new(vec![
-                Ok(UnifiedOp::Match(2)),
-                Ok(UnifiedOp::Mis(1)),
-                Ok(UnifiedOp::Ins(1)), // Gap open
-                Ok(UnifiedOp::Del(2)), // Gap open + 1 extend
-            ].into_iter()),
+            ops: Box::new(
+                vec![
+                    Ok(UnifiedOp::Match(2)),
+                    Ok(UnifiedOp::Mis(1)),
+                    Ok(UnifiedOp::Ins(1)), // Gap open
+                    Ok(UnifiedOp::Del(2)), // Gap open + 1 extend
+                ]
+                .into_iter(),
+            ),
             penalties: &penalties,
         };
 
@@ -249,11 +252,127 @@ mod tests {
         let vec_cig = vec![Cigar::Match(10), Cigar::SoftClip(5)];
         let cigar = CigarString(vec_cig);
         record.set(b"read1", Some(&cigar), &[b'A'; 15], &[30; 15]);
-        
+
         let penalty = calculate_translocation_penalty(&penalties, &record).unwrap();
-        
+
         // 5 * |-1.0| (mismatch for softclips) - 10 * 0.0 (match for matches) = 5.0
         assert!(penalty > 0.0);
         assert_eq!(penalty, 5.0);
+    }
+
+    #[test]
+    fn test_stitched_fragment_creation() -> Result<()> {
+        let penalties = setup_penalties();
+
+        let record1 = create_record(b"read1", "5M3S", &[b'A'; 8], &[30; 8], "5", false)?;
+        let record2 = create_record(b"read1", "4M4S", &[b'A'; 8], &[30; 8], "4", false)?;
+
+        let records = vec![record1, record2];
+        let order = vec![0, 1];
+
+        let stitched = stitched_fragment(&penalties, &records, order).unwrap();
+
+        // Check that the stitched fragment has the correct TID and POS
+        assert_eq!(stitched.tid, records[0].tid());
+        assert_eq!(stitched.pos, records[0].pos());
+        Ok(())
+    }
+    #[test]
+    fn test_get_read_iterators() -> Result<()> {
+        let record = create_record(
+            b"read1",
+            "4M",
+            &[b'A', b'C', b'G', b'T'],
+            &[30, 31, 32, 33],
+            "4",
+            false,
+        )?;
+
+        let (seq_iter, qual_iter) = get_read_iterators(&record);
+
+        let seq: Vec<u8> = seq_iter.collect();
+        let qual: Vec<u8> = qual_iter.collect();
+
+        assert_eq!(seq, vec![b'A', b'C', b'G', b'T']);
+        assert_eq!(qual, vec![30, 31, 32, 33]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_read_iterators_reverse() -> Result<()> {
+        let record = create_record(
+            b"read1",
+            "4M",
+            &[b'A', b'C', b'G', b'T'],
+            &[30, 31, 32, 33],
+            "4",
+            false,
+        )?;
+
+        let (seq_iter, qual_iter) = get_read_iterators(&record);
+
+        let seq: Vec<u8> = seq_iter.collect();
+        let qual: Vec<u8> = qual_iter.collect();
+
+        assert_eq!(
+            seq,
+            vec![b'A', b'C', b'G', b'T']
+                .iter()
+                .rev()
+                .map(|&b| revcmp(b))
+                .collect::<Vec<u8>>()
+        );
+        assert_eq!(qual, vec![33, 32, 31, 30]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_revcmp() {
+        assert_eq!(revcmp(b'A'), b'T');
+        assert_eq!(revcmp(b'T'), b'A');
+        assert_eq!(revcmp(b'C'), b'G');
+        assert_eq!(revcmp(b'G'), b'C');
+        assert_eq!(revcmp(b'N'), b'N');
+        assert_eq!(revcmp(b'X'), b'X'); // Non-standard base
+    }
+
+    #[test]
+    fn test_calculate_translocation_penalty() -> Result<()> {
+        let penalties = setup_penalties();
+        let record = create_record(b"read1", "6M4S", &[b'A'; 10], &[30; 10], "6", false)?;
+
+        let penalty = calculate_translocation_penalty(&penalties, &record).unwrap();
+        // 4 * |-1.0| - 6 * 0.0 = 4.0
+        assert_eq!(penalty, 4.0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_calculate_translocation_penalty_no_softclip() -> Result<()> {
+        let penalties = setup_penalties();
+        let record = create_record(b"read1", "10M", &[b'A'; 10], &[30; 10], "10", false)?;
+
+        let penalty = calculate_translocation_penalty(&penalties, &record).unwrap();
+        // No soft clips, so penalty should be 0.0
+        assert_eq!(penalty, 0.0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_calculate_translocation_penalty_high_quality_softclip() -> Result<()> {
+        let penalties = setup_penalties();
+        let record = create_record(
+            b"read1",
+            "5M5S",
+            &[b'A'; 10],
+            &[40; 10], // High quality scores
+            "5",
+            false,
+        )?;
+
+        let penalty = calculate_translocation_penalty(&penalties, &record).unwrap();
+        // 5 * |-1.0| - 5 * 0.0 = 5.0
+        assert_eq!(penalty, 5.0);
+        Ok(())
     }
 }
