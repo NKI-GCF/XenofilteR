@@ -220,9 +220,10 @@ mod tests {
     #[test]
     fn test_fragment_state_partial_ord_with_unmapped() -> Result<()> {
         let qual = vec![37; 100];
-        let mut rec1 = create_record(b"read1", "", &[], &qual, "100", false)?;
+        let seq = vec![b'A'; 100];
+        let mut rec1 = create_record(b"read1", "", &seq, &qual, "", false)?;
         rec1.set_unmapped();
-        let rec2 = create_record(b"read2", "100M", &[], &qual, "100", false)?;
+        let rec2 = create_record(b"read2", "100M", &seq, &qual, "", false)?;
         let state1 = FragmentState::from_record(rec1, 0);
         let state2 = FragmentState::from_record(rec2, 0);
         assert_eq!(state1.partial_cmp(&state2), Some(Ordering::Less));
@@ -232,9 +233,10 @@ mod tests {
     #[test]
     fn test_fragment_state_partial_ord_both_unmapped() -> Result<()> {
         let qual = vec![37; 100];
-        let mut rec1 = create_record(b"read1", "", &[], &qual, "100", false)?;
+        let seq = vec![b'A'; 100];
+        let mut rec1 = create_record(b"read1", "", &seq, &qual, "", false)?;
         rec1.set_unmapped();
-        let mut rec2 = create_record(b"read2", "", &[], &qual, "100", false)?;
+        let mut rec2 = create_record(b"read2", "", &seq, &qual, "", false)?;
         rec2.set_unmapped();
         let state1 = FragmentState::from_record(rec1, 0);
         let state2 = FragmentState::from_record(rec2, 0);
