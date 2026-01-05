@@ -289,6 +289,7 @@ impl LineByLine {
                 if best.is_empty() {
                     break;
                 }
+                #[cfg(test)]
                 eprintln!("Processing best buffer of size {}", best.len());
                 self.handle_best(&mut best)?;
                 i = 0;
