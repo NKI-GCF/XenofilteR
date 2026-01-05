@@ -381,4 +381,14 @@ pub mod tests {
         assert_eq!(total_len, 100);
         Ok(())
     }
+
+    #[test]
+    fn test_create_unmapped_record() -> Result<()> {
+        let rec = create_record(b"read_unmapped", "*", &[], &[], "100", false)?;
+        assert!(rec.is_unmapped());
+        let uop_iter = UnifiedOpIterator::new(&rec).unwrap();
+        let ops: Vec<UnifiedOp> = uop_iter.map(|r| r.unwrap()).collect();
+        assert_eq!(ops, vec![]);
+        Ok(())
+    }
 }

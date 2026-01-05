@@ -17,7 +17,7 @@ fn always_false(_: &Record) -> bool {
 }
 
 fn unmapped_and_mate_unmapped(rec: &Record) -> bool {
-    rec.is_unmapped() && rec.is_mate_unmapped()
+    rec.is_unmapped() && (rec.is_paired() == false || rec.is_mate_unmapped())
 }
 
 fn is_secondary(rec: &Record) -> bool {
@@ -35,6 +35,8 @@ pub struct LineByLine {
 
 impl LineByLine {
     pub fn new(config: Config, aln: SmallVec<[Box<dyn AlignmentStream>; 2]>) -> Self {
+        #[cfg(test)]
+        eprintln!("Unmapped discard: {}, Secondary skip: {}, Strip suffix: {:?}", config.discard_unmapped, config.skip_secondary, config.strip_read_suffix);
         let is_unmapped_skipped = match config.discard_unmapped {
             true => unmapped_and_mate_unmapped,
             false => always_false,
@@ -113,14 +115,16 @@ impl LineByLine {
     }
 
     fn write_record(&mut self, i: usize, rec: Record, best_state: Option<bool>) -> Result<()> {
-        if (self.is_unmapped_skipped)(&rec) {
-            self.branch_counters[24 + i] += 1;
-            return Ok(());
-        }
         match (i, best_state) {
             (i, Some(false)) => self.branch_counters[i << 1] += 1,
             (i, Some(true)) => self.branch_counters[1 + (i << 1)] += 1,
-            (i, None) => self.branch_counters[16 + i] += 1,
+            (i, None) => {
+                if (self.is_unmapped_skipped)(&rec) {
+                    self.branch_counters[24 + i] += 1;
+                    return Ok(());
+                }
+                self.branch_counters[16 + i] += 1;
+            },
         }
         if let Some(aln) = self.aln.get_mut(i) {
             aln.write_record(rec, best_state)
@@ -184,11 +188,6 @@ impl LineByLine {
                 if new_readname {
                     // end of round for this alignment
                     self.aln[i].un_next(rec)?;
-                    if best.len() > 1 {
-                        let ord = best.last().unwrap().partial_cmp(&best[0]);
-                        self.handle_ordering(best, ord)?;
-                        assert!(!best.is_empty());
-                    }
                     return Ok(true);
                 }
                 for state in best.iter_mut().rev() {
@@ -239,6 +238,29 @@ impl LineByLine {
         })
     }
 
+    pub fn print_counters(&self, i: usize) {
+        eprintln!(
+            "[{}]: Filtered from alignment {i}: {}",
+            i << 1,
+            self.branch_counters[i << 1]
+        );
+        eprintln!(
+            "[{}]: Assigned to alignment {i}: {}",
+            1 + (i << 1),
+            self.branch_counters[1 + (i << 1)]
+        );
+        eprintln!(
+            "[{}]: Ambiguous for alignment {i}: {}",
+            16 + i,
+            self.branch_counters[16 + i]
+        );
+        eprintln!(
+            "[{}]: Unmapped filtered for alignment {i}: {}",
+            24 + i,
+            self.branch_counters[24 + i]
+        );
+    }
+
     pub fn process(&mut self) -> Result<()> {
         let mut best: AlnBuffer = smallvec![];
 
@@ -255,37 +277,26 @@ impl LineByLine {
                     break;
                 }
             }
+            if best.len() > 1 {
+                let ord = best.last().unwrap().partial_cmp(&best[0]);
+                #[cfg(test)]
+                eprintln!("{} vs {} => {:?}", best.last().unwrap().get_nr(), best[0].get_nr(), ord);
+                self.handle_ordering(&mut best, ord)?;
+                assert!(!best.is_empty());
+            }
             i += 1;
             if i == self.aln.len() {
                 if best.is_empty() {
                     break;
                 }
+                eprintln!("Processing best buffer of size {}", best.len());
                 self.handle_best(&mut best)?;
                 i = 0;
             }
         }
-        if best.is_empty() {
-            eprintln!("No reads to process");
-        }
-        self.handle_best(&mut best)?;
         while i > 0 {
             i -= 1;
-            eprintln!(
-                "Filtered from alignment {i}: {}",
-                self.branch_counters[i << 1]
-            );
-            eprintln!(
-                "Assigned to alignment {i}: {}",
-                self.branch_counters[1 + (i << 1)]
-            );
-            eprintln!(
-                "Ambiguous for alignment {i}: {}",
-                self.branch_counters[16 + i]
-            );
-            eprintln!(
-                "Unmapped filtered for alignment {i}: {}",
-                self.branch_counters[24 + i]
-            );
+            self.print_counters(i);
             ensure!(
                 self.aln[i].next_rec()?.is_none(),
                 "alignment {i} still has reads"
@@ -309,7 +320,7 @@ mod tests {
                 create_record(b"R1", "10M", &[], &[], "10", false).unwrap(), // perfect => out
                 create_record(b"R2", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => filtered
                 create_record(b"R3", "10M", &[], &[], "10", false).unwrap(),  // perfect => out
-                create_record(b"R4", "*", &[], &[], "10", false).unwrap(), // unmapped => unmapped/filtered
+                create_record(b"R4", "*", &[], &[], "10", false).unwrap(), // unmapped => filtered
                 create_record(b"R5", "10M", &[], &[], "10", false).unwrap(), // perfect => ambiguous
                 create_record(b"R6", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => ambiguous
                 create_record(b"R7", "*", &[], &[], "10", false).unwrap(), // unmapped => ambiguous
@@ -321,7 +332,7 @@ mod tests {
             vec![
                 create_record(b"R1", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => filtered
                 create_record(b"R2", "10M", &[], &[], "10", false).unwrap(),  // perfect => out
-                create_record(b"R3", "*", &[], &[], "10", false).unwrap(), // unmapped => unmapped/filtered
+                create_record(b"R3", "*", &[], &[], "10", false).unwrap(), // unmapped => filtered
                 create_record(b"R4", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => out
                 create_record(b"R5", "10M", &[], &[], "10", false).unwrap(), // perfect => ambiguous
                 create_record(b"R6", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => ambiguous
@@ -334,6 +345,26 @@ mod tests {
             Box::new(stream2) as Box<dyn AlignmentStream>
         ]
     }
+
+    fn setup_mock_streams_r4() -> SmallVec<[Box<dyn AlignmentStream>; 2]> {
+        let mut stream1 = MockStream::new(
+            0,
+            vec![
+                create_record(b"R4", "*", &[], &[], "10", false).unwrap(), // unmapped => filtered
+            ],
+        );
+        let mut stream2 = MockStream::new(
+            1,
+            vec![
+                create_record(b"R4", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => out
+            ],
+        );
+        smallvec![
+            Box::new(stream1) as Box<dyn AlignmentStream>,
+            Box::new(stream2) as Box<dyn AlignmentStream>
+        ]
+    }
+
     // %s/\vmock_rec\((b".*?")/create_record(\1, "10M", &[], &[], "10", false)?/g
     #[test]
     fn test_qname_suffix_logic() -> Result<()> {
@@ -368,19 +399,29 @@ mod tests {
         config.discard_unmapped = true;
         config.skip_secondary = true;
 
-        let mut lbl = LineByLine::new(config, smallvec![]);
+        let mut lbl = LineByLine::new(config.clone(), smallvec![]);
 
-        let mut unmapped = create_record(b"u", "10M", &[], &[], "10", false)?;
-        unmapped.set_unmapped();
-        unmapped.set_mate_unmapped();
+        let mut unmapped_fwd = create_record(b"u", "*", &[], &[], "10", false)?;
+        unmapped_fwd.set_unmapped();
+        unmapped_fwd.set_paired();
+        unmapped_fwd.set_mate_unmapped();
 
-        let mut secondary = create_record(b"s", "10M", &[], &[], "10", false)?;
+        let mut unmapped_rev = unmapped_fwd.clone();
+        unmapped_rev.set_reverse();
+
+        let mut secondary = create_record(b"s", "*", &[], &[], "10", false)?;
         secondary.set_secondary();
 
-        // Should return early (skipped)
-        assert!(lbl.write_record(0, unmapped, Some(true)).is_ok());
-        assert_eq!(lbl.branch_counters[1], 0);
+        let mut unmapped_single = create_record(b"u2", "*", &[], &[], "10", false)?;
+        unmapped_single.set_unmapped();
 
+        // Should return early (skipped)
+        assert!(lbl.write_record(0, unmapped_fwd.clone(), None).is_ok());
+        assert!(lbl.write_record(0, unmapped_rev.clone(), None).is_ok());
+        assert!(lbl.write_record(0, unmapped_single, Some(false)).is_ok());
+        lbl.print_counters(0);
+        assert_eq!(lbl.branch_counters[24], 2); // unmapped:0: 2
+        assert_eq!(lbl.branch_counters[0], 1); // filter:0:
         // handle_record_is_fragment_finished should skip secondary
         let mut best: AlnBuffer = smallvec![];
         let finished = lbl
@@ -388,6 +429,15 @@ mod tests {
             .unwrap();
         assert!(!finished);
         assert!(best.is_empty());
+
+        config.discard_unmapped = false;
+        let mut lbl = LineByLine::new(config, smallvec![]);
+        assert!(lbl.write_record(0, unmapped_fwd, None).is_ok());
+        assert!(lbl.write_record(0, unmapped_rev, None).is_ok());
+        lbl.print_counters(0);
+        assert_eq!(lbl.branch_counters[16], 2); // ambiguous:0: 2
+
+
         Ok(())
     }
 
@@ -444,8 +494,31 @@ mod tests {
         Ok(())
     }
     #[test]
+    fn test_process_multi_stream_sync_r4() -> Result<()> {
+        let mut config = Config::default();
+        config.discard_unmapped = true;
+        let mut lbl = LineByLine::new(config, setup_mock_streams_r4());
+
+        // R4 -> stream 1 (mismatch vs unmapped)
+
+        lbl.process()?;
+
+        assert_eq!(lbl.branch_counters[0], 1); // filter:0: R4
+        assert_eq!(lbl.branch_counters[1], 0); // out:0:
+        assert_eq!(lbl.branch_counters[16], 0); // ambiguous:0:
+        assert_eq!(lbl.branch_counters[24], 0); // unmapped:0:
+        assert_eq!(lbl.branch_counters[2], 0); // filter:1:
+        assert_eq!(lbl.branch_counters[3], 1); // out:1: R4
+        assert_eq!(lbl.branch_counters[17], 0); // ambiguous:1:
+        assert_eq!(lbl.branch_counters[25], 0); // unmapped:1:
+        Ok(())
+    }
+
+
+    #[test]
     fn test_process_multi_stream_sync() -> Result<()> {
-        let config = Config::default();
+        let mut config = Config::default();
+        config.discard_unmapped = true;
         let mut lbl = LineByLine::new(config, setup_mock_streams());
 
         // Streams now contain R1..R7
@@ -461,12 +534,14 @@ mod tests {
 
         lbl.process()?;
 
-        // stream 0 wins
-        assert_eq!(lbl.branch_counters[1], 3); // R1, R3, R8
-        // stream 1 wins
-        assert_eq!(lbl.branch_counters[3], 2); // R2, R4
-        // ambiguous / none
-        assert_eq!(lbl.branch_counters[16], 4); // R5, R6, R7
+        assert_eq!(lbl.branch_counters[0], 2); // filter:0: R2, R4
+        assert_eq!(lbl.branch_counters[1], 3); // out:0: R1, R3, R8
+        assert_eq!(lbl.branch_counters[16], 2); // ambiguous:0: R5, R6
+        assert_eq!(lbl.branch_counters[24], 0); // unmapped:0: R7
+        assert_eq!(lbl.branch_counters[2], 3); // filter:1: R1, R3, R8
+        assert_eq!(lbl.branch_counters[3], 2); // out:1: R2, R4
+        assert_eq!(lbl.branch_counters[17], 2); // ambiguous:1: R5, R6
+        assert_eq!(lbl.branch_counters[25], 1); // unmapped:1: R7
 
         Ok(())
     }
