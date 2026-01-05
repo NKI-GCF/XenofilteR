@@ -133,8 +133,8 @@ impl LineByLine {
         }
     }
 
-    fn handle_ordering(&mut self, best: &mut AlnBuffer, ord: Option<Ordering>) -> Result<()> {
-        match ord {
+    fn handle_ordering(&mut self, best: &mut AlnBuffer, lst_vs_fst_ord: Option<Ordering>) -> Result<()> {
+        match lst_vs_fst_ord {
             Some(Ordering::Greater) => {
                 let all_before_last = best.len() - 1;
                 best.drain(0..all_before_last).try_for_each(|mut b| {
@@ -168,11 +168,11 @@ impl LineByLine {
                 #[cfg(test)]
                 eprintln!("Scoring to break tie among {} fragments: {} vs {}", best.len(), first_score, last_score);
 
-                let mut ord = first_score.partial_cmp(&last_score);
-                if ord.is_none() {
-                    ord = Some(Ordering::Equal);
+                let mut lst_vs_fst_ord = last_score.partial_cmp(&first_score);
+                if lst_vs_fst_ord.is_none() {
+                    lst_vs_fst_ord = Some(Ordering::Equal);
                 }
-                self.handle_ordering(best, ord)
+                self.handle_ordering(best, lst_vs_fst_ord)
             }
         }
     }
@@ -278,10 +278,10 @@ impl LineByLine {
                 }
             }
             if best.len() > 1 {
-                let ord = best.last().unwrap().partial_cmp(&best[0]);
+                let lst_vs_fst_ord = best.last().unwrap().partial_cmp(&best[0]);
                 #[cfg(test)]
-                eprintln!("{} vs {} => {:?}", best.last().unwrap().get_nr(), best[0].get_nr(), ord);
-                self.handle_ordering(&mut best, ord)?;
+                eprintln!("{} vs {} => {:?}", best.last().unwrap().get_nr(), best[0].get_nr(), lst_vs_fst_ord);
+                self.handle_ordering(&mut best, lst_vs_fst_ord)?;
                 assert!(!best.is_empty());
             }
             i += 1;
@@ -551,15 +551,22 @@ mod tests {
         let mut lbl = LineByLine::new(Config::default(), setup_mock_streams());
         let mut best: AlnBuffer = smallvec![
             FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0),
-            FragmentState::from_record(create_record(b"R1", "5M5S", &[], &[], "10", false)?, 1),
+            FragmentState::from_record(create_record(b"R1", "5M5S", &[], &[], "5", false)?, 1),
         ];
+        let lst_vs_fst_ord = best[1].partial_cmp(&best[0]);
+        assert_eq!(lst_vs_fst_ord, Some(Ordering::Less));
 
         // stream 0 better than stream 1
-        lbl.handle_ordering(&mut best, Some(Ordering::Greater))?;
+        lbl.handle_ordering(&mut best, lst_vs_fst_ord)?;
+        lbl.print_counters(1);
 
         assert_eq!(best.len(), 1);
         assert_eq!(best[0].get_nr(), 0);
-        assert_eq!(lbl.branch_counters[16 + 1], 1); // stream 1 filtered
+        assert_eq!(lbl.branch_counters[1 + 1], 1); // stream 1 filtered
+        eprintln!("Writing best fragment from stream {}", best[0].get_nr());
+        lbl.handle_best(&mut best)?;
+        lbl.print_counters(0);
+        assert_eq!(lbl.branch_counters[1], 1); // stream 0 assigned
 
         Ok(())
     }
@@ -571,7 +578,7 @@ mod tests {
 
         // paired-end style: same QNAME twice
         let r1_1 = create_record(b"READX", "10M", &[], &[], "10", false)?;
-        let r1_2 = create_record(b"READX", "5M5S", &[], &[], "10", false)?;
+        let r1_2 = create_record(b"READX", "5M5S", &[], &[], "5", false)?;
 
         lbl.handle_record_is_fragment_finished(0, r1_1, &mut best)?;
         assert_eq!(best.len(), 1);

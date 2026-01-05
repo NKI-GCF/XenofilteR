@@ -288,14 +288,14 @@ pub mod tests {
             record.set_reverse();
         }
 
-        #[cfg(test)]
+        /*#[cfg(test)]
         eprintln!(
             "Created record: qname={:?}, cigar={:?}, is_rev={}, md={}",
             std::str::from_utf8(record.qname())?,
             record.cigar(),
             is_rev,
             md
-        );
+        );*/
         Ok(record)
     }
 
