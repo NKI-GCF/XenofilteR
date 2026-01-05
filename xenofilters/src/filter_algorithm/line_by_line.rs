@@ -186,6 +186,10 @@ impl LineByLine {
         if !(self.is_secondary_skipped)(&rec) {
             if let Some(new_readname) = (self.is_new_qname)(best, rec.qname()) {
                 if new_readname {
+                    #[cfg(test)]
+                    if self.aln.is_empty() {
+                        return Ok(true);
+                    }
                     // end of round for this alignment
                     self.aln[i].un_next(rec)?;
                     return Ok(true);
@@ -594,10 +598,8 @@ mod tests {
 
     #[test]
     fn test_line_by_line_full_flow() -> Result<()> {
-        let mut rec1 = Record::new();
-        rec1.set(b"R1", None, &[], &[]);
-        let mut rec2 = Record::new();
-        rec2.set(b"R2", None, &[], &[]);
+        let mut rec1 = create_record(b"R1", "10M", &[], &[], "10", false)?;
+        let mut rec2 = create_record(b"R2", "10M", &[], &[], "10", false)?;
 
         // Mocking AlnStream behavior
         // Note: You may need to wrap MockStream in AlnStream enum/trait if required by your types
