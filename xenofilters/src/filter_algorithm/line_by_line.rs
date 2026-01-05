@@ -46,7 +46,7 @@ impl LineByLine {
         };
         let is_new_qname = match config.strip_read_suffix {
             StripReadSuffix::True => |best: &AlnBuffer, qname2: &[u8]| {
-                eprintln!(
+                /*eprintln!(
                     "Comparing {} to {} with suffix stripped",
                     String::from_utf8_lossy(best.first().unwrap().first_qname()),
                     String::from_utf8_lossy(qname2)
@@ -58,7 +58,7 @@ impl LineByLine {
                             [..best.first().unwrap().first_qname().len() - 2]
                     ),
                     String::from_utf8_lossy(&qname2[..qname2.len() - 2])
-                );
+                );*/
                 best.first()
                     .map(|b| b.first_qname())
                     .map(|qname1| qname1[..qname1.len() - 2] != qname2[..qname2.len() - 2])
@@ -147,15 +147,7 @@ impl LineByLine {
                     .drain(..)
                     .try_for_each(|r| self.write_record(nr, r, Some(false)))
             }
-            Some(Ordering::Equal) => {
-                // Neither is written.
-                best.drain(..).try_for_each(|mut b| {
-                    let nr = b.get_nr();
-                    b.records
-                        .drain(..)
-                        .try_for_each(|r| self.write_record(nr, r, None))
-                })
-            }
+            Some(Ordering::Equal) => Ok(()),
             None => {
                 // None of the alignments were fully unmapped or perfect matches,
                 // so we need to score them to find the best.
@@ -169,6 +161,8 @@ impl LineByLine {
                     stitched_fragment(&self.penalties, &first.records, first_ord)?.score()?;
                 let last_score =
                     stitched_fragment(&self.penalties, &last.records, last_ord)?.score()?;
+                #[cfg(test)]
+                eprintln!("Scoring to break tie among {} fragments: {} vs {}", best.len(), first_score, last_score);
 
                 let mut ord = first_score.partial_cmp(&last_score);
                 if ord.is_none() {
@@ -193,6 +187,7 @@ impl LineByLine {
                     if best.len() > 1 {
                         let ord = best.last().unwrap().partial_cmp(&best[0]);
                         self.handle_ordering(best, ord)?;
+                        assert!(!best.is_empty());
                     }
                     return Ok(true);
                 }
@@ -221,9 +216,11 @@ impl LineByLine {
                 );
             }
         }*/
-        if best.len() > 1 {
+        /*if best.len() > 1 {
             best.sort_unstable_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
             if best[0] > best[1] {
+                #[cfg(test)]
+                panic!("THIS BRANCH SHOULD NOT HAPPEN");
                 best.drain(1..).try_for_each(|mut b| {
                     let nr = b.get_nr();
                     b.records
@@ -231,7 +228,7 @@ impl LineByLine {
                         .try_for_each(|r| self.write_record(nr, r, Some(false)))
                 })?;
             }
-        }
+        }*/
         let best_state = (best.len() == 1).then_some(true);
 
         best.drain(..).try_for_each(|mut b| {
@@ -306,30 +303,30 @@ mod tests {
     use anyhow::Result;
 
     fn setup_mock_streams() -> SmallVec<[Box<dyn AlignmentStream>; 2]> {
-        let stream1 = MockStream::new(
+        let mut stream1 = MockStream::new(
             0,
             vec![
                 create_record(b"R1", "10M", &[], &[], "10", false).unwrap(), // perfect => out
-                create_record(b"R2", "5M5S", &[], &[], "10", false).unwrap(), // mismatch => filtered
+                create_record(b"R2", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => filtered
                 create_record(b"R3", "10M", &[], &[], "10", false).unwrap(),  // perfect => out
-                create_record(b"R4", "", &[], &[], "", false).unwrap(), // unmapped => unmapped/filtered
+                create_record(b"R4", "*", &[], &[], "10", false).unwrap(), // unmapped => unmapped/filtered
                 create_record(b"R5", "10M", &[], &[], "10", false).unwrap(), // perfect => ambiguous
-                create_record(b"R6", "5M5S", &[], &[], "10", false).unwrap(), // mismatch => ambiguous
-                create_record(b"R7", "", &[], &[], "", false).unwrap(), // unmapped => ambiguous
-                create_record(b"R8", "6M4S", &[], &[], "10", false).unwrap(), // mismatch => out
+                create_record(b"R6", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => ambiguous
+                create_record(b"R7", "*", &[], &[], "10", false).unwrap(), // unmapped => ambiguous
+                create_record(b"R8", "6M4S", &[], &[], "6", false).unwrap(), // mismatch => out
             ],
         );
-        let stream2 = MockStream::new(
+        let mut stream2 = MockStream::new(
             1,
             vec![
-                create_record(b"R1", "5M5S", &[], &[], "10", false).unwrap(), // mismatch => filtered
+                create_record(b"R1", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => filtered
                 create_record(b"R2", "10M", &[], &[], "10", false).unwrap(),  // perfect => out
-                create_record(b"R3", "", &[], &[], "", false).unwrap(), // unmapped => unmapped/filtered
-                create_record(b"R4", "5M5S", &[], &[], "10", false).unwrap(), // mismatch => out
+                create_record(b"R3", "*", &[], &[], "10", false).unwrap(), // unmapped => unmapped/filtered
+                create_record(b"R4", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => out
                 create_record(b"R5", "10M", &[], &[], "10", false).unwrap(), // perfect => ambiguous
-                create_record(b"R6", "5M5S", &[], &[], "10", false).unwrap(), // mismatch => ambiguous
-                create_record(b"R7", "", &[], &[], "", false).unwrap(), // unmapped => ambiguous
-                create_record(b"R8", "5M5S", &[], &[], "10", false).unwrap(), // mismatch => filtered
+                create_record(b"R6", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => ambiguous
+                create_record(b"R7", "*", &[], &[], "9", false).unwrap(), // unmapped => ambiguous
+                create_record(b"R8", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => filtered
             ],
         );
         smallvec![
@@ -465,11 +462,11 @@ mod tests {
         lbl.process()?;
 
         // stream 0 wins
-        assert_eq!(lbl.branch_counters[1], 2); // R1, R3
+        assert_eq!(lbl.branch_counters[1], 3); // R1, R3, R8
         // stream 1 wins
         assert_eq!(lbl.branch_counters[3], 2); // R2, R4
         // ambiguous / none
-        assert_eq!(lbl.branch_counters[16], 3); // R5, R6, R7
+        assert_eq!(lbl.branch_counters[16], 4); // R5, R6, R7
 
         Ok(())
     }

@@ -33,10 +33,8 @@ pub enum AlignmentError {
 
 #[derive(Debug, Error)]
 pub enum PrepareError {
-    #[error("No MD tag found")]
-    NoMdTag,
 
-    #[error("Aux error {0}")]
+    #[error("Aux error: {0}")]
     Aux(String),
 
     #[error(transparent)]
@@ -63,8 +61,8 @@ pub enum BamError {
 
 #[derive(Debug, Error)]
 pub enum MdOpIteratorError {
-    #[error("No MD tag found")]
-    NoMdTag,
+    #[error("Wrong MD tag type found")]
+    BadMdTag,
 
     #[error("Aux error {0}")]
     Aux(String),

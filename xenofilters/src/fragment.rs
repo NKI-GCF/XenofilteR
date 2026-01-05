@@ -37,10 +37,10 @@ impl PartialOrd for FragmentState {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         // If the record is unmapped, it is always the first record.
         if self.records[0].is_unmapped()
-            && (!self.records[0].is_paired() || self.records[0].is_mate_unmapped())
+            && (self.records[0].is_mate_unmapped() || !self.records[0].is_paired())
         {
             if other.records[0].is_unmapped()
-                && (!other.records[0].is_paired() || other.records[0].is_mate_unmapped())
+                && (other.records[0].is_mate_unmapped() || !other.records[0].is_paired())
             {
                 return Some(Ordering::Equal);
             }
@@ -68,7 +68,7 @@ impl PartialOrd for FragmentState {
                     let (first, second) = pair.are_perfect_match();
                     #[cfg(test)]
                     eprintln!(
-                        "Comparing fragment states:first perfect: {first}, second perfect: {second}\npair: {pair_str}",
+                        "Comparing fragment states:first perfect: {first}, second perfect: {second}",
                     );
                     if first {
                         if second {

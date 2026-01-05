@@ -2,6 +2,7 @@ use crate::alignment::MdOpIteratorError;
 use rust_htslib::bam::record::{Aux, Record};
 use smallvec::SmallVec;
 use std::str::Chars;
+use rust_htslib::errors::Error as HtslibError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MdOp {
@@ -20,7 +21,8 @@ impl<'a> MdOpIterator<'a> {
     pub fn new(rec: &'a Record) -> Result<Self, MdOpIteratorError> {
         let chars = match rec.aux(b"MD") {
             Ok(Aux::String(md)) => md.chars(),
-            Ok(_) => return Err(MdOpIteratorError::NoMdTag),
+            Ok(_) => return Err(MdOpIteratorError::BadMdTag),
+            Err(HtslibError::BamAuxTagNotFound) => "".chars(),
             Err(e) => return Err(MdOpIteratorError::Aux(e.to_string())),
         };
         Ok(MdOpIterator {
@@ -35,20 +37,15 @@ impl<'a> MdOpIterator<'a> {
         }
     }
     pub fn is_single_operation(&self) -> bool {
-        let mut ret = true;
         for c in self.chars.clone() {
-            #[cfg(test)]
-            eprintln!("Checking char: {}", c);
+            //#[cfg(test)]
+            //eprintln!("Checking char: {}", c);
             match c {
                 n if n.is_ascii_digit() => continue,
-                _ => {
-                    ret = false;
-                    #[cfg(not(test))]
-                    break;
-                }
+                _ => return false,
             }
         }
-        ret
+        true
     }
 }
 

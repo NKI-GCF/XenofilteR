@@ -277,8 +277,7 @@ pub mod tests {
     #[test]
     fn test_make_prepared_pair_unmapped() -> Result<()> {
         let rec1 = create_record(b"read1", "10M", &[], &vec![30; 10], "10", false)?;
-        let mut rec2 = create_record(b"read1", "10M", &[], &vec![30; 10], "10", false)?;
-        rec2.set_flags(rec2.flags() | 0x4); // unmapped
+        let mut rec2 = create_record(b"read1", "*", &[], &[], "10", false)?;
 
         let iter1 = UnifiedOpIterator::new(&rec1).unwrap();
         let iter2 = UnifiedOpIterator::empty(false);
@@ -293,10 +292,8 @@ pub mod tests {
     }
     #[test]
     fn test_make_prepared_pair_unmapped_both() -> Result<()> {
-        let mut rec1 = create_record(b"read1", "", &vec![b'A'; 10], &vec![30; 10], "", false)?;
-        rec1.set_flags(rec1.flags() | 0x4); // unmapped
-        let mut rec2 = create_record(b"read1", "", &vec![b'A'; 10], &vec![30; 10], "", false)?;
-        rec2.set_flags(rec2.flags() | 0x4); // unmapped
+        let mut rec1 = create_record(b"read1", "*", &[], &[], "10", false)?;
+        let mut rec2 = create_record(b"read1", "*", &[], &[], "10", false)?;
 
         let iter1 = UnifiedOpIterator::empty(false);
         let iter2 = UnifiedOpIterator::empty(false);
@@ -316,7 +313,6 @@ pub mod tests {
     fn test_make_prepared_pair_unmapped_invalid() -> Result<()> {
         let rec1 = create_record(b"read1", "10M", &[], &vec![30; 10], "10", false)?;
         let mut rec2 = create_record(b"read1", "10M", &[], &vec![30; 10], "10", false)?;
-        rec2.set_flags(rec2.flags() | 0x4); // unmapped
 
         let result = {
             let iter1 = UnifiedOpIterator::new(&rec1).unwrap();
@@ -332,10 +328,8 @@ pub mod tests {
     }
     #[test]
     fn test_make_prepared_pair_unmapped_invalid_both() -> Result<()> {
-        let mut rec1 = create_record(b"read1", "10M", &[], &vec![30; 10], "10", false)?;
-        rec1.set_flags(rec1.flags() | 0x4); // unmapped
-        let mut rec2 = create_record(b"read1", "10M", &[], &vec![30; 10], "10", false)?;
-        rec2.set_flags(rec2.flags() | 0x4); // unmapped
+        let mut rec1 = create_record(b"read1", "*", &[], &[], "10", false)?;
+        let mut rec2 = create_record(b"read1", "*", &[], &[], "10", false)?;
 
         let result = {
             match UnifiedOpIterator::new(&rec1) {

@@ -164,6 +164,7 @@ impl<'a> Iterator for UnifiedOpIterator<'a> {
             Some(Cigar::SoftClip(len)) => {
                 #[cfg(test)]
                 eprintln!("Handling CIGAR SoftClip {:?}", len);
+                // a sofclip has no matching MD operation
                 Some(Ok(UnifiedOp::Mis(len)))
             }
             Some(Cigar::Del(len)) => match self.md_iter.next() {
@@ -256,24 +257,45 @@ pub mod tests {
         is_rev: bool,
     ) -> Result<rust_htslib::bam::Record> {
         let mut record = Record::new();
-        let cigar_string = CigarString::try_from(cig_str)?;
+        let is_unmapped = cig_str == "*";
+        let cigar_string = if is_unmapped {
+            CigarString::try_from("")?
+        } else {
+            CigarString::try_from(cig_str)?
+        };
         let cigstringview = cigar_string.into_view(0);
         let vec_cig = cigstringview.iter().map(|&c| c).collect();
         let cigar_string = CigarString(vec_cig);
-        let rl = read_len_from_cigar(cig_str);
+        let rl = if is_unmapped {
+            md.parse::<usize>()?
+        } else {
+            read_len_from_cigar(cig_str)
+        };
         match (seq.len(), qual.len()) {
             (0, 0) => record.set(qname, Some(&cigar_string), &vec![b'A'; rl], &vec![30; rl]),
             (0, _) => record.set(qname, Some(&cigar_string), &vec![b'A'; rl], qual),
             (_, 0) => record.set(qname, Some(&cigar_string), seq, &vec![30; rl]),
             _ => record.set(qname, Some(&cigar_string), seq, qual),
         }
+        if is_unmapped {
+            record.set_unmapped();
+        } else {
+            // HTSlib requires the MD tag to be set manually for tests
+            record.push_aux(b"MD", Aux::String(md))?;
+        }
 
         if is_rev {
             record.set_reverse();
         }
 
-        // HTSlib requires the MD tag to be set manually for tests
-        record.push_aux(b"MD", Aux::String(md))?;
+        #[cfg(test)]
+        eprintln!(
+            "Created record: qname={:?}, cigar={:?}, is_rev={}, md={}",
+            std::str::from_utf8(record.qname())?,
+            record.cigar(),
+            is_rev,
+            md
+        );
         Ok(record)
     }
 
