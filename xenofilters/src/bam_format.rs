@@ -1,8 +1,7 @@
-use crate::alignment::BamError;
 use clap::ValueEnum;
+use rust_htslib::errors::Error;
 use rust_htslib::bam::{self, Format, HeaderView};
 use std::path::PathBuf;
-use std::str::FromStr;
 
 #[derive(Copy, Clone, Debug, ValueEnum, Default)]
 pub enum BamFormat {
@@ -10,18 +9,6 @@ pub enum BamFormat {
     Bam,
     Sam,
     Cram,
-}
-
-impl FromStr for BamFormat {
-    type Err = BamError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "sam" => Ok(BamFormat::Sam),
-            "cram" => Ok(BamFormat::Cram),
-            _ => Ok(BamFormat::Bam),
-        }
-    }
 }
 
 impl From<BamFormat> for Format {
@@ -34,18 +21,27 @@ impl From<BamFormat> for Format {
     }
 }
 
-pub(crate) fn out_from_file(f: &PathBuf, hdr_view: &HeaderView) -> Result<bam::Writer, BamError> {
-    let f_str = f.extension().and_then(|e| e.to_str()).unwrap_or("bam");
-    let fmt = <BamFormat as FromStr>::from_str(f_str)?.into();
-    let hdr = bam::Header::from_template(hdr_view);
-    Ok(bam::Writer::from_path(f, &hdr, fmt)?)
+fn format_from_extension(path: &PathBuf) -> Format {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("bam");
+    match ext.to_lowercase().as_str() {
+        "sam" => Format::Sam,
+        "cram" => Format::Cram,
+        _ => Format::Bam,
+    }
 }
 
-pub(crate) fn out_stdout(hdr_view: &HeaderView, fmt: Format) -> Result<bam::Writer, BamError> {
+pub(crate) fn out_from_file(f: &PathBuf, hdr_view: &HeaderView) -> Result<bam::Writer, Error> {
     let hdr = bam::Header::from_template(hdr_view);
-    let mut ob = bam::Writer::from_stdout(&hdr, fmt)?;
-    if let bam::Format::Bam = fmt {
-        ob.set_compression_level(rust_htslib::bam::CompressionLevel::Fastest)?;
+    let fmt = format_from_extension(f);
+    bam::Writer::from_path(f, &hdr, fmt)
+}
+
+pub(crate) fn out_stdout(hdr_view: &HeaderView, fmt: Format) -> Result<bam::Writer, Error> {
+    let hdr = bam::Header::from_template(hdr_view);
+    let mut ob: bam::Writer = bam::Writer::from_stdout(&hdr, fmt)?;
+    match fmt {
+        Format::Bam => ob.set_compression_level(rust_htslib::bam::CompressionLevel::Fastest)?,
+        _ => {}
     }
     Ok(ob)
 }

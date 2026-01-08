@@ -48,18 +48,6 @@ pub enum PrepareError {
 }
 
 #[derive(Debug, Error)]
-pub enum BamError {
-    #[error("BAM read error: {0}")]
-    Read(String),
-
-    #[error("BAM write error: {0}")]
-    Write(String),
-
-    #[error(transparent)]
-    Htslib(#[from] HtslibError),
-}
-
-#[derive(Debug, Error)]
 pub enum MdOpIteratorError {
     #[error("Wrong MD tag type found")]
     BadMdTag,
