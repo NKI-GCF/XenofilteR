@@ -84,11 +84,11 @@ impl LineByLine {
                 {
                     |best: &AlnBuffer, qname2: &[u8]| {
                         if let Some(first_qname) = best.first().map(|b| b.first_qname()) {
-                            eprintln!(
+                            /*eprintln!(
                                 "{} vs {}",
                                 std::str::from_utf8(first_qname).unwrap_or("<?>"),
                                 std::str::from_utf8(qname2).unwrap_or("<?>")
-                            );
+                            );*/
                             if first_qname.ends_with(b"/1") || first_qname.ends_with(b"/2") {
                                 return best.first().map(|b| b.first_qname()).map(|qname1| {
                                     qname1[..qname1.len() - 2] != qname2[..qname2.len() - 2]
