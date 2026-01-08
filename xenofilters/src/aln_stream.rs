@@ -257,7 +257,9 @@ pub mod tests {
         fn next_rec(&mut self) -> Result<Option<Record>> {
             match self.aln_stream.next_rec()? {
                 Some(rec) => {
-                    /*eprintln!(
+                    /*
+                    #[cfg(test)]
+                    eprintln!(
                         "re-nexted({}): {}",
                         self.i,
                         std::str::from_utf8(rec.qname()).unwrap_or("Invalid UTF-8")
@@ -274,7 +276,9 @@ pub mod tests {
             self.aln_stream.next_rec()
         }
         fn un_next(&mut self, rec: Record) -> Result<()> {
-            /*eprintln!(
+            /*
+            #[cfg(test)]
+            eprintln!(
                 "Un-next({}) read: {}",
                 self.i,
                 std::str::from_utf8(rec.qname()).unwrap_or("Invalid UTF-8")
