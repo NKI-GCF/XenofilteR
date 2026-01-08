@@ -81,7 +81,7 @@ pub struct Config {
     pub mismatch_penalty: f64,
 
     /// strip fastq-style /1 and /2 from read names when comparing
-    #[clap(short = 'R', long, default_value = "Auto")]
+    #[clap(short = 'R', long, default_value = "auto")]
     pub strip_read_suffix: StripReadSuffix,
 
     #[clap(short, long, num_args = 0..ARG_MAX)]

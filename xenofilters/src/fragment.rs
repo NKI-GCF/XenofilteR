@@ -35,14 +35,14 @@ impl FragmentState {
 
 impl PartialOrd for FragmentState {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        #[cfg(test)]
+        /*#[cfg(test)]
         eprintln!(
             "Comparing FragmentStates:\nself unmapped: {}, other unmapped: {}, self single/mate_unmapped: {}, other single/mate_unmapped: {}",
             self.records[0].is_unmapped(),
             other.records[0].is_unmapped(),
             self.records[0].is_paired() == false || self.records[0].is_mate_unmapped(),
             other.records[0].is_paired() == false || other.records[0].is_mate_unmapped(),
-        );
+        );*/
         // If the record is unmapped, it is always the first record.
         if self.records[0].is_unmapped()
             && (self.records[0].is_paired() == false || self.records[0].is_mate_unmapped())
@@ -50,29 +50,29 @@ impl PartialOrd for FragmentState {
             if other.records[0].is_unmapped()
                 && (other.records[0].is_paired() == false || other.records[0].is_mate_unmapped())
             {
-                #[cfg(test)]
-                eprintln!("both all reads unmapped");
+                //#[cfg(test)]
+                //eprintln!("both all reads unmapped");
                 return Some(Ordering::Equal);
             }
-            #[cfg(test)]
-            eprintln!("self totally unmapped, other not");
+            //#[cfg(test)]
+            //eprintln!("self totally unmapped, other not");
             return Some(Ordering::Less);
         }
 
         if other.records[0].is_unmapped() && (other.records[0].is_paired() == false || other.records[0].is_mate_unmapped()) {
-            #[cfg(test)]
-            eprintln!("other totally unmapped, self not");
+            //#[cfg(test)]
+            //eprintln!("other totally unmapped, self not");
             return Some(Ordering::Greater);
         }
 
         if self.records[0].is_unmapped() && other.records[0].is_mate_unmapped() {
-            #[cfg(test)]
-            eprintln!("distinct records are mapped");
+            //#[cfg(test)]
+            //eprintln!("distinct records are mapped");
             return None;
         }
         if self.records[0].is_mate_unmapped() && other.records[0].is_unmapped() {
-            #[cfg(test)]
-            eprintln!("distinct records are mapped");
+            //#[cfg(test)]
+            //eprintln!("distinct records are mapped");
             return None;
         }
 
@@ -84,10 +84,10 @@ impl PartialOrd for FragmentState {
                     #[cfg(test)]
                     let pair_str = format!("{:?}", pair);
                     let (first, second) = pair.are_perfect_match();
-                    #[cfg(test)]
+                    /*#[cfg(test)]
                     eprintln!(
                         "Comparing fragment states:first perfect: {first}, second perfect: {second}",
-                    );
+                    );*/
                     if first {
                         if second {
                             match balance {

@@ -35,8 +35,8 @@ pub struct LineByLine {
 
 impl LineByLine {
     pub fn new(config: Config, aln: SmallVec<[Box<dyn AlignmentStream>; 2]>) -> Self {
-        #[cfg(test)]
-        eprintln!("Unmapped discard: {}, Secondary skip: {}, Strip suffix: {:?}", config.discard_unmapped, config.skip_secondary, config.strip_read_suffix);
+        //#[cfg(test)]
+        //eprintln!("Unmapped discard: {}, Secondary skip: {}, Strip suffix: {:?}", config.discard_unmapped, config.skip_secondary, config.strip_read_suffix);
         let is_unmapped_skipped = match config.discard_unmapped {
             true => unmapped_and_mate_unmapped,
             false => always_false,
@@ -133,9 +133,16 @@ impl LineByLine {
         }
     }
 
-    fn handle_ordering(&mut self, best: &mut AlnBuffer, lst_vs_fst_ord: Option<Ordering>) -> Result<()> {
-        match lst_vs_fst_ord {
+    fn handle_ordering(&mut self, best: &mut AlnBuffer, ord: Option<Ordering>) -> Result<()> {
+        match ord {
             Some(Ordering::Greater) => {
+                let mut last = best.pop().unwrap();
+                let nr = last.get_nr();
+                last.records
+                    .drain(..)
+                    .try_for_each(|r| self.write_record(nr, r, Some(false)))
+            }
+            Some(Ordering::Less) => {
                 let all_before_last = best.len() - 1;
                 best.drain(0..all_before_last).try_for_each(|mut b| {
                     let nr = b.get_nr();
@@ -143,13 +150,6 @@ impl LineByLine {
                         .drain(..)
                         .try_for_each(|r| self.write_record(nr, r, Some(false)))
                 })
-            }
-            Some(Ordering::Less) => {
-                let mut last = best.pop().unwrap();
-                let nr = last.get_nr();
-                last.records
-                    .drain(..)
-                    .try_for_each(|r| self.write_record(nr, r, Some(false)))
             }
             Some(Ordering::Equal) => Ok(()),
             None => {
@@ -165,14 +165,14 @@ impl LineByLine {
                     stitched_fragment(&self.penalties, &first.records, first_ord)?.score()?;
                 let last_score =
                     stitched_fragment(&self.penalties, &last.records, last_ord)?.score()?;
-                #[cfg(test)]
-                eprintln!("Scoring to break tie among {} fragments: {} vs {}", best.len(), first_score, last_score);
 
-                let mut lst_vs_fst_ord = last_score.partial_cmp(&first_score);
-                if lst_vs_fst_ord.is_none() {
-                    lst_vs_fst_ord = Some(Ordering::Equal);
+                let mut ord = first_score.partial_cmp(&last_score);
+                if ord.is_none() {
+                    ord = Some(Ordering::Equal);
                 }
-                self.handle_ordering(best, lst_vs_fst_ord)
+                #[cfg(test)]
+                eprintln!("{}: Scoring to break tie among {} fragments: {} vs {} => {:?}", std::str::from_utf8(first.first_qname()).unwrap_or("<?>"), best.len(), first_score, last_score, ord);
+                self.handle_ordering(best, ord)
             }
         }
     }
@@ -282,10 +282,13 @@ impl LineByLine {
                 }
             }
             if best.len() > 1 {
-                let lst_vs_fst_ord = best.last().unwrap().partial_cmp(&best[0]);
+                let last = best.last().unwrap();
+                let ord = best[0].partial_cmp(last);
                 #[cfg(test)]
-                eprintln!("{} vs {} => {:?}", best.last().unwrap().get_nr(), best[0].get_nr(), lst_vs_fst_ord);
-                self.handle_ordering(&mut best, lst_vs_fst_ord)?;
+                assert_eq!(best[0].records[0].qname(), last.records[0].qname());
+                #[cfg(test)]
+                eprintln!("{}: {} vs {} => {:?}", std::str::from_utf8(best[0].records[0].qname()).unwrap_or("<?>"), best[0].get_nr(), last.get_nr(), ord);
+                self.handle_ordering(&mut best, ord)?;
                 assert!(!best.is_empty());
             }
             i += 1;
@@ -293,8 +296,8 @@ impl LineByLine {
                 if best.is_empty() {
                     break;
                 }
-                #[cfg(test)]
-                eprintln!("Processing best buffer of size {}", best.len());
+                //#[cfg(test)]
+                //eprintln!("Processing best buffer of size {}", best.len());
                 self.handle_best(&mut best)?;
                 i = 0;
             }
@@ -322,6 +325,7 @@ mod tests {
         let mut stream1 = MockStream::new(
             0,
             vec![
+                create_record(b"R0", "10M", &[], &[], "10", false).unwrap(), // perfect => out
                 create_record(b"R1", "10M", &[], &[], "10", false).unwrap(), // perfect => out
                 create_record(b"R2", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => filtered
                 create_record(b"R3", "10M", &[], &[], "10", false).unwrap(),  // perfect => out
@@ -329,12 +333,13 @@ mod tests {
                 create_record(b"R5", "10M", &[], &[], "10", false).unwrap(), // perfect => ambiguous
                 create_record(b"R6", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => ambiguous
                 create_record(b"R7", "*", &[], &[], "10", false).unwrap(), // unmapped => ambiguous
-                create_record(b"R8", "6M4S", &[], &[], "6", false).unwrap(), // mismatch => out
+                create_record(b"R8", "6M4S", &[], &[], "6", false).unwrap(), // less clipped => out
             ],
         );
         let mut stream2 = MockStream::new(
             1,
             vec![
+                create_record(b"R0", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => filtered
                 create_record(b"R1", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => filtered
                 create_record(b"R2", "10M", &[], &[], "10", false).unwrap(),  // perfect => out
                 create_record(b"R3", "*", &[], &[], "10", false).unwrap(), // unmapped => filtered
@@ -342,7 +347,7 @@ mod tests {
                 create_record(b"R5", "10M", &[], &[], "10", false).unwrap(), // perfect => ambiguous
                 create_record(b"R6", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => ambiguous
                 create_record(b"R7", "*", &[], &[], "9", false).unwrap(), // unmapped => ambiguous
-                create_record(b"R8", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => filtered
+                create_record(b"R8", "5M5S", &[], &[], "5", false).unwrap(), // less match => filtered
             ],
         );
         smallvec![
@@ -508,22 +513,24 @@ mod tests {
 
         lbl.process()?;
 
-        assert_eq!(lbl.branch_counters[0], 1); // filter:0: R4
-        assert_eq!(lbl.branch_counters[1], 0); // out:0:
-        assert_eq!(lbl.branch_counters[16], 0); // ambiguous:0:
-        assert_eq!(lbl.branch_counters[24], 0); // unmapped:0:
         assert_eq!(lbl.branch_counters[2], 0); // filter:1:
         assert_eq!(lbl.branch_counters[3], 1); // out:1: R4
         assert_eq!(lbl.branch_counters[17], 0); // ambiguous:1:
         assert_eq!(lbl.branch_counters[25], 0); // unmapped:1:
+        assert_eq!(lbl.branch_counters[0], 1); // filter:0: R4
+        assert_eq!(lbl.branch_counters[1], 0); // out:0:
+        assert_eq!(lbl.branch_counters[16], 0); // ambiguous:0:
+        assert_eq!(lbl.branch_counters[24], 0); // unmapped:0:
         Ok(())
     }
-
 
     #[test]
     fn test_process_multi_stream_sync() -> Result<()> {
         let mut config = Config::default();
         config.discard_unmapped = true;
+        config.gap_open = 6.0;
+        config.gap_extend = 1.0;
+        config.mismatch_penalty = 4.0;
         let mut lbl = LineByLine::new(config, setup_mock_streams());
 
         // Streams now contain R1..R7
@@ -538,15 +545,16 @@ mod tests {
         // R8 -> stream 0 (mismatch vs more mismatches, but stream 1 filtered)
 
         lbl.process()?;
-
-        assert_eq!(lbl.branch_counters[0], 2); // filter:0: R2, R4
-        assert_eq!(lbl.branch_counters[1], 3); // out:0: R1, R3, R8
-        assert_eq!(lbl.branch_counters[16], 2); // ambiguous:0: R5, R6
-        assert_eq!(lbl.branch_counters[24], 0); // unmapped:0: R7
-        assert_eq!(lbl.branch_counters[2], 3); // filter:1: R1, R3, R8
+        // this is the order of printing, first aln 1 then aln 0
+        assert_eq!(lbl.branch_counters[2], 4); // filter:1: R0, R1, R3, R8
         assert_eq!(lbl.branch_counters[3], 2); // out:1: R2, R4
         assert_eq!(lbl.branch_counters[17], 2); // ambiguous:1: R5, R6
         assert_eq!(lbl.branch_counters[25], 1); // unmapped:1: R7
+
+        assert_eq!(lbl.branch_counters[0], 2); // filter:0: R2, R4
+        assert_eq!(lbl.branch_counters[1], 4); // out:0: R0, R1, R3, R8
+        assert_eq!(lbl.branch_counters[16], 2); // ambiguous:0: R5, R6
+        assert_eq!(lbl.branch_counters[24], 1); // unmapped:0: R7
 
         Ok(())
     }
@@ -558,11 +566,11 @@ mod tests {
             FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0),
             FragmentState::from_record(create_record(b"R1", "5M5S", &[], &[], "5", false)?, 1),
         ];
-        let lst_vs_fst_ord = best[1].partial_cmp(&best[0]);
-        assert_eq!(lst_vs_fst_ord, Some(Ordering::Less));
+        let ord = best[0].partial_cmp(&best[1]);
+        assert_eq!(ord, Some(Ordering::Greater));
 
         // stream 0 better than stream 1
-        lbl.handle_ordering(&mut best, lst_vs_fst_ord)?;
+        lbl.handle_ordering(&mut best, ord)?;
         lbl.print_counters(1);
 
         assert_eq!(best.len(), 1);

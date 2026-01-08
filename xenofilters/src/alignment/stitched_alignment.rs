@@ -97,8 +97,8 @@ fn get_read_iterators<'a>(
 ) {
     let seq_encoded = rec.seq().encoded;
     let qual = rec.qual();
-    #[cfg(test)]
-    eprintln!("Seq encoded: {:?}, {:?}", seq_encoded, qual);
+    //#[cfg(test)]
+    //eprintln!("Seq encoded: {:?}, {:?}", seq_encoded, qual);
 
     if rec.is_reverse() {
         (

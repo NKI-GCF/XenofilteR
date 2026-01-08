@@ -248,11 +248,11 @@ pub mod tests {
         fn next_rec(&mut self) -> Result<Option<Record>> {
             match self.aln_stream.next_rec()? {
                 Some(rec) => {
-                    eprintln!(
+                    /*eprintln!(
                         "re-nexted({}): {}",
                         self.i,
                         std::str::from_utf8(rec.qname()).unwrap_or("Invalid UTF-8")
-                    );
+                    );*/
                     return Ok(Some(rec));
                 }
                 None => {}
@@ -265,11 +265,11 @@ pub mod tests {
             self.aln_stream.next_rec()
         }
         fn un_next(&mut self, rec: Record) -> Result<()> {
-            eprintln!(
+            /*eprintln!(
                 "Un-next({}) read: {}",
                 self.i,
                 std::str::from_utf8(rec.qname()).unwrap_or("Invalid UTF-8")
-            );
+            );*/
             self.aln_stream.un_next(rec)
         }
         fn write_record(&mut self, rec: Record, state: Option<bool>) -> Result<()> {
