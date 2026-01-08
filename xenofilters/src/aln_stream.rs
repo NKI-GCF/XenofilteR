@@ -1,4 +1,4 @@
-use crate::bam_format::{out_from_file, out_stdout};
+use crate::bam_format::{path_unicode_ok, out_from_file, out_stdout};
 use crate::variant::{
     PopulationVariant, SampleVariant, parse_population_record, parse_sample_record,
 };
@@ -13,6 +13,7 @@ pub trait AlignmentStream {
     fn un_next(&mut self, rec: Record) -> Result<()>;
     fn next_rec(&mut self) -> Result<Option<Record>>;
     fn write_record(&mut self, rec: Record, is_best: Option<bool>) -> Result<()>;
+    fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<()>;
 }
 
 pub struct AlnStream {
@@ -25,24 +26,6 @@ pub struct AlnStream {
     sample_variants: Option<Vec<HashMap<i64, Vec<SampleVariant>>>>,
     #[allow(dead_code)]
     population_variants: Option<Vec<HashMap<i64, Vec<PopulationVariant>>>>,
-}
-
-impl AlignmentStream for AlnStream {
-    fn next_qname(&self) -> &[u8] {
-        self.next_qname()
-    }
-
-    fn un_next(&mut self, rec: Record) -> Result<()> {
-        self.un_next(rec)
-    }
-
-    fn next_rec(&mut self) -> Result<Option<Record>> {
-        self.next_rec()
-    }
-
-    fn write_record(&mut self, rec: Record, is_best: Option<bool>) -> Result<()> {
-        self.write_record(rec, is_best)
-    }
 }
 
 impl AlnStream {
@@ -92,21 +75,6 @@ impl AlnStream {
         };
 
         let next = Some(test_record);
-        let output = opt
-            .output
-            .get(i)
-            .map(|f| out_from_file(f, bam.header()))
-            .transpose()?;
-        let filt = opt
-            .filtered_output
-            .get(i)
-            .map(|f| out_from_file(f, bam.header()))
-            .transpose()?;
-        let ambiguous = opt
-            .ambiguous_output
-            .get(i)
-            .map(|f| out_from_file(f, bam.header()))
-            .transpose()?;
         let sample_variants = opt
             .sample_variants
             .get(i)
@@ -118,24 +86,31 @@ impl AlnStream {
             .map(|_| vcf_reader(&opt.population_variants[i], parse_population_record))
             .transpose()?;
 
-        let mut stream = AlnStream {
-            ambiguous,
+        // check output paths are unicode here, so we hopefully only create files once all are ok.
+        opt.output
+            .get(i)
+            .map(|f| path_unicode_ok(f))
+            .transpose()?;
+        opt.filtered_output
+            .get(i)
+            .map(|f| path_unicode_ok(f))
+            .transpose()?;
+        opt.ambiguous_output
+            .get(i)
+            .map(|f| path_unicode_ok(f))
+            .transpose()?;
+
+        let stream = AlnStream {
+            ambiguous: None,
             bam: Some(bam),
-            filt,
+            filt: None,
             next,
-            output,
+            output: None,
             sample_variants,
             population_variants,
         };
-        #[cfg(test)]
-        let allow_stdout = false;
-        #[cfg(not(test))]
-        let allow_stdout = true;
-
         let bam = stream.bam.as_ref().expect("no in");
-        if i == 0 && stream.output.is_none() && allow_stdout {
-            stream.output = Some(out_stdout(bam.header(), opt.stdout_format.into())?);
-        }
+
         let parts: Vec<Vec<&[u8]>> = bam
             .header()
             .as_bytes()
@@ -155,12 +130,14 @@ impl AlnStream {
 
         Ok(stream)
     }
+}
 
-    pub fn next_qname(&self) -> &[u8] {
+impl AlignmentStream for AlnStream {
+    fn next_qname(&self) -> &[u8] {
         self.next.as_ref().map_or(b"", |r| r.qname())
     }
 
-    pub fn un_next(&mut self, rec: Record) -> Result<()> {
+    fn un_next(&mut self, rec: Record) -> Result<()> {
         if self.next.is_some() {
             return Err(anyhow!("Cannot un-next more than one record"));
         }
@@ -168,7 +145,7 @@ impl AlnStream {
         Ok(())
     }
 
-    pub fn next_rec(&mut self) -> Result<Option<Record>> {
+    fn next_rec(&mut self) -> Result<Option<Record>> {
         self.next
             .take()
             .map(Ok)
@@ -183,13 +160,42 @@ impl AlnStream {
             .transpose()
     }
 
-    pub fn write_record(&mut self, rec: Record, is_best: Option<bool>) -> Result<()> {
+    fn write_record(&mut self, rec: Record, is_best: Option<bool>) -> Result<()> {
         let output = match is_best {
             Some(true) => self.output.as_mut(),
             Some(false) => self.filt.as_mut(),
             None => self.ambiguous.as_mut(),
         };
         output.map(|output| output.write(&rec)).transpose()?;
+        Ok(())
+    }
+    fn init_writers(&mut self, opt: &Config, i: usize) -> Result<()> {
+
+        #[cfg(test)]
+        let allow_stdout = false;
+        #[cfg(not(test))]
+        let allow_stdout = true;
+
+        let bam = self.bam.as_ref().ok_or_else(|| anyhow!("No BAM reader"))?;
+        self.output = opt
+            .output
+            .get(i)
+            .map(|f| out_from_file(f, bam.header()))
+            .transpose()?;
+
+        if i == 0 && self.output.is_none() && allow_stdout {
+            self.output = Some(out_stdout(bam.header(), opt.stdout_format.into())?);
+        }
+        self.filt = opt
+            .filtered_output
+            .get(i)
+            .map(|f| out_from_file(f, bam.header()))
+            .transpose()?;
+        self.ambiguous = opt
+            .ambiguous_output
+            .get(i)
+            .map(|f| out_from_file(f, bam.header()))
+            .transpose()?;
         Ok(())
     }
 }
@@ -224,6 +230,9 @@ pub mod tests {
 
         fn write_record(&mut self, rec: Record, is_best: Option<bool>) -> Result<()> {
             self.write_record(rec, is_best)
+        }
+        fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<()> {
+            Ok(())
         }
     }
 

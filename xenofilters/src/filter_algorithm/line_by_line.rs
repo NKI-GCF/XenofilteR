@@ -34,7 +34,7 @@ pub struct LineByLine {
 }
 
 impl LineByLine {
-    pub fn new(config: Config, aln: SmallVec<[Box<dyn AlignmentStream>; 2]>) -> Self {
+    pub fn new(config: Config, mut aln: SmallVec<[Box<dyn AlignmentStream>; 2]>) -> Result<Self> {
         //#[cfg(test)]
         //eprintln!("Unmapped discard: {}, Secondary skip: {}, Strip suffix: {:?}", config.discard_unmapped, config.skip_secondary, config.strip_read_suffix);
         let is_unmapped_skipped = match config.discard_unmapped {
@@ -104,14 +104,19 @@ impl LineByLine {
                 unreachable!("Auto mode should be handled during AlnStream initialization")
             }
         };
-        LineByLine {
+        for i in 0..aln.len() {
+            if let Some(a) = aln.get_mut(i) {
+                a.init_writers(&config, i)?;
+            }
+        }
+        Ok(LineByLine {
             aln,
             branch_counters: [0; 32],
             is_secondary_skipped,
             is_unmapped_skipped,
             is_new_qname,
             penalties: config.to_penalties(),
-        }
+        })
     }
 
     fn write_record(&mut self, i: usize, rec: Record, best_state: Option<bool>) -> Result<()> {
@@ -381,7 +386,7 @@ mod tests {
         let mut config = Config::default();
 
         config.strip_read_suffix = StripReadSuffix::Auto;
-        let lbl = LineByLine::new(config.clone(), smallvec![]);
+        let lbl = LineByLine::new(config.clone(), smallvec![])?;
         let best: AlnBuffer = smallvec![FragmentState::from_record(
             create_record(b"read/1", "10M", &[], &[], "10", false)?,
             0
@@ -392,12 +397,12 @@ mod tests {
 
         // Mode: Some(true) (Always strip last 2)
         config.strip_read_suffix = StripReadSuffix::True;
-        let lbl = LineByLine::new(config.clone(), smallvec![]);
+        let lbl = LineByLine::new(config.clone(), smallvec![])?;
         assert_eq!((lbl.is_new_qname)(&best, b"read_suffix"), Some(true)); // "read" != "read_suff"
 
         // Mode: Some(false) (Exact match)
         config.strip_read_suffix = StripReadSuffix::False;
-        let lbl = LineByLine::new(config, smallvec![]);
+        let lbl = LineByLine::new(config, smallvec![])?;
         assert_eq!((lbl.is_new_qname)(&best, b"read/1"), Some(false));
         assert_eq!((lbl.is_new_qname)(&best, b"read/2"), Some(true));
         Ok(())
@@ -409,7 +414,7 @@ mod tests {
         config.discard_unmapped = true;
         config.skip_secondary = true;
 
-        let mut lbl = LineByLine::new(config.clone(), smallvec![]);
+        let mut lbl = LineByLine::new(config.clone(), smallvec![])?;
 
         let mut unmapped_fwd = create_record(b"u", "*", &[], &[], "10", false)?;
         unmapped_fwd.set_unmapped();
@@ -441,7 +446,7 @@ mod tests {
         assert!(best.is_empty());
 
         config.discard_unmapped = false;
-        let mut lbl = LineByLine::new(config, smallvec![]);
+        let mut lbl = LineByLine::new(config, smallvec![])?;
         assert!(lbl.write_record(0, unmapped_fwd, None).is_ok());
         assert!(lbl.write_record(0, unmapped_rev, None).is_ok());
         lbl.print_counters(0);
@@ -453,7 +458,7 @@ mod tests {
 
     #[test]
     fn test_handle_ordering_logic() -> Result<()> {
-        let lbl_setup = LineByLine::new(Config::default(), smallvec![]);
+        let lbl_setup = LineByLine::new(Config::default(), smallvec![])?;
         // Test logic in handle_ordering requires mocked AlnStream for write_record calls.
         // Direct testing of branch_counters incrementation via write_record:
         let mut lbl = lbl_setup;
@@ -481,7 +486,7 @@ mod tests {
 
     #[test]
     fn test_fragment_finished_transitions() -> Result<()> {
-        let lbl = LineByLine::new(Config::default(), smallvec![]);
+        let lbl = LineByLine::new(Config::default(), smallvec![])?;
         let mut lbl = lbl;
         let mut best: AlnBuffer = smallvec![FragmentState::from_record(
             create_record(b"R1", "10M", &[], &[], "10", false)?,
@@ -507,7 +512,7 @@ mod tests {
     fn test_process_multi_stream_sync_r4() -> Result<()> {
         let mut config = Config::default();
         config.discard_unmapped = true;
-        let mut lbl = LineByLine::new(config, setup_mock_streams_r4());
+        let mut lbl = LineByLine::new(config, setup_mock_streams_r4())?;
 
         // R4 -> stream 1 (mismatch vs unmapped)
 
@@ -531,7 +536,7 @@ mod tests {
         config.gap_open = 6.0;
         config.gap_extend = 1.0;
         config.mismatch_penalty = 4.0;
-        let mut lbl = LineByLine::new(config, setup_mock_streams());
+        let mut lbl = LineByLine::new(config, setup_mock_streams())?;
 
         // Streams now contain R1..R7
         // Expected winners:
@@ -561,7 +566,7 @@ mod tests {
 
     #[test]
     fn test_handle_ordering_drain_logic() -> Result<()> {
-        let mut lbl = LineByLine::new(Config::default(), setup_mock_streams());
+        let mut lbl = LineByLine::new(Config::default(), setup_mock_streams())?;
         let mut best: AlnBuffer = smallvec![
             FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0),
             FragmentState::from_record(create_record(b"R1", "5M5S", &[], &[], "5", false)?, 1),
@@ -586,7 +591,7 @@ mod tests {
 
     #[test]
     fn test_complex_fragment_grouping() -> Result<()> {
-        let mut lbl = LineByLine::new(Config::default(), setup_mock_streams());
+        let mut lbl = LineByLine::new(Config::default(), setup_mock_streams())?;
         let mut best: AlnBuffer = smallvec![];
 
         // paired-end style: same QNAME twice
@@ -613,7 +618,7 @@ mod tests {
         // Note: You may need to wrap MockStream in AlnStream enum/trait if required by your types
         // This targets handle_record_is_fragment_finished coverage
         let config = Config::default();
-        let mut lbl = LineByLine::new(config, smallvec![]);
+        let mut lbl = LineByLine::new(config, smallvec![])?;
 
         let mut best: AlnBuffer = smallvec![];
 
@@ -633,7 +638,7 @@ mod tests {
     fn test_scoring_path_coverage() -> Result<()> {
         let config = Config::default();
         // Mock stream needs to exist to avoid indexing panics
-        let mut lbl = LineByLine::new(config, smallvec![]);
+        let mut lbl = LineByLine::new(config, smallvec![])?;
 
         // Populate records with valid CIGAR/MD data to avoid null-pointer panics
         let mut best: AlnBuffer = smallvec![

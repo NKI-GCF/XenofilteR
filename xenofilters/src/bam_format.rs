@@ -1,7 +1,7 @@
 use clap::ValueEnum;
 use rust_htslib::errors::Error;
 use rust_htslib::bam::{self, Format, HeaderView};
-use std::path::PathBuf;
+use std::path::{PathBuf, Path};
 
 #[derive(Copy, Clone, Debug, ValueEnum, Default)]
 pub enum BamFormat {
@@ -20,6 +20,14 @@ impl From<BamFormat> for Format {
         }
     }
 }
+
+pub fn path_unicode_ok<'a, P: 'a + AsRef<Path>>(path: P) -> Result<(), Error> {
+    path.as_ref()
+        .to_str()
+        .ok_or(Error::NonUnicodePath)?;
+    Ok(())
+}
+
 
 fn format_from_extension(path: &PathBuf) -> Format {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("bam");

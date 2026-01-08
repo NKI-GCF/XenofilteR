@@ -1,4 +1,3 @@
-use rust_htslib::errors::Error as HtslibError;
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq)]

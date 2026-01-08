@@ -37,75 +37,75 @@ pub enum StripReadSuffix {
 }
 
 #[derive(Parser, Debug, Default, Clone)]
-#[clap(author, version, about, long_about=None)]
+#[command(author, version, about, long_about=None)]
 pub struct Config {
     /// Assign fragments matching alignment to these respective files. Writes first alignment to stdout when omitted
-    #[clap(short, long, num_args = 0..ARG_MAX)]
+    #[arg(short, long, num_args = 0..ARG_MAX)]
     pub output: Vec<PathBuf>,
 
     /// Discard fragments distancing more in alignment to these files. Default: do not discard
-    #[clap(short, long, num_args = 0..ARG_MAX)]
+    #[arg(short, long, num_args = 0..ARG_MAX)]
     pub filtered_output: Vec<PathBuf>,
 
     /// Write ambiguous reads (equally good mappings) to these files. Default: do not write
-    #[clap(short, long, num_args = 0..ARG_MAX)]
+    #[arg(short, long, num_args = 0..ARG_MAX)]
     pub ambiguous_output: Vec<PathBuf>,
 
     /// ouput format of stdout
-    #[clap(short = 'O', long, default_value = "sam")]
+    #[arg(short = 'O', long, default_value = "sam")]
     pub stdout_format: BamFormat,
 
     /// Input alignments to compare. If the same readnames are consecutive and in the same order for
     /// all inputs, a low memory non-hashing strategy is adopted.
-    #[clap(required = true, num_args = 2..ARG_MAX)]
+    #[arg(required = true, num_args = 2..ARG_MAX)]
     pub alignment: Vec<String>,
 
     /// Read first alignment from stdin; enforced with only one input alignment
-    #[clap(short, long, default_value = "false")]
+    #[arg(short, long, default_value = "false")]
     pub read_from_stdin: bool,
 
     /// Exclude read(pair)s, unmapped in both alignments, even from the filter output.
-    #[clap(short = 'U', long, default_value = "false")]
+    #[arg(short = 'U', long, default_value = "false")]
     pub discard_unmapped: bool,
 
     /// Gap open penalty (affects indels)
-    #[clap(short, long, default_value = "6", value_parser = clap::value_parser!(f64))]
+    #[arg(short, long, default_value = "6", value_parser = clap::value_parser!(f64))]
     pub gap_open: f64,
 
     /// Gap extend penalty (affects indels)
-    #[clap(short = 'e', long, default_value = "1", value_parser = clap::value_parser!(f64))]
+    #[arg(short = 'e', long, default_value = "1", value_parser = clap::value_parser!(f64))]
     pub gap_extend: f64,
 
     /// Mismatch penalty (affects mismatches)
-    #[clap(short, long, default_value = "4", value_parser = clap::value_parser!(f64))]
+    #[arg(short, long, default_value = "4", value_parser = clap::value_parser!(f64))]
     pub mismatch_penalty: f64,
 
     /// strip fastq-style /1 and /2 from read names when comparing
-    #[clap(short = 'R', long, default_value = "auto")]
+    #[arg(short = 'R', long, default_value = "auto")]
     pub strip_read_suffix: StripReadSuffix,
 
-    #[clap(short, long, num_args = 0..ARG_MAX)]
+    #[arg(short, long, num_args = 0..ARG_MAX)]
     pub sample_variants: Vec<PathBuf>,
 
-    #[clap(short, long, num_args = 0..ARG_MAX)]
+    #[arg(short, long, num_args = 0..ARG_MAX)]
     pub population_variants: Vec<PathBuf>,
 
     /*/// Number of mismatches allowed in the second alignment
-    #[clap(short, long, default_value = "4")]
+    #[arg(short, long, default_value = "4")]
     pub mismatch_threshold: u32,
 
     /// Penalty given to unmapped reads in favor of the alternative alignment. Set to 0 to disable
-    #[clap(short, long, default_value = "8", value_parser = clap::value_parser!(u32).range(..0x8000))]
+    #[arg(short, long, default_value = "8", value_parser = clap::value_parser!(u32).range(..0x8000))]
     pub unmapped_penalty: u32,
 
     /// Same, for mate. Defaults to same as first mapping penalty
-    #[clap(long, default_value = "32768", value_parser = clap::value_parser!(u32).range(..=0x8000))]
+    #[arg(long, default_value = "32768", value_parser = clap::value_parser!(u32).range(..=0x8000))]
     pub second_unmapped_penalty: u32,*/
     /// Skip secondary mappings even if the primary mapping is written
-    #[clap(short, long, default_value = "false")]
+    #[arg(short, long, default_value = "false")]
     pub skip_secondary: bool,
 
-    #[clap(short, long)]
+    #[arg(short, long)]
     pub is_paired: Option<bool>,
 }
 
@@ -168,6 +168,7 @@ impl Config {
         let mut log_likelihood_match = [0.0_f64; MAX_Q];
         for (q, item) in log_likelihood_match.iter_mut().enumerate() {
             *item = (1.0 - error_prob[q]).log10();
+            //eprintln!("Q{} match log-likelihood: {}", q, *item);
         }
 
         let reference_penalty = 4.0;
@@ -201,7 +202,7 @@ fn main() -> Result<()> {
         );
     }
 
-    LineByLine::new(config, aln).process()
+    LineByLine::new(config, aln)?.process()
 }
 
 #[cfg(test)]
