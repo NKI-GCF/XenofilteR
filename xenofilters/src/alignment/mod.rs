@@ -7,7 +7,7 @@ mod stitched_alignment;
 pub use errors::{AlignmentError, MdOpIteratorError, PrepareError};
 pub use mdopiterator::{MdOp, MdOpIterator};
 pub use ops::{UnifiedOp, UnifiedOpIterator};
-pub use prepared::{PreparedAlignmentPair, PreparedAlignmentPairIter};
+pub use prepared::{PreparedAlignmentPair, PreparedAlignmentPairIter, stringify_record};
 pub use stitched_alignment::stitched_fragment;
 
 #[cfg(test)]

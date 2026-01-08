@@ -116,16 +116,6 @@ impl<'a> UnifiedOpIterator<'a> {
         }
     }
     pub fn is_single_match(&self) -> bool {
-        #[cfg(test)]
-        let cig_ct: usize = self
-            .cigar_iter
-            .clone()
-            .map(|c| {
-                //eprintln!("CIGAR op: {:?}", c);
-                1
-            })
-            .sum();
-        #[cfg(not(test))]
         let cig_ct: usize = self.cigar_iter.as_slice().len();
         cig_ct == 1 && self.md_iter.is_single_operation()
     }
@@ -155,37 +145,48 @@ impl<'a> Iterator for UnifiedOpIterator<'a> {
                     self.md_iter.next()
                 };
                 if let Some(Ok(md_op)) = next_md_op {
-                    //#[cfg(test)]
-                    //eprintln!("Matching CIGAR {:?} with MD {:?}", next_cig, &md_op);
+                    #[cfg(test)]
+                    eprintln!("Matching CIGAR {:?} with MD {:?}", next_cig, &md_op);
                     return Some(self.match_md_op(md_op, len));
                 };
+                #[cfg(test)]
+                eprintln!("No MD op to match CIGAR {:?}", next_cig);
                 Some(Err(AlignmentError::MdCigarMismatch))
             }
             Some(Cigar::SoftClip(len)) => {
-                //#[cfg(test)]
-                //eprintln!("Handling CIGAR SoftClip {:?}", len);
+                #[cfg(test)]
+                eprintln!("Handling CIGAR SoftClip {:?}", len);
                 // a sofclip has no matching MD operation
                 Some(Ok(UnifiedOp::Mis(len)))
             }
             Some(Cigar::Del(len)) => match self.md_iter.next() {
                 Some(Ok(MdOp::Deletion(d))) if d.len() as u32 == len => {
-                    //#[cfg(test)]
-                    //eprintln!("Matching CIGAR Deletion {:?} with MD Deletion {:?}", len, d);
+                    #[cfg(test)]
+                    eprintln!("Matching CIGAR Deletion {:?} with MD Deletion {:?}", len, d);
                     Some(Ok(UnifiedOp::Del(len)))
                 }
-                _ => Some(Err(AlignmentError::MdCigarMismatch)),
+                _ => {
+                    #[cfg(test)]
+                    eprintln!(
+                        "CIGAR Deletion {:?} has no matching MD Deletion",
+                        len
+                    );
+                    Some(Err(AlignmentError::MdCigarMismatch))
+                }
             },
             Some(Cigar::HardClip(_) | Cigar::Pad(_)) => {
-                //#[cfg(test)]
-                //eprintln!("Skipping CIGAR HardClip/Pad {:?}", next_cig);
+                #[cfg(test)]
+                eprintln!("Skipping CIGAR HardClip/Pad {:?}", next_cig);
                 self.next()
             }
             Some(x) => {
-                //#[cfg(test)]
-                //eprintln!("Handling Refskip/Ins CIGAR {:?}", x);
+                #[cfg(test)]
+                eprintln!("Handling Refskip/Ins CIGAR {:?}", x);
                 Some(UnifiedOp::try_from(x))
             } // RefSkip, Ins
             None => {
+                #[cfg(test)]
+                eprintln!("CIGAR operations exhausted, checking MD iterator");
                 if let Some(Ok(md_op)) = if self.next_md_op.is_some() {
                     self.next_md_op.take().map(Ok)
                 } else if self.is_rev {
@@ -193,8 +194,8 @@ impl<'a> Iterator for UnifiedOpIterator<'a> {
                 } else {
                     self.md_iter.next()
                 } {
-                    //#[cfg(test)]
-                    //eprintln!("Excess MD operation after CIGAR end: {:?}", md_op);
+                    #[cfg(test)]
+                    eprintln!("Excess MD operation after CIGAR end: {:?}", md_op);
                     match md_op {
                         MdOp::Match(_) | MdOp::Mismatch(_) => {
                             Some(Err(AlignmentError::MdCigarMismatch))
@@ -253,7 +254,7 @@ pub mod tests {
         cig_str: &str,
         seq: &[u8],
         qual: &[u8],
-        md: &str,
+        mut md: &str,
         is_rev: bool,
     ) -> Result<rust_htslib::bam::Record> {
         let mut record = Record::new();
@@ -266,6 +267,9 @@ pub mod tests {
         let cigstringview = cigar_string.into_view(0);
         let vec_cig = cigstringview.iter().map(|&c| c).collect();
         let cigar_string = CigarString(vec_cig);
+        if let Some(m) = md.strip_prefix("MD:Z:") {
+            md = m;
+        }
         let rl = if is_unmapped {
             md.parse::<usize>()?
         } else {

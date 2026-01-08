@@ -113,7 +113,7 @@ impl PartialOrd for FragmentState {
                         return None;
                     }
                 }
-                Err(_) => return Some(Ordering::Equal),
+                Err(e) => panic!("Error during prepared alignment pair iteration: {:?}", e),
             }
         }
         balance

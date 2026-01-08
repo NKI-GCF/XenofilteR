@@ -39,7 +39,7 @@ impl AlnStream {
             .ok_or_else(|| anyhow!("{bam_str} has no records"))?;
 
         let qname = test_record.qname();
-        let strip_read_suffix = match opt.strip_read_suffix {
+        opt.strip_read_suffix = match opt.strip_read_suffix {
             StripReadSuffix::True => {
                 ensure!(
                     qname.ends_with(b"/1") || qname.ends_with(b"/2"),
@@ -64,7 +64,7 @@ impl AlnStream {
             }
             StripReadSuffix::Variable => StripReadSuffix::Variable,
         };
-        let is_paired = if i == 0 && opt.is_paired.is_none() {
+        opt.is_paired = if i == 0 && opt.is_paired.is_none() {
             Some(test_record.is_paired())
         } else {
             ensure!(

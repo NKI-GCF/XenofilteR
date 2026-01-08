@@ -1,6 +1,16 @@
 use super::PrepareError;
 use crate::alignment::UnifiedOpIterator;
-use rust_htslib::bam::record::Record;
+use rust_htslib::bam::record::{Record, Aux};
+
+pub fn stringify_record(rec: &Record) -> String {
+    let qname = String::from_utf8_lossy(rec.qname());
+    let cigar = rec.cigar().to_string();
+    let mut s = format!("{qname}\t{cigar}");
+    if let Ok(Aux::String(md)) = rec.aux(b"MD") {
+        s.push_str(&format!("\tMD:Z:{md}"));
+    }
+    s
+}
 
 #[cfg_attr(test, derive(Debug))]
 pub struct PreparedAlignmentPair<'a> {
@@ -79,17 +89,13 @@ pub mod tests {
     use super::*;
     use crate::tests::create_record;
     use anyhow::Result;
-    use rust_htslib::bam::record::Aux;
     use std::iter::repeat;
 
     fn print_req(i: usize, rec: &Record) {
         let qname = String::from_utf8_lossy(rec.qname());
         let cigar = rec.cigar().to_string();
-        eprint!("{i}:{qname}\t{cigar}");
-        if let Ok(Aux::String(md)) = rec.aux(b"MD") {
-            eprint!("\tMD:Z:{md}");
-        }
-        eprintln!();
+        let stringified = stringify_record(rec);
+        eprintln!("{i}:{stringified}");
     }
 
     pub fn read_len_from_cigar(cigar: &str) -> usize {

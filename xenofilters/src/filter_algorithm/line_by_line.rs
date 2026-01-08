@@ -1,4 +1,4 @@
-use crate::alignment::stitched_fragment;
+use crate::alignment::{stitched_fragment, stringify_record};
 use crate::aln_stream::AlignmentStream;
 use crate::fragment::FragmentState;
 use crate::{Config, Penalties, StripReadSuffix};
@@ -167,9 +167,11 @@ impl LineByLine {
                 let last_ord = last.order_mates();
 
                 let first_score =
-                    stitched_fragment(&self.penalties, &first.records, first_ord)?.score()?;
+                    stitched_fragment(&self.penalties, &first.records, first_ord)?.score()
+                    .map_err(|e| anyhow::anyhow!("Error scoring first fragment: {}\n{}\n-- vs --\n{}", e, first.records.iter().map(|r| stringify_record(&r)).collect::<Vec<String>>().join("\n"), last.records.iter().map(|r| stringify_record(&r)).collect::<Vec<String>>().join("\n")))?;
                 let last_score =
-                    stitched_fragment(&self.penalties, &last.records, last_ord)?.score()?;
+                    stitched_fragment(&self.penalties, &last.records, last_ord)?.score()
+                    .map_err(|e| anyhow::anyhow!("Error scoring last fragment: {}\n{}\n-- vs --\n{}", e,  first.records.iter().map(|r| stringify_record(&r)).collect::<Vec<String>>().join("\n"), last.records.iter().map(|r| stringify_record(&r)).collect::<Vec<String>>().join("\n")))?;
 
                 let mut ord = first_score.partial_cmp(&last_score);
                 if ord.is_none() {
@@ -372,6 +374,34 @@ mod tests {
             1,
             vec![
                 create_record(b"R4", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => out
+            ],
+        );
+        smallvec![
+            Box::new(stream1) as Box<dyn AlignmentStream>,
+            Box::new(stream2) as Box<dyn AlignmentStream>
+        ]
+    }
+
+    fn setup_mock_streams_observed_examples() -> SmallVec<[Box<dyn AlignmentStream>; 2]> {
+
+        // human
+        // FRAGMENT1/1        100M    MD:Z:86T13
+        // FRAGMENT1/2        100M    MD:Z:100
+        // mouse
+        // FRAGMENT1/1        23M4D37M40S     MD:Z:13A9^TAAT10C19C6
+        // FRAGMENT1/2        100M    MD:Z:20T8G20T49
+        let mut stream1 = MockStream::new(
+            0,
+            vec![
+                create_record(b"FRAGMENT1/1", "100M", &[], &[], "86T13", false).unwrap(),
+                create_record(b"FRAGMENT1/2", "100M", &[], &[], "100", false).unwrap(),
+            ],
+        );
+        let mut stream2 = MockStream::new(
+            1,
+            vec![
+                create_record(b"FRAGMENT1/1", "23M4D37M40S", &[], &[], "13A9^TAAT10C19C6", false).unwrap(),
+                create_record(b"FRAGMENT1/2", "100M", &[], &[], "20T8G20T49", false).unwrap(),
             ],
         );
         smallvec![
@@ -652,6 +682,28 @@ mod tests {
 
         // it will have successfully traversed the scoring logic.
         assert!(result.is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn test_observed_pe_scoring1() -> Result<()> {
+        let mut config = Config::default();
+        config.discard_unmapped = true;
+        config.gap_open = 6.0;
+        config.gap_extend = 1.0;
+        config.mismatch_penalty = 4.0;
+
+        let mut lbl = LineByLine::new(config, setup_mock_streams_observed_examples())?;
+
+        lbl.process()?;
+        assert_eq!(lbl.branch_counters[2], 2); // filter:1: both reads
+        assert_eq!(lbl.branch_counters[3], 0); // out:1:
+        assert_eq!(lbl.branch_counters[17], 0); // ambiguous:1:
+        assert_eq!(lbl.branch_counters[25], 0); // unmapped:1:
+        assert_eq!(lbl.branch_counters[0], 0); // filter:0:
+        assert_eq!(lbl.branch_counters[1], 2); // out:0: both reads
+        assert_eq!(lbl.branch_counters[16], 0); // ambiguous:0:
+        assert_eq!(lbl.branch_counters[24], 0); // unmapped:0:
         Ok(())
     }
 }
