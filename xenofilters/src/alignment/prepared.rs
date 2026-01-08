@@ -9,6 +9,10 @@ pub fn stringify_record(rec: &Record) -> String {
     if let Ok(Aux::String(md)) = rec.aux(b"MD") {
         s.push_str(&format!("\tMD:Z:{md}"));
     }
+    s.push_str(&format!("\treverse:{}", rec.is_reverse()));
+    //s.push_str(&format!("\tseq:{}", rec.seq().as_bytes().iter().map(|&b| b as char).collect::<String>()));
+    //s.push_str(&format!("\tqual:{}", rec.qual().iter().map(|&q| (q + 33) as char).collect::<String>()));
+
     s
 }
 

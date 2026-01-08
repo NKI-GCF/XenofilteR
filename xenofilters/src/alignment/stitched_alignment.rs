@@ -19,6 +19,8 @@ impl<'a> StitchedFragment<'a> {
     pub fn score(&mut self) -> Result<f64, AlignmentError> {
         let mut total_score = 0.0;
         for op in self.ops.by_ref() {
+            //#[cfg(test)]
+            //eprintln!("Operation: {:?}", op);
             match op? {
                 UnifiedOp::Match(len) => {
                     let len_usize = len as usize;

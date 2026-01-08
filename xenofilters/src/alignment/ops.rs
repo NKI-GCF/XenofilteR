@@ -135,6 +135,8 @@ impl<'a> Iterator for UnifiedOpIterator<'a> {
         } else {
             self.cigar_iter.next()
         };
+        //#[cfg(test)]
+        //eprintln!("Next CIGAR: {:?}", next_cig);
         match next_cig {
             Some(Cigar::Match(len) | Cigar::Equal(len) | Cigar::Diff(len)) => {
                 let next_md_op = if self.next_md_op.is_some() {
@@ -144,9 +146,11 @@ impl<'a> Iterator for UnifiedOpIterator<'a> {
                 } else {
                     self.md_iter.next()
                 };
+                //#[cfg(test)]
+                //eprintln!("Next MD op: {:?}", next_md_op);
                 if let Some(Ok(md_op)) = next_md_op {
-                    #[cfg(test)]
-                    eprintln!("Matching CIGAR {:?} with MD {:?}", next_cig, &md_op);
+                    //#[cfg(test)]
+                    //eprintln!("Matching CIGAR {:?} with MD {:?}", next_cig, &md_op);
                     return Some(self.match_md_op(md_op, len));
                 };
                 #[cfg(test)]
@@ -154,46 +158,60 @@ impl<'a> Iterator for UnifiedOpIterator<'a> {
                 Some(Err(AlignmentError::MdCigarMismatch))
             }
             Some(Cigar::SoftClip(len)) => {
-                #[cfg(test)]
-                eprintln!("Handling CIGAR SoftClip {:?}", len);
+                //#[cfg(test)]
+                //eprintln!("Handling CIGAR SoftClip {:?}", len);
                 // a sofclip has no matching MD operation
                 Some(Ok(UnifiedOp::Mis(len)))
             }
-            Some(Cigar::Del(len)) => match self.md_iter.next() {
-                Some(Ok(MdOp::Deletion(d))) if d.len() as u32 == len => {
-                    #[cfg(test)]
-                    eprintln!("Matching CIGAR Deletion {:?} with MD Deletion {:?}", len, d);
-                    Some(Ok(UnifiedOp::Del(len)))
-                }
-                _ => {
-                    #[cfg(test)]
-                    eprintln!(
-                        "CIGAR Deletion {:?} has no matching MD Deletion",
-                        len
-                    );
-                    Some(Err(AlignmentError::MdCigarMismatch))
-                }
-            },
-            Some(Cigar::HardClip(_) | Cigar::Pad(_)) => {
-                #[cfg(test)]
-                eprintln!("Skipping CIGAR HardClip/Pad {:?}", next_cig);
-                self.next()
-            }
-            Some(x) => {
-                #[cfg(test)]
-                eprintln!("Handling Refskip/Ins CIGAR {:?}", x);
-                Some(UnifiedOp::try_from(x))
-            } // RefSkip, Ins
-            None => {
-                #[cfg(test)]
-                eprintln!("CIGAR operations exhausted, checking MD iterator");
-                if let Some(Ok(md_op)) = if self.next_md_op.is_some() {
+            Some(Cigar::Del(len)) => {
+                let next_md_op = if self.next_md_op.is_some() {
                     self.next_md_op.take().map(Ok)
                 } else if self.is_rev {
                     self.md_iter.next_back()
                 } else {
                     self.md_iter.next()
-                } {
+                };
+                //#[cfg(test)]
+                //eprintln!("Next MD op: {:?}", next_md_op);
+                match next_md_op {
+                    Some(Ok(MdOp::Deletion(d))) if d.len() as u32 == len => {
+                        //#[cfg(test)]
+                        //eprintln!("Matching CIGAR Deletion {:?} with MD Deletion {:?}", len, d);
+                        Some(Ok(UnifiedOp::Del(len)))
+                    }
+                    _ => {
+                        #[cfg(test)]
+                        eprintln!(
+                            "CIGAR Deletion {:?} has no matching MD Deletion",
+                            len
+                        );
+                        Some(Err(AlignmentError::MdCigarMismatch))
+                    }
+                }
+            },
+            Some(Cigar::HardClip(_) | Cigar::Pad(_)) => {
+                //#[cfg(test)]
+                //eprintln!("Skipping CIGAR HardClip/Pad {:?}", next_cig);
+                self.next()
+            }
+            Some(x) => {
+                //#[cfg(test)]
+                //eprintln!("Handling Refskip/Ins CIGAR {:?}", x);
+                Some(UnifiedOp::try_from(x))
+            } // RefSkip, Ins
+            None => {
+                //#[cfg(test)]
+                //eprintln!("CIGAR operations exhausted, checking MD iterator");
+                let next_md_op =  if self.next_md_op.is_some() {
+                    self.next_md_op.take().map(Ok)
+                } else if self.is_rev {
+                    self.md_iter.next_back()
+                } else {
+                    self.md_iter.next()
+                };
+                //#[cfg(test)]
+                //eprintln!("Next MD op: {:?}", next_md_op);
+                if let Some(Ok(md_op)) = next_md_op {
                     #[cfg(test)]
                     eprintln!("Excess MD operation after CIGAR end: {:?}", md_op);
                     match md_op {
@@ -394,5 +412,13 @@ pub mod tests {
         let ops: Vec<UnifiedOp> = uop_iter.map(|r| r.unwrap()).collect();
         assert_eq!(ops, vec![]);
         Ok(())
+    }
+    #[test]
+    fn test_trailing_ins_mismatch() {
+        let rec = create_record(b"INS_TEST", "90M10I", &[], &[], "90", false).unwrap();
+        let mut iter = UnifiedOpIterator::new(&rec).unwrap();
+        while let Some(res) = iter.next() {
+            assert!(res.is_ok());
+        }
     }
 }

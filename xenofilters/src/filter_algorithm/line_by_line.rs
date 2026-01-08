@@ -394,13 +394,13 @@ mod tests {
             0,
             vec![
                 create_record(b"FRAGMENT1/1", "100M", &[], &[], "86T13", false).unwrap(),
-                create_record(b"FRAGMENT1/2", "100M", &[], &[], "100", false).unwrap(),
+                create_record(b"FRAGMENT1/2", "100M", &[], &[], "100", true).unwrap(),
             ],
         );
         let mut stream2 = MockStream::new(
             1,
             vec![
-                create_record(b"FRAGMENT1/1", "23M4D37M40S", &[], &[], "13A9^TAAT10C19C6", false).unwrap(),
+                create_record(b"FRAGMENT1/1", "23M4D37M40S", &[], &[], "13A9^TAAT10C19C6", true).unwrap(),
                 create_record(b"FRAGMENT1/2", "100M", &[], &[], "20T8G20T49", false).unwrap(),
             ],
         );
