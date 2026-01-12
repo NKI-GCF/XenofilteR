@@ -1,4 +1,8 @@
 # XenofilteR
+
+12-1-2026: The rust branch contains an experimental alternative implementation that requires less RAM.
+The rust version requires fastq order input, or name sorted (samtools collate is not enough).
+
 XenofilteR: computational deconvolution of mouse and human reads in tumor xenograft sequence data
 
 Human tumour samples or cancer cell lines, transplanted into mice are widely used as a 
