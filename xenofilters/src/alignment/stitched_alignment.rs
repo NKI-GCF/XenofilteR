@@ -1,5 +1,4 @@
-use crate::alignment::AlignmentError;
-use crate::alignment::{UnifiedOp, UnifiedOpIterator};
+use crate::alignment::{AlignmentError, UnifiedOp, UnifiedOpIterator, stringify_record};
 use crate::{MAX_Q, Penalties};
 use anyhow::{Result, anyhow};
 use rust_htslib::bam::record::{Cigar, Record};
@@ -169,8 +168,18 @@ pub fn stitched_fragment<'a>(
         .filter(|r| !r.is_supplementary() && !r.is_secondary());
 
     let mut stitched = if let Some(anchor) = primary_it.next() {
+        #[cfg(test)]
+        eprintln!(
+            "Anchor record: {}",
+            stringify_record(anchor)
+        );
         let (mut seq, mut qual) = get_read_iterators(anchor);
         if let Some(mate) = primary_it.next() {
+            #[cfg(test)]
+            eprintln!(
+                "Mate record: {}",
+                stringify_record(mate)
+            );
             let (s, q) = get_read_iterators(mate);
             seq = Box::new(seq.chain(s));
             qual = Box::new(qual.chain(q));
