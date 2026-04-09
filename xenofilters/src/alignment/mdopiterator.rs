@@ -1,8 +1,8 @@
 use crate::alignment::MdOpIteratorError;
 use rust_htslib::bam::record::{Aux, Record};
+use rust_htslib::errors::Error as HtslibError;
 use smallvec::SmallVec;
 use std::str::Chars;
-use rust_htslib::errors::Error as HtslibError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MdOp {
@@ -23,7 +23,7 @@ impl<'a> MdOpIterator<'a> {
             Ok(Aux::String(md)) => md.chars(),
             Ok(_) => return Err(MdOpIteratorError::BadMdTag),
             Err(HtslibError::BamAuxTagNotFound) => "".chars(),
-            Err(e) => return Err(MdOpIteratorError::Aux(e.to_string())),
+            Err(e) => return Err(MdOpIteratorError::Aux(e)),
         };
         Ok(MdOpIterator {
             chars,
@@ -137,161 +137,4 @@ impl DoubleEndedIterator for MdOpIterator<'_> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use smallvec::smallvec;
-
-    fn process_md_forward(md_string: &str) -> Vec<MdOp> {
-        let md_iter = MdOpIterator {
-            chars: md_string.chars(),
-            peeked: String::new(),
-        };
-        md_iter.map(|r| r.unwrap()).collect()
-    }
-    fn process_md_reverse(md_string: &str) -> Vec<MdOp> {
-        let md_iter = MdOpIterator {
-            chars: md_string.chars(),
-            peeked: String::new(),
-        };
-        md_iter.rev().map(|r| r.unwrap()).collect()
-    }
-
-    #[test]
-    fn test_forward_mdop_10a5() {
-        let md_ops = process_md_forward("10A5");
-        assert_eq!(
-            md_ops,
-            vec![MdOp::Match(10), MdOp::Mismatch(b'A'), MdOp::Match(5),]
-        );
-    }
-
-    #[test]
-    fn test_forward_mdop_tga() {
-        let md_ops = process_md_forward("TGA");
-        assert_eq!(
-            md_ops,
-            vec![
-                MdOp::Mismatch(b'T'),
-                MdOp::Mismatch(b'G'),
-                MdOp::Mismatch(b'A'),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_forward_mdop_adt20g() {
-        let md_ops = process_md_forward("A^T20G");
-        assert_eq!(
-            md_ops,
-            vec![
-                MdOp::Mismatch(b'A'),
-                MdOp::Deletion(smallvec![b'T']),
-                MdOp::Match(20),
-                MdOp::Mismatch(b'G'),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_forward_mdop_5datc3() {
-        let md_ops = process_md_forward("5^ATC3");
-        assert_eq!(
-            md_ops,
-            vec![
-                MdOp::Match(5),
-                MdOp::Deletion(smallvec![b'A', b'T', b'C']),
-                MdOp::Match(3),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_forward_mdop_1dn5() {
-        let md_ops = process_md_forward("1^N5");
-        assert_eq!(
-            md_ops,
-            vec![
-                MdOp::Match(1),
-                MdOp::Deletion(smallvec![b'N']),
-                MdOp::Match(5),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_forward_mdop_999g1() {
-        let md_ops = process_md_forward("999G1");
-        assert_eq!(
-            md_ops,
-            vec![MdOp::Match(999), MdOp::Mismatch(b'G'), MdOp::Match(1),]
-        );
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_forward_mdop_invalid_char() {
-        let _md_ops = process_md_forward("10A5X");
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_reverse_mdop_invalid_char() {
-        let _md_ops = process_md_reverse("10A5X");
-    }
-
-    // --- Reverse Tests ---
-    #[test]
-    fn test_reverse_mdop_10a5() {
-        let md_ops = process_md_reverse("10A5");
-        assert_eq!(
-            md_ops,
-            vec![MdOp::Match(5), MdOp::Mismatch(b'A'), MdOp::Match(10),]
-        );
-    }
-
-    #[test]
-    fn test_reverse_mdop_tga() {
-        let md_ops = process_md_reverse("TGA");
-        assert_eq!(
-            md_ops,
-            vec![
-                MdOp::Mismatch(b'A'),
-                MdOp::Mismatch(b'G'),
-                MdOp::Mismatch(b'T'),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_reverse_mdop_5datc3() {
-        let md_ops = process_md_reverse("5^ATC3");
-        assert_eq!(
-            md_ops,
-            vec![
-                MdOp::Match(3),
-                MdOp::Deletion(smallvec![b'A', b'T', b'C']),
-                MdOp::Match(5),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_reverse_mdop_adt20g() {
-        let md_ops = process_md_reverse("A^T20G");
-        assert_eq!(
-            md_ops,
-            vec![
-                MdOp::Mismatch(b'G'),
-                MdOp::Match(20),
-                MdOp::Deletion(smallvec![b'T']),
-                MdOp::Mismatch(b'A'),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_reverse_mdop_100() {
-        let md_ops = process_md_reverse("100");
-        assert_eq!(md_ops, vec![MdOp::Match(100),]);
-    }
-}
+mod tests;

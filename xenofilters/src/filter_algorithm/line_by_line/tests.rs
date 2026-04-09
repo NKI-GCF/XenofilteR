@@ -1,0 +1,546 @@
+use crate::alignment::build_fragment;
+use crate::aln_stream::AlignmentStream;
+use crate::filter_algorithm::line_by_line::{core::AlnBuffer, ordering::Decision};
+use crate::fragment_state::FragmentState;
+use crate::tests::{MockStream, create_record, setup_penalties};
+use crate::{Config, LineByLine, StripReadSuffix};
+use anyhow::Result;
+use smallvec::{SmallVec, smallvec};
+use std::cmp::Ordering;
+use crate::variant::Variant;
+
+fn setup_mock_streams() -> SmallVec<[Box<dyn AlignmentStream>; 2]> {
+    let stream1 = MockStream::new(
+        0,
+        vec![
+            create_record(b"R0", "10M", &[], &[], "10", false).unwrap(), // perfect => out
+            create_record(b"R1", "10M", &[], &[], "10", false).unwrap(), // perfect => out
+            create_record(b"R2", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => filtered
+            create_record(b"R3", "10M", &[], &[], "10", false).unwrap(), // perfect => out
+            create_record(b"R4", "*", &[], &[], "10", false).unwrap(),   // unmapped => filtered
+            create_record(b"R5", "10M", &[], &[], "10", false).unwrap(), // perfect => ambiguous
+            create_record(b"R6", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => ambiguous
+            create_record(b"R7", "*", &[], &[], "10", false).unwrap(),   // unmapped => ambiguous
+            create_record(b"R8", "6M4S", &[], &[], "6", false).unwrap(), // less clipped => out
+        ],
+    );
+    let stream2 = MockStream::new(
+        1,
+        vec![
+            create_record(b"R0", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => filtered
+            create_record(b"R1", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => filtered
+            create_record(b"R2", "10M", &[], &[], "10", false).unwrap(), // perfect => out
+            create_record(b"R3", "*", &[], &[], "10", false).unwrap(),   // unmapped => filtered
+            create_record(b"R4", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => out
+            create_record(b"R5", "10M", &[], &[], "10", false).unwrap(), // perfect => ambiguous
+            create_record(b"R6", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => ambiguous
+            create_record(b"R7", "*", &[], &[], "9", false).unwrap(),    // unmapped => ambiguous
+            create_record(b"R8", "5M5S", &[], &[], "5", false).unwrap(), // less match => filtered
+        ],
+    );
+    smallvec![
+        Box::new(stream1) as Box<dyn AlignmentStream>,
+        Box::new(stream2) as Box<dyn AlignmentStream>
+    ]
+}
+
+fn setup_mock_streams_r4() -> SmallVec<[Box<dyn AlignmentStream>; 2]> {
+    let stream1 = MockStream::new(
+        0,
+        vec![
+            create_record(b"R4", "*", &[], &[], "10", false).unwrap(), // unmapped => filtered
+        ],
+    );
+    let stream2 = MockStream::new(
+        1,
+        vec![
+            create_record(b"R4", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => out
+        ],
+    );
+    smallvec![
+        Box::new(stream1) as Box<dyn AlignmentStream>,
+        Box::new(stream2) as Box<dyn AlignmentStream>
+    ]
+}
+
+fn setup_mock_streams_observed_examples() -> SmallVec<[Box<dyn AlignmentStream>; 2]> {
+    // human
+    // FRAGMENT1/1        100M    MD:Z:86T13
+    // FRAGMENT1/2        100M    MD:Z:100
+    // mouse
+    // FRAGMENT1/1        23M4D37M40S     MD:Z:13A9^TAAT10C19C6
+    // FRAGMENT1/2        100M    MD:Z:20T8G20T49
+    let stream1 = MockStream::new(
+        0,
+        vec![
+            create_record(b"FRAGMENT1/1", "100M", &[], &[], "86T13", false).unwrap(),
+            create_record(b"FRAGMENT1/2", "100M", &[], &[], "100", true).unwrap(),
+        ],
+    );
+    let stream2 = MockStream::new(
+        1,
+        vec![
+            create_record(
+                b"FRAGMENT1/1",
+                "23M4D37M40S",
+                &[],
+                &[],
+                "13A9^TAAT10C19C6",
+                true,
+            )
+            .unwrap(),
+            create_record(b"FRAGMENT1/2", "100M", &[], &[], "20T8G20T49", false).unwrap(),
+        ],
+    );
+    smallvec![
+        Box::new(stream1) as Box<dyn AlignmentStream>,
+        Box::new(stream2) as Box<dyn AlignmentStream>
+    ]
+}
+
+// %s/\vmock_rec\((b".*?")/create_record(\1, "10M", &[], &[], "10", false)?/g
+#[test]
+fn test_qname_suffix_logic() -> Result<()> {
+    let mut config = Config::default();
+
+    config.strip_read_suffix = StripReadSuffix::Auto;
+    let lbl = LineByLine::new(config.clone(), smallvec![])?;
+    let best: AlnBuffer = smallvec![FragmentState::from_record(
+        create_record(b"read/1", "10M", &[], &[], "10", false)?,
+        0
+    )];
+    assert_eq!((lbl.is_new_qname)(&best, b"read/1"), Some(false));
+    assert_eq!((lbl.is_new_qname)(&best, b"other/1"), Some(true));
+    assert_eq!((lbl.is_new_qname)(&best, b"read/2"), Some(false));
+
+    // Mode: Some(true) (Always strip last 2)
+    config.strip_read_suffix = StripReadSuffix::True;
+    let lbl = LineByLine::new(config.clone(), smallvec![])?;
+    assert_eq!((lbl.is_new_qname)(&best, b"read_suffix"), Some(true)); // "read" != "read_suff"
+
+    // Mode: Some(false) (Exact match)
+    config.strip_read_suffix = StripReadSuffix::False;
+    let lbl = LineByLine::new(config, smallvec![])?;
+    assert_eq!((lbl.is_new_qname)(&best, b"read/1"), Some(false));
+    assert_eq!((lbl.is_new_qname)(&best, b"read/2"), Some(true));
+    Ok(())
+}
+
+#[test]
+fn test_branch_counters_and_skipping() -> Result<()> {
+    let mut config = Config::default();
+    config.discard_unmapped = true;
+    config.skip_secondary = true;
+
+    let mut lbl = LineByLine::new(config.clone(), smallvec![])?;
+
+    let mut unmapped_fwd = create_record(b"u", "*", &[], &[], "10", false)?;
+    unmapped_fwd.set_unmapped();
+    unmapped_fwd.set_paired();
+    unmapped_fwd.set_mate_unmapped();
+
+    let mut unmapped_rev = unmapped_fwd.clone();
+    unmapped_rev.set_reverse();
+
+    let mut secondary = create_record(b"s", "*", &[], &[], "10", false)?;
+    secondary.set_secondary();
+
+    let mut unmapped_single = create_record(b"u2", "*", &[], &[], "10", false)?;
+    unmapped_single.set_unmapped();
+
+    // Should return early (skipped)
+    assert!(lbl.write_record(0, unmapped_fwd.clone(), None).is_ok());
+    assert!(lbl.write_record(0, unmapped_rev.clone(), None).is_ok());
+    assert!(lbl.write_record(0, unmapped_single, Some(false)).is_ok());
+    lbl.print_counters(0);
+    assert_eq!(lbl.branch_counters[24], 2); // unmapped:0: 2
+    assert_eq!(lbl.branch_counters[0], 1); // filter:0:
+    // handle_record_is_fragment_finished should skip secondary
+    let mut best: AlnBuffer = smallvec![];
+    let finished = lbl
+        .handle_record_is_fragment_finished(0, secondary, &mut best)
+        .unwrap();
+    assert!(!finished);
+    assert!(best.is_empty());
+
+    config.discard_unmapped = false;
+    let mut lbl = LineByLine::new(config, smallvec![])?;
+    assert!(lbl.write_record(0, unmapped_fwd, None).is_ok());
+    assert!(lbl.write_record(0, unmapped_rev, None).is_ok());
+    lbl.print_counters(0);
+    assert_eq!(lbl.branch_counters[16], 2); // ambiguous:0: 2
+
+    Ok(())
+}
+
+#[test]
+fn test_handle_ordering_logic() -> Result<()> {
+    let lbl_setup = LineByLine::new(Config::default(), smallvec![])?;
+    // Test logic in handle_ordering requires mocked AlnStream for write_record calls.
+    // Direct testing of branch_counters incrementation via write_record:
+    let mut lbl = lbl_setup;
+
+    lbl.write_record(
+        0,
+        create_record(b"r1", "10M", &[], &[], "10", false)?,
+        Some(true),
+    )
+    .unwrap(); // Assigned alignment 0
+    lbl.write_record(
+        0,
+        create_record(b"r2", "10M", &[], &[], "10", false)?,
+        Some(false),
+    )
+    .unwrap(); // Filtered from alignment 0
+    lbl.write_record(0, create_record(b"r3", "10M", &[], &[], "10", false)?, None)
+        .unwrap(); // Ambiguous alignment 0
+
+    assert_eq!(lbl.branch_counters[1], 1); // 1 + (0 << 1)
+    assert_eq!(lbl.branch_counters[0], 1); // (0 << 1)
+    assert_eq!(lbl.branch_counters[16], 1); // 16 + 0
+    Ok(())
+}
+
+#[test]
+fn test_fragment_finished_transitions() -> Result<()> {
+    let lbl = LineByLine::new(Config::default(), smallvec![])?;
+    let mut lbl = lbl;
+    let mut best: AlnBuffer = smallvec![FragmentState::from_record(
+        create_record(b"R1", "10M", &[], &[], "10", false)?,
+        0
+    )];
+
+    // Same QName: continues fragment
+    let fin = lbl
+        .handle_record_is_fragment_finished(
+            0,
+            create_record(b"R1", "10M", &[], &[], "10", false)?,
+            &mut best,
+        )
+        .unwrap();
+    assert!(!fin);
+    assert_eq!(best[0].records.len(), 2);
+
+    // Different QName: finishes fragment
+    // Note: this will attempt to call aln[i].un_next(), requiring a mock AlnStream.
+    Ok(())
+}
+#[test]
+fn test_process_multi_stream_sync_r4() -> Result<()> {
+    let mut config = Config::default();
+    config.discard_unmapped = true;
+    let mut lbl = LineByLine::new(config, setup_mock_streams_r4())?;
+
+    // R4 -> stream 1 (mismatch vs unmapped)
+
+    lbl.process()?;
+
+    assert_eq!(lbl.branch_counters[2], 0); // filter:1:
+    assert_eq!(lbl.branch_counters[3], 1); // out:1: R4
+    assert_eq!(lbl.branch_counters[17], 0); // ambiguous:1:
+    assert_eq!(lbl.branch_counters[25], 0); // unmapped:1:
+    assert_eq!(lbl.branch_counters[0], 1); // filter:0: R4
+    assert_eq!(lbl.branch_counters[1], 0); // out:0:
+    assert_eq!(lbl.branch_counters[16], 0); // ambiguous:0:
+    assert_eq!(lbl.branch_counters[24], 0); // unmapped:0:
+    Ok(())
+}
+
+#[test]
+fn test_process_multi_stream_sync() -> Result<()> {
+    let mut config = Config::default();
+    config.discard_unmapped = true;
+    config.gap_open = 6.0;
+    config.gap_extend = 1.0;
+    config.mismatch_penalty = 4.0;
+    let mut lbl = LineByLine::new(config, setup_mock_streams())?;
+
+    // Streams now contain R1..R7
+    // Expected winners:
+    // R1 -> stream 0 (perfect vs mismatch)
+    // R2 -> stream 1 (perfect vs mismatch)
+    // R3 -> stream 0 (perfect vs unmapped)
+    // R4 -> stream 1 (mismatch vs unmapped)
+    // R5 -> tie perfect/perfect -> ambiguity
+    // R6 -> tie mismatch/mismatch -> ambiguity
+    // R7 -> unmapped/unmapped -> ambiguity
+    // R8 -> stream 0 (mismatch vs more mismatches, but stream 1 filtered)
+
+    lbl.process()?;
+    // this is the order of printing, first aln 1 then aln 0
+    assert_eq!(lbl.branch_counters[2], 4); // filter:1: R0, R1, R3, R8
+    assert_eq!(lbl.branch_counters[3], 2); // out:1: R2, R4
+    assert_eq!(lbl.branch_counters[17], 2); // ambiguous:1: R5, R6
+    assert_eq!(lbl.branch_counters[25], 1); // unmapped:1: R7
+
+    assert_eq!(lbl.branch_counters[0], 2); // filter:0: R2, R4
+    assert_eq!(lbl.branch_counters[1], 4); // out:0: R0, R1, R3, R8
+    assert_eq!(lbl.branch_counters[16], 2); // ambiguous:0: R5, R6
+    assert_eq!(lbl.branch_counters[24], 1); // unmapped:0: R7
+
+    Ok(())
+}
+
+#[test]
+fn test_handle_ordering_drain_logic() -> Result<()> {
+    let mut lbl = LineByLine::new(Config::default(), setup_mock_streams())?;
+    let mut best: AlnBuffer = smallvec![
+        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0),
+        FragmentState::from_record(create_record(b"R1", "5M5S", &[], &[], "5", false)?, 1),
+    ];
+    let ord = best[0].partial_cmp(&best[1]);
+    assert_eq!(ord, Some(Ordering::Greater));
+
+    // stream 0 better than stream 1
+    lbl.handle_ordering(&mut best, ord)?;
+    lbl.print_counters(1);
+
+    assert_eq!(best.len(), 1);
+    assert_eq!(best[0].get_nr(), 0);
+    assert_eq!(lbl.branch_counters[1 + 1], 1); // stream 1 filtered
+    eprintln!("Writing best fragment from stream {}", best[0].get_nr());
+    lbl.handle_best(&mut best, None)?;
+    lbl.print_counters(0);
+    assert_eq!(lbl.branch_counters[1], 1); // stream 0 assigned
+
+    Ok(())
+}
+
+#[test]
+fn test_complex_fragment_grouping() -> Result<()> {
+    let mut lbl = LineByLine::new(Config::default(), setup_mock_streams())?;
+    let mut best: AlnBuffer = smallvec![];
+
+    // paired-end style: same QNAME twice
+    let r1_1 = create_record(b"READX", "10M", &[], &[], "10", false)?;
+    let r1_2 = create_record(b"READX", "5M5S", &[], &[], "5", false)?;
+
+    lbl.handle_record_is_fragment_finished(0, r1_1, &mut best)?;
+    assert_eq!(best.len(), 1);
+    assert_eq!(best[0].records.len(), 1);
+
+    lbl.handle_record_is_fragment_finished(0, r1_2, &mut best)?;
+    assert_eq!(best.len(), 1);
+    assert_eq!(best[0].records.len(), 2);
+
+    Ok(())
+}
+
+#[test]
+fn test_line_by_line_full_flow() -> Result<()> {
+    let rec1 = create_record(b"R1", "10M", &[], &[], "10", false)?;
+    let rec2 = create_record(b"R2", "10M", &[], &[], "10", false)?;
+
+    // Mocking AlnStream behavior
+    // Note: You may need to wrap MockStream in AlnStream enum/trait if required by your types
+    // This targets handle_record_is_fragment_finished coverage
+    let config = Config::default();
+    let mut lbl = LineByLine::new(config, smallvec![])?;
+
+    let mut best: AlnBuffer = smallvec![];
+
+    // 1. First read
+    let fin = lbl.handle_record_is_fragment_finished(0, rec1.clone(), &mut best)?;
+    assert!(!fin);
+    assert_eq!(best.len(), 1);
+
+    // 2. QName change triggers finish
+    let fin = lbl.handle_record_is_fragment_finished(0, rec2, &mut best)?;
+    // This will attempt to call aln[0].un_next(), ensure your mock handles this.
+    assert!(fin);
+    Ok(())
+}
+
+#[test]
+fn test_scoring_path_coverage() -> Result<()> {
+    let config = Config::default();
+    // Mock stream needs to exist to avoid indexing panics
+    let mut lbl = LineByLine::new(config, smallvec![])?;
+
+    // Populate records with valid CIGAR/MD data to avoid null-pointer panics
+    let mut best: AlnBuffer = smallvec![
+        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0),
+        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 1),
+    ];
+
+    // This triggers the full scoring pipeline:
+    // handle_ordering -> fragment -> UnifiedOpIterator -> score()
+    lbl.handle_ordering(&mut best, None)?;
+
+    // it will have successfully traversed the scoring logic.
+    Ok(())
+}
+
+#[test]
+fn test_observed_pe_scoring1() -> Result<()> {
+    let mut config = Config::default();
+    config.discard_unmapped = true;
+    config.gap_open = 6.0;
+    config.gap_extend = 1.0;
+    config.mismatch_penalty = 4.0;
+
+    let mut lbl = LineByLine::new(config, setup_mock_streams_observed_examples())?;
+
+    lbl.process()?;
+    assert_eq!(lbl.branch_counters[2], 2); // filter:1: both reads
+    assert_eq!(lbl.branch_counters[3], 0); // out:1:
+    assert_eq!(lbl.branch_counters[17], 0); // ambiguous:1:
+    assert_eq!(lbl.branch_counters[25], 0); // unmapped:1:
+    assert_eq!(lbl.branch_counters[0], 0); // filter:0:
+    assert_eq!(lbl.branch_counters[1], 2); // out:0: both reads
+    assert_eq!(lbl.branch_counters[16], 0); // ambiguous:0:
+    assert_eq!(lbl.branch_counters[24], 0); // unmapped:0:
+    Ok(())
+}
+
+#[cfg(test)]
+impl LineByLine {
+    /// Only for tests — lets us assert the converted log threshold.
+    fn test_ambiguous_log_threshold(&self) -> f64 {
+        self.ambiguous_log_threshold
+    }
+}
+
+#[test]
+fn test_ambiguous_log_threshold_conversion() -> Result<()> {
+    let mut config = Config::default_no_strip();
+    let aln = setup_mock_streams(); // any valid stream works for new()
+    let aln_clone1 = setup_mock_streams(); // any valid stream works for new()
+    let aln_clone2 = setup_mock_streams(); // any valid stream works for new()
+    let aln_clone3 = setup_mock_streams(); // any valid stream works for new()
+
+    // threshold = 0 → exactly 0.0 (or EPSILON if you changed it)
+    config.ambiguous_threshold = 0;
+    let lbl = LineByLine::new(config.clone(), aln_clone1)?;
+    assert_eq!(lbl.test_ambiguous_log_threshold(), 0.0);
+
+    // standard phred values → correct natural-log ratio
+    config.ambiguous_threshold = 10;
+    let lbl = LineByLine::new(config.clone(), aln_clone2)?;
+    assert!((lbl.test_ambiguous_log_threshold() - 2.302585092994046).abs() < 1e-9);
+
+    config.ambiguous_threshold = 20;
+    let lbl = LineByLine::new(config.clone(), aln_clone3)?;
+    assert!((lbl.test_ambiguous_log_threshold() - 4.605170185988092).abs() < 1e-9);
+
+    config.ambiguous_threshold = 3;
+    let lbl = LineByLine::new(config, aln)?;
+    assert!((lbl.test_ambiguous_log_threshold() - 0.6907755278982138).abs() < 1e-9);
+
+    Ok(())
+}
+
+#[test]
+fn test_handle_ordering_quick_paths_respect_decision_tag() -> Result<()> {
+    let mut config = Config::default_no_strip();
+    config.add_decision_tag = true;
+    let mut lbl = LineByLine::new(config, setup_mock_streams())?;
+
+    let mut best: AlnBuffer = smallvec![
+        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0),
+        FragmentState::from_record(create_record(b"R1", "5M5S", &[], &[], "5", false)?, 1),
+    ];
+
+    let dec = lbl.handle_ordering(&mut best, Some(Ordering::Greater))?;
+    assert!(matches!(dec, Some(Decision::First)));
+
+    let dec = lbl.handle_ordering(&mut best, Some(Ordering::Less))?;
+    assert!(matches!(dec, Some(Decision::Last)));
+
+    let dec = lbl.handle_ordering(&mut best, Some(Ordering::Equal))?;
+    assert!(matches!(dec, Some(Decision::Ambiguous)));
+
+    Ok(())
+}
+
+#[test]
+fn test_handle_ordering_scoring_path_phred_and_threshold() -> Result<()> {
+    let mut config = Config::default_no_strip();
+    config.add_decision_tag = true;
+    config.ambiguous_threshold = 0; // start low so we always get a delta
+    let aln = setup_mock_streams_observed_examples();
+    let mut lbl = LineByLine::new(config, aln)?;
+
+    let mut best: AlnBuffer = smallvec![
+        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0),
+        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 1),
+    ];
+    let best2: AlnBuffer = smallvec![
+        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0),
+        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 1),
+    ];
+
+    // === Compute expected values ourselves (self-verifying, no magic numbers) ===
+    let first: &FragmentState = best2.first().unwrap();
+    let last = best2.last().unwrap();
+    let penalties = setup_penalties(); // from stitched_alignment::tests
+    let variants1 = SmallVec::<[SmallVec::<[&dyn Variant; 8]>; 2]>::new();
+    let variants2 = SmallVec::<[SmallVec::<[&dyn Variant; 8]>; 2]>::new();
+
+    let mut sf1 = build_fragment(&penalties, &first.records, first.order_mates(), variants1)?;
+    let mut sf2 = build_fragment(&penalties, &last.records, last.order_mates(), variants2)?;
+    let first_score = sf1.score()?;
+    let last_score = sf2.score()?;
+
+    let delta = first_score - last_score;
+    let expected_phred = (10.0 * delta.abs() / std::f64::consts::LN_10).min(255.0) as u8;
+
+    let decision = lbl.handle_ordering(&mut best, None)?;
+    if delta.abs() > 0.0 {
+        if let Some(Decision::ConfDelta(p)) = decision {
+            assert_eq!(p, expected_phred, "phred calculation or capping wrong");
+        } else {
+            panic!("Expected ConfDelta when |delta| > 0 with threshold=0");
+        }
+    } else {
+        assert!(matches!(decision, Some(Decision::Ambiguous)));
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_handle_ordering_ambiguous_when_below_threshold_and_negative_delta() -> Result<()> {
+    let mut config = Config::default_no_strip();
+    config.add_decision_tag = true;
+    config.ambiguous_threshold = 30; // higher than your observed delta → forces ambiguous
+    let aln = setup_mock_streams_observed_examples();
+    let mut lbl = LineByLine::new(config, aln)?;
+
+    let mut best: AlnBuffer = smallvec![
+        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0),
+        FragmentState::from_record(create_record(b"R1", "5M5S", &[], &[], "5", false)?, 1),
+    ];
+
+    let decision = lbl.handle_ordering(&mut best, None)?;
+    assert!(matches!(decision, Some(Decision::Ambiguous)));
+
+    // Also test negative-delta case (we flip sign internally)
+    // (reuse the same best – just swap first/last scores by changing order or use a second mock)
+    // The code already does `delta = -delta` and then uses the positive value for phred.
+    let mut best_flipped: AlnBuffer = smallvec![
+        FragmentState::from_record(create_record(b"R1", "5M5S", &[], &[], "5", false)?, 1),
+        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0),
+    ];
+    let decision_flipped = lbl.handle_ordering(&mut best_flipped, None)?;
+    assert!(matches!(decision_flipped, Some(Decision::Ambiguous)));
+
+    Ok(())
+}
+
+#[test]
+fn test_handle_ordering_when_decision_tag_is_disabled() -> Result<()> {
+    let mut config = Config::default_no_strip();
+    config.add_decision_tag = false;
+    let mut lbl = LineByLine::new(config, setup_mock_streams())?;
+
+    let mut best: AlnBuffer = smallvec![
+        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0),
+        FragmentState::from_record(create_record(b"R1", "5M5S", &[], &[], "5", false)?, 1),
+    ];
+
+    let decision = lbl.handle_ordering(&mut best, None)?;
+    assert!(decision.is_none()); // no Decision object when tag is off
+
+    Ok(())
+}

@@ -1,9 +1,8 @@
-use crate::Penalties;
-use crate::vcf_format::Variant;
+use crate::Penalty;
+use crate::variant::Variant;
 use anyhow::Result;
 use rust_htslib::bcf::record::Record;
 
-#[allow(dead_code)]
 pub struct SampleVariant {
     pos: i64,
     ref_a: Vec<u8>,
@@ -25,7 +24,7 @@ impl Variant for SampleVariant {
         &self.alt_a
     }
 
-    fn score_alt_match(&self, penalties: &Penalties, quals: &[u8]) -> f64 {
+    fn score_alt_match(&self, penalties: &Penalty, quals: &[u8]) -> f64 {
         let len = quals.len();
         if len == 0 {
             return 0.0;
@@ -51,7 +50,7 @@ impl Variant for SampleVariant {
         p_variant * (score_match / len) + (1.0 - p_variant) * (score_mismatch / len)
     }
 
-    fn score_ref_match(&self, penalties: &Penalties, quals: &[u8]) -> f64 {
+    fn score_ref_match(&self, penalties: &Penalty, quals: &[u8]) -> f64 {
         let len = quals.len();
         if len == 0 {
             return 0.0;

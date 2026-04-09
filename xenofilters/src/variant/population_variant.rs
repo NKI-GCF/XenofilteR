@@ -1,5 +1,5 @@
-use crate::Penalties;
-use crate::vcf_format::Variant;
+use crate::Penalty;
+use crate::variant::Variant;
 use anyhow::{Result, anyhow};
 use rust_htslib::bcf::record::Record;
 
@@ -23,7 +23,7 @@ impl Variant for PopulationVariant {
         &self.alt_a
     }
 
-    fn score_alt_match(&self, penalties: &Penalties, quals: &[u8]) -> f64 {
+    fn score_alt_match(&self, penalties: &Penalty, quals: &[u8]) -> f64 {
         let p_variant = self.allele_frequency as f64;
 
         // This read matches the ALT.
@@ -42,7 +42,7 @@ impl Variant for PopulationVariant {
         p_variant * (score_match / len) + (1.0 - p_variant) * (score_mismatch / len)
     }
 
-    fn score_ref_match(&self, penalties: &Penalties, quals: &[u8]) -> f64 {
+    fn score_ref_match(&self, penalties: &Penalty, quals: &[u8]) -> f64 {
         let p_variant = self.allele_frequency as f64;
 
         // This read matches the REF.

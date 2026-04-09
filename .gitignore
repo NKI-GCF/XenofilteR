@@ -1,0 +1,5 @@
+xenofilters/target/
+xenofilters/target-valhallen
+xenofilters/*.profraw
+xenofilters/*.profdata
+xenofilters/tests

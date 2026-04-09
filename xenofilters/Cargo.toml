@@ -2,8 +2,14 @@
 name = "xenofilter"
 version = "0.1.0"
 edition = "2024"
-description = "Filter or distribute reads according to read name from multiple alignments"
+description = "Fast alignment-based classifier / filter for xenograft (PDX) sequencing data — decides per read/fragment which species alignment is best"
 authors = ["Roel Kluin <r.kluin@nki.nl>"]
+homepage = "https://github.com/NKI-GCF/XenofilteR/tree/rust"
+repository = "https://github.com/NKI-GCF/XenofilteR/tree/rust"
+readme = "xenofilters/README_rust.md"
+license = "GPL-3.0"
+keywords = ["bioinformatics", "xenograft", "pdx", "bam", "read-filtering"]
+categories = ["science", "command-line-utilities"]
 
 [package.metadata]
 MAX_ALN = "4"
@@ -15,7 +21,10 @@ rust-htslib = "0.40.2"
 smallvec = "1.15.1"
 thiserror = "2.0.17"
 
-
 [[bin]]
 name = "xenofilter"
 path = "src/main.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration_test.rs"
