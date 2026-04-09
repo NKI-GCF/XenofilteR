@@ -8,10 +8,10 @@ use smallvec::SmallVec;
 use crate::variant::Variant;
 
 #[derive(Debug)]
-struct Segment<'a> {
-    rec: &'a Record,
-    ref_start: i64,         // 0-based, inclusive
-    ref_end: i64,           // exclusive
+pub(crate) struct Segment<'a> {
+    pub(crate) rec: &'a Record,
+    pub(crate) ref_start: i64,         // 0-based, inclusive
+    pub(crate) ref_end: i64,           // exclusive
 }
 
 #[derive(Default)]
@@ -96,116 +96,25 @@ impl<'a> ReadEnd<'a> {
 
         let base_reference_score = at.score;
 
-        // 2. Evaluate Variants (Avoiding the Double Borrow)
-        let mut deltas = Vec::with_capacity(self.variant.len());
-        
-        for &(_, variant) in &self.variant {
-            // Pass ONLY the segment slice, not `self`
-            let (read_bases, read_quals, base_penalty_incurred) = Self::extract_variant_context(&self.segment, variant, penalty)?;
+        for (delta, variant) in self.variant.iter_mut() {
+            let (read_bases, read_quals, base_penalty_incurred) = variant.extract_context(&self.segment, penalty)?;
 
-            let mut delta = 0.0;
             if variant.matches_alt(&read_bases) {
                 let variant_score = variant.score_alt_match(penalty, &read_quals);
-                delta = variant_score - base_penalty_incurred;
+                *delta = variant_score - base_penalty_incurred;
             } else if variant.matches_ref(&read_bases) {
                 let variant_score = variant.score_ref_match(penalty, &read_quals);
-                delta = variant_score - base_penalty_incurred;
+                *delta = variant_score - base_penalty_incurred;
             }
-            deltas.push(delta);
         }
 
-        // Apply deltas back to self.variant
-        for (v, d) in self.variant.iter_mut().zip(deltas) {
-            v.0 = d;
-        }
-
-        // 3. Combinatorial Resolution
         let best_improvement = self.maximize_delta();
         
         Ok(base_reference_score + best_improvement)
     }
 
-    /// Extracted into an associated function to decouple it from `&self`
-    fn extract_variant_context(
-        segments: &[Segment], 
-        variant: &'a dyn Variant, 
-        penalty: &Penalty
-    ) -> Result<(Vec<u8>, Vec<u8>, f64), AlignmentError> {
-        let mut bases = Vec::new();
-        let mut quals = Vec::new();
-        let mut incurred = 0.0;
-        
-        let v_start = variant.pos();
-        let v_end = variant.end(); // exclusive
-        
-        for seg in segments {
-            // Optimization: Skip segment entirely if it doesn't overlap variant bounds
-            if seg.ref_end <= v_start || seg.ref_start >= v_end {
-                continue;
-            }
-            
-            let op_iter = UnifiedOpIterator::new(seg.rec)
-                .map_err(|e| anyhow!("Failed to create UnifiedOpIterator: {}", e))?;
-                
-            let mut ref_pos = seg.ref_start;
-            let mut offset = 0;
-            
-            for op_res in op_iter {
-                let op = op_res?;
-                
-                match op {
-                    UnifiedOp::Match(len) | UnifiedOp::Mis(len) => {
-                        for i in 0..len as usize {
-                            let curr_pos = ref_pos + i as i64;
-                            if curr_pos >= v_start && curr_pos < v_end {
-                                let q = seg.rec.qual()[offset + i];
-                                let b = seg.rec.seq().encoded[offset + i]; 
-                                bases.push(b);
-                                quals.push(q);
-                                
-                                // Reverse exactly what was added in Phase 1
-                                if let UnifiedOp::Mis(_) = op {
-                                    incurred += penalty.log_likelihood_mismatch[(q as usize).min(MAX_Q - 1)];
-                                } else {
-                                    incurred += penalty.log_likelihood_match[(q as usize).min(MAX_Q - 1)];
-                                }
-                            }
-                        }
-                        ref_pos += len as i64;
-                        offset += len as usize;
-                    }
-                    UnifiedOp::Ins(len) => {
-                        // Insertions consume 0 ref bases, so they sit exactly at ref_pos
-                        if ref_pos >= v_start && ref_pos < v_end {
-                            for i in 0..len as usize {
-                                let q = seg.rec.qual()[offset + i];
-                                let b = seg.rec.seq().encoded[offset + i];
-                                bases.push(b);
-                                quals.push(q);
-                            }
-                            incurred += penalty.gap_open + (len as f64 - 1.0) * penalty.gap_extend;
-                        }
-                        offset += len as usize;
-                    }
-                    UnifiedOp::Del(len) => {
-                        let end_pos = ref_pos + len as i64;
-                        // If deletion overlaps the variant window
-                        if ref_pos < v_end && end_pos > v_start {
-                            incurred += penalty.gap_open + (len as f64 - 1.0) * penalty.gap_extend;
-                        }
-                        ref_pos += len as i64;
-                    }
-                    UnifiedOp::RefSkip(len) => ref_pos += len as i64,
-                    UnifiedOp::Relocate { pos, .. } => ref_pos = pos,
-                }
-            }
-        }
-        
-        Ok((bases, quals, incurred))
-    }
 
     fn maximize_delta(&mut self) -> f64 {
-        // Discard variants that worsen the score
         self.variant.retain(|v| v.0 > 0.0);
         if self.variant.is_empty() {
             return 0.0;
@@ -223,7 +132,6 @@ impl<'a> ReadEnd<'a> {
             
             let mut incl_weight = current_weight;
             
-            // Rust's built-in binary search to find the latest non-overlapping interval
             // partition_point returns the index of the first element that evaluates to `false`.
             let latest_non_overlapping = self.variant[..i].partition_point(|v| v.1.end() <= current_start);
             

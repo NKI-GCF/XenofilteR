@@ -9,6 +9,9 @@ use crate::Penalty;
 use anyhow::{Result, anyhow};
 use rust_htslib::bcf::{self, Read};
 use std::path::Path;
+use crate::alignment::{Segment,AlignmentError};
+use crate::alignment::{UnifiedOp, UnifiedOpIterator};
+use crate::MAX_Q;
 
 /// Trait for any object that can be scored against an alignment.
 pub trait Variant {
@@ -51,6 +54,84 @@ pub trait Variant {
         let v_end   = self.end();
         v_start < read_end && v_end > read_start
     }
+    fn extract_context(
+        &self,
+        segments: &[Segment],
+        penalty: &Penalty
+    ) -> Result<(Vec<u8>, Vec<u8>, f64), AlignmentError> {
+        let mut bases = Vec::new();
+        let mut quals = Vec::new();
+        let mut incurred = 0.0;
+
+        let v_start = self.pos();
+        let v_end = self.end(); // exclusive
+
+        for seg in segments {
+            // Optimization: Skip segment entirely if it doesn't overlap variant bounds
+            if seg.ref_end <= v_start || seg.ref_start >= v_end {
+                continue;
+            }
+
+            let op_iter = UnifiedOpIterator::new(seg.rec)
+                .map_err(|e| anyhow!("Failed to create UnifiedOpIterator: {}", e))?;
+
+            let mut ref_pos = seg.ref_start;
+            let mut offset = 0;
+
+            for op_res in op_iter {
+                let op = op_res?;
+
+                match op {
+                    UnifiedOp::Match(len) | UnifiedOp::Mis(len) => {
+                        for i in 0..len as usize {
+                            let curr_pos = ref_pos + i as i64;
+                            if curr_pos >= v_start && curr_pos < v_end {
+                                let q = seg.rec.qual()[offset + i];
+                                let b = seg.rec.seq().encoded[offset + i];
+                                bases.push(b);
+                                quals.push(q);
+
+                                // Reverse exactly what was added in Phase 1
+                                if let UnifiedOp::Mis(_) = op {
+                                    incurred += penalty.log_likelihood_mismatch[(q as usize).min(MAX_Q - 1)];
+                                } else {
+                                    incurred += penalty.log_likelihood_match[(q as usize).min(MAX_Q - 1)];
+                                }
+                            }
+                        }
+                        ref_pos += len as i64;
+                        offset += len as usize;
+                    }
+                    UnifiedOp::Ins(len) => {
+                        // Insertions consume 0 ref bases, so they sit exactly at ref_pos
+                        if ref_pos >= v_start && ref_pos < v_end {
+                            for i in 0..len as usize {
+                                let q = seg.rec.qual()[offset + i];
+                                let b = seg.rec.seq().encoded[offset + i];
+                                bases.push(b);
+                                quals.push(q);
+                            }
+                            incurred += penalty.gap_open + (len as f64 - 1.0) * penalty.gap_extend;
+                        }
+                        offset += len as usize;
+                    }
+                    UnifiedOp::Del(len) => {
+                        let end_pos = ref_pos + len as i64;
+                        // If deletion overlaps the variant window
+                        if ref_pos < v_end && end_pos > v_start {
+                            incurred += penalty.gap_open + (len as f64 - 1.0) * penalty.gap_extend;
+                        }
+                        ref_pos += len as i64;
+                    }
+                    UnifiedOp::RefSkip(len) => ref_pos += len as i64,
+                    UnifiedOp::Relocate { pos, .. } => ref_pos = pos,
+                }
+            }
+        }
+
+        Ok((bases, quals, incurred))
+    }
+
 }
 
 /// Generic VCF reader that accepts a parser function.

@@ -8,7 +8,7 @@ pub(crate) use errors::{AlignmentError, MdOpIteratorError, PrepareError};
 pub(crate) use mdopiterator::{MdOp, MdOpIterator};
 pub(crate) use ops::{UnifiedOp, UnifiedOpIterator};
 pub(crate) use prepared::{PreparedAlignmentPairIter, stringify_record};
-pub(crate) use fragment::build_fragment;
+pub(crate) use fragment::{build_fragment, Segment};
 
 #[cfg(test)]
 pub(crate) use prepared::PreparedAlignmentPair;
