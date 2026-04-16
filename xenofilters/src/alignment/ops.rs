@@ -6,7 +6,7 @@ use std::cmp::min;
 // TODO: for paired-end introduce another operation for read switching
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum UnifiedOp {
+pub(crate) enum UnifiedOp {
     /// A pure reference match
     Match(u32),
 
@@ -36,7 +36,7 @@ impl TryFrom<Cigar> for UnifiedOp {
 }
 
 #[cfg_attr(test, derive(Debug))]
-pub struct UnifiedOpIterator<'a> {
+pub(crate) struct UnifiedOpIterator<'a> {
     cigar_iter: std::vec::IntoIter<Cigar>,
     md_iter: MdOpIterator<'a>,
     next_md_op: Option<MdOp>,
@@ -46,7 +46,7 @@ pub struct UnifiedOpIterator<'a> {
 }
 
 impl<'a> UnifiedOpIterator<'a> {
-    pub fn new(rec: &'a Record) -> Result<Self, PrepareError> {
+    pub(crate) fn new(rec: &'a Record) -> Result<Self, PrepareError> {
         let md_iter = MdOpIterator::new(rec)?;
         let cigar_iter = rec.cigar().to_vec().into_iter();
         Ok(UnifiedOpIterator {
@@ -58,7 +58,7 @@ impl<'a> UnifiedOpIterator<'a> {
             is_rev: rec.is_reverse(),
         })
     }
-    pub fn empty(is_rev: bool) -> Self {
+    pub(crate) fn empty(is_rev: bool) -> Self {
         UnifiedOpIterator {
             cigar_iter: vec![].into_iter(),
             md_iter: MdOpIterator::empty(),
@@ -101,7 +101,7 @@ impl<'a> UnifiedOpIterator<'a> {
             MdOp::Deletion(_) => Err(AlignmentError::MdCigarMismatch),
         }
     }
-    pub fn is_single_match(&self) -> bool {
+    pub(crate) fn is_single_match(&self) -> bool {
         let cig_ct: usize = self.cigar_iter.as_slice().len();
         cig_ct == 1 && self.md_iter.is_single_operation()
     }
