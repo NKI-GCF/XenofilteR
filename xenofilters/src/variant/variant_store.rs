@@ -26,20 +26,16 @@ impl<V: Variant> VariantStoreTrait for VariantStore<V> {
     }
 }
 
-/// Container for all variants of one species (one alignment input).
-/// One `Vec<V>` per chromosome, kept sorted by `pos`.
+/// `Vec<V>` per chrom, sorted by `pos`.
 #[derive(Debug)]
 pub(crate) struct VariantStore<V: Variant> {
-    /// chr_id → sorted list of variants
     pub(crate) per_chr: Vec<Vec<V>>,
-    /// Maximum reference span of any variant in the whole store (used for look-back).
-    /// Computed dynamically while loading.
+    /// Maximum reference span of any variant
     pub(crate) max_variant_len: i64,
 }
 
 impl<V: Variant> VariantStore<V> {
-    /// Returns a small borrow-only slice of all variants that **overlap** any part of the read.
-    /// Call this once per fragment per species (or a few times for mates/supplementaries).
+    /// Returns a small borrow-only slice of variants that **overlap** any part of the read.
     pub(crate) fn variants_overlapping(
         &self,
         rid: usize,          // htslib chromosome id
