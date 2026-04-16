@@ -3,8 +3,6 @@ use crate::alignment::{AlignmentError, MdOp, MdOpIterator};
 use rust_htslib::bam::record::{Cigar, Record};
 use std::cmp::min;
 
-// TODO: for paired-end introduce another operation for read switching
-
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum UnifiedOp {
     /// A pure reference match
@@ -22,7 +20,6 @@ pub(crate) enum UnifiedOp {
         penalty: f64,
     },
 }
-
 impl TryFrom<Cigar> for UnifiedOp {
     type Error = AlignmentError;
 

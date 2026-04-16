@@ -12,6 +12,20 @@ use std::path::Path;
 use crate::alignment::{Segment,AlignmentError};
 use crate::alignment::{UnifiedOp, UnifiedOpIterator};
 use crate::MAX_Q;
+use smallvec::SmallVec;
+
+type SliceInfo<'a> = (bool, &'a [u8], &'a [u8]); // (is_revcmp, bases, quals)
+type SlicesForVariant<'a> = SmallVec<[SliceInfo<'a>; 1]>;
+
+fn reverse_complement_encoded_slice(bases: &[u8]) -> Vec<u8> {
+    bases.iter().rev().map(|&b| match b {
+        b'A' => b'T',
+        b'T' => b'A',
+        b'C' => b'G',
+        b'G' => b'C',
+        _ => b'N',
+    }).collect()
+}
 
 /// Trait for any object that can be scored against an alignment.
 pub trait Variant {
@@ -23,6 +37,16 @@ pub trait Variant {
 
     /// The alternate allele
     fn alt_allele(&self) -> &[u8];
+
+    fn get_read_window_len(&self) -> usize {
+        // may be longer than the variant itself due to indels.
+        self.alt_allele().len().max(self.ref_allele().len())
+    }
+    fn get_size(&self) -> usize {
+        let n = self.alt_allele().len();
+        let m = self.get_read_window_len();
+        (n + 1) * (m + 1)
+    }
 
     /// Checks if a read chunk matches this variant's ALT allele.
     /// Default implementation handles simple string equality.
@@ -143,7 +167,7 @@ pub fn vcf_reader<V: Variant>(
         .map_err(|e| anyhow!("Failed to open VCF/BCF {}: {}", f.display(), e))?;
 
     let mut per_chr: Vec<Vec<V>> = Vec::new();
-    let mut max_len: i64 = 0;
+    let mut max_variant_len: i64 = 1; // at least 1
     let mut is_sorted = true;
 
     for record_result in bcf_reader.records() {
@@ -161,14 +185,15 @@ pub fn vcf_reader<V: Variant>(
             if is_sorted {
                 if let Some(last) = last_pos {
                     if pos < last {
+                        eprintln!("Variants in {} are not sorted by position.", f.display());
                         is_sorted = false;
                     }
                 }
                 last_pos = Some(pos);
             }
             let span = v.end() - pos;
-            if span > max_len {
-                max_len = span;
+            if span > max_variant_len {
+                max_variant_len = span;
             }
             per_chr[rid].push(v);
         }
@@ -182,6 +207,6 @@ pub fn vcf_reader<V: Variant>(
 
     Ok(VariantStore {
         per_chr,
-        max_variant_len: max_len.max(1),   // at least 1
+        max_variant_len,
     })
 }

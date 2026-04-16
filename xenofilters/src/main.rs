@@ -64,7 +64,11 @@ pub(crate) struct Config {
     #[arg(short = 'U', long, default_value = "false")]
     pub(crate) discard_unmapped: bool,
 
-    /// Gap open penalty (affects indels)
+    /// Mismatch penalty (affects mismatches)
+    #[arg(short, long, default_value = "4", value_parser = clap::value_parser!(f64))]
+    pub(crate) mismatch_penalty: f64,
+
+    /// Gap open penalty for deletions and insertions
     #[arg(short, long, default_value = "6", value_parser = clap::value_parser!(f64))]
     pub(crate) gap_open: f64,
 
@@ -72,9 +76,9 @@ pub(crate) struct Config {
     #[arg(short = 'e', long, default_value = "1", value_parser = clap::value_parser!(f64))]
     pub(crate) gap_extend: f64,
 
-    /// Mismatch penalty (affects mismatches)
-    #[arg(short, long, default_value = "4", value_parser = clap::value_parser!(f64))]
-    pub(crate) mismatch_penalty: f64,
+    /// penalty for 5'- and 3'-end clipping
+    #[arg(short = 'c', long, default_value = "5", value_parser = clap::value_parser!(f64))]
+    pub(crate) clipping_penalty: f64,
 
     /// strip fastq-style /1 and /2 from read names when comparing
     #[arg(short = 'R', long, default_value = "auto")]
@@ -121,6 +125,7 @@ pub(crate) struct Config {
 struct Penalty {
     pub(crate) gap_open: f64,
     pub(crate) gap_extend: f64,
+    pub(crate) mismatch_penalty: f64,
     pub(crate) log_likelihood_mismatch: [f64; MAX_Q],
     pub(crate) log_likelihood_match: [f64; MAX_Q],
 }
@@ -191,6 +196,7 @@ impl Config {
         Penalty {
             gap_open: self.gap_open,
             gap_extend: self.gap_extend,
+            mismatch_penalty: self.mismatch_penalty,
             log_likelihood_mismatch,
             log_likelihood_match,
         }

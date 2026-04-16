@@ -3,6 +3,9 @@ use crate::variant::Variant;
 use anyhow::Result;
 use rust_htslib::bcf::record::Record;
 
+// FIXME, a variant could have multiple ALT alleles, and the GT could be 0/2, so we should ideally
+// have one SampleVariant per ALT allele, and check if each ALT allele is present in the GT. For
+// simplicity, this example assumes only one ALT allele and GT is either 0/1 or 1/1 for the ALT.
 pub struct SampleVariant {
     pos: i64,
     ref_a: Vec<u8>,
@@ -25,11 +28,17 @@ impl Variant for SampleVariant {
     }
 
     fn score_alt_match(&self, penalties: &Penalty, quals: &[u8]) -> f64 {
-        let len = quals.len();
-        if len == 0 {
-            return 0.0;
+        let len = match quals.len() {
+            0 => return 0.0,
+            l => l as f64,
+        };
+
+        let mut score_match = 0.0;
+        let mut score_mismatch = 0.0;
+        for q in quals {
+            score_match += penalties.log_likelihood_match[*q as usize];
+            score_mismatch += penalties.log_likelihood_mismatch[*q as usize];
         }
-        let len = len as f64;
         // P(Genotype is correct)
         let p_gt_correct = 1.0 - 10f64.powf(-(self.genotype_quality as f64) / 10.0);
 
@@ -40,13 +49,6 @@ impl Variant for SampleVariant {
         } else {
             1.0 - p_gt_correct
         };
-
-        let mut score_match = 0.0;
-        let mut score_mismatch = 0.0;
-        for q in quals {
-            score_match += penalties.log_likelihood_match[*q as usize];
-            score_mismatch += penalties.log_likelihood_mismatch[*q as usize];
-        }
         p_variant * (score_match / len) + (1.0 - p_variant) * (score_mismatch / len)
     }
 

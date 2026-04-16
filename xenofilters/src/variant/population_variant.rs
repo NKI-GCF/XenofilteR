@@ -3,7 +3,8 @@ use crate::variant::Variant;
 use anyhow::{Result, anyhow};
 use rust_htslib::bcf::record::Record;
 
-#[allow(dead_code)]
+/// FIXME a variant could have multiple ALT alleles, but for simplicity we only consider one here.
+/// We can extend this later if needed.
 pub struct PopulationVariant {
     pos: i64,
     ref_a: Vec<u8>,
@@ -24,21 +25,19 @@ impl Variant for PopulationVariant {
     }
 
     fn score_alt_match(&self, penalties: &Penalty, quals: &[u8]) -> f64 {
-        let p_variant = self.allele_frequency as f64;
-
         // This read matches the ALT.
         // Score = P(Variant is truth) * (Score for Match) + P(Ref is truth) * (Score for Mismatch)
-        let len = quals.len();
-        if len == 0 {
-            return 0.0;
-        }
-        let len = len as f64;
+        let len = match quals.len() {
+            0 => return 0.0,
+            l => l as f64,
+        };
         let mut score_match = 0.0;
         let mut score_mismatch = 0.0;
         for q in quals {
             score_match += penalties.log_likelihood_match[*q as usize];
             score_mismatch += penalties.log_likelihood_mismatch[*q as usize];
         }
+        let p_variant = self.allele_frequency as f64;
         p_variant * (score_match / len) + (1.0 - p_variant) * (score_mismatch / len)
     }
 

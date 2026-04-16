@@ -6,6 +6,7 @@ use anyhow::{Result, anyhow};
 use rust_htslib::bam::record::{Cigar, Record};
 use smallvec::SmallVec;
 use crate::variant::Variant;
+use crate::alignment::SegmentVec;
 
 #[derive(Debug)]
 pub(crate) struct Segment<'a> {
