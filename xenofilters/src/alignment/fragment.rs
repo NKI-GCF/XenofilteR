@@ -8,12 +8,6 @@ use smallvec::SmallVec;
 use crate::variant::Variant;
 use crate::alignment::SegmentVec;
 
-#[derive(Debug)]
-pub(crate) struct Segment<'a> {
-    pub(crate) rec: &'a Record,
-    pub(crate) ref_start: i64,         // 0-based, inclusive
-    pub(crate) ref_end: i64,           // exclusive
-}
 
 #[derive(Default)]
 struct ReadEnd<'a> {
@@ -59,7 +53,6 @@ impl<'a> ReadEnd<'a> {
             let op_iter = UnifiedOpIterator::new(seg.rec)
                 .map_err(|e| anyhow!("Failed to create UnifiedOpIterator: {}", e))?;
             
-            at.pos = seg.ref_start;
             at.offset = 0; 
 
             for op_res in op_iter {
@@ -98,15 +91,6 @@ impl<'a> ReadEnd<'a> {
         let base_reference_score = at.score;
 
         for (delta, variant) in self.variant.iter_mut() {
-            let (read_bases, read_quals, base_penalty_incurred) = variant.extract_context(&self.segment, penalty)?;
-
-            if variant.matches_alt(&read_bases) {
-                let variant_score = variant.score_alt_match(penalty, &read_quals);
-                *delta = variant_score - base_penalty_incurred;
-            } else if variant.matches_ref(&read_bases) {
-                let variant_score = variant.score_ref_match(penalty, &read_quals);
-                *delta = variant_score - base_penalty_incurred;
-            }
         }
 
         let best_improvement = self.maximize_delta();
@@ -144,6 +128,19 @@ impl<'a> ReadEnd<'a> {
         }
 
         *dp.last().unwrap_or(&0.0)
+    }
+}
+
+pub(crate) struct Segment<'a> {
+    pub(crate) rec: &'a Record,
+}
+
+impl <'a> Segment<'a> {
+    pub(crate) fn ref_start(&self) -> i64 {
+        self.rec.pos()
+    }
+    pub(crate) fn ref_end(&self) -> i64 {
+        self.rec.cigar().end_pos()
     }
 }
 
@@ -228,8 +225,6 @@ pub fn build_fragment<'a>(
 
         let seg = Segment {
             rec: record,
-            ref_start: record.pos() as i64,
-            ref_end: record.cigar().end_pos() as i64,
         };
 
         current_read_end.segment.push(seg);

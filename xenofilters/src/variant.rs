@@ -81,25 +81,29 @@ pub trait Variant {
     fn extract_context(
         &self,
         segments: &[Segment],
+        i: usize,
         penalty: &Penalty
     ) -> Result<(Vec<u8>, Vec<u8>, f64), AlignmentError> {
         let mut bases = Vec::new();
         let mut quals = Vec::new();
         let mut incurred = 0.0;
+        let rec = segments[i].rec;
 
         let v_start = self.pos();
+        // at_pos prevents double-counting bases from overlapping split reads
+        let mut at_pos = self.pos();
         let v_end = self.end(); // exclusive
 
         for seg in segments {
-            // Optimization: Skip segment entirely if it doesn't overlap variant bounds
-            if seg.ref_end <= v_start || seg.ref_start >= v_end {
+            // Skip if this segment is before our needed position
+            if seg.ref_end() <= at_pos || (rec.is_last_in_template() && seg.rec.is_first_in_template()) {
                 continue;
             }
 
             let op_iter = UnifiedOpIterator::new(seg.rec)
                 .map_err(|e| anyhow!("Failed to create UnifiedOpIterator: {}", e))?;
 
-            let mut ref_pos = seg.ref_start;
+            let mut ref_pos = seg.ref_start();
             let mut offset = 0;
 
             for op_res in op_iter {
