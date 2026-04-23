@@ -50,11 +50,58 @@ pub trait Variant {
 
     /// Checks if a read chunk matches this variant's ALT allele.
     /// Default implementation handles simple string equality.
-    fn matches_alt(&self, read_bases: &[u8]) -> bool {
-        self.alt_allele() == read_bases
+    fn matches_seq(&self, slices: SlicesForVariant, allele: &[u8]) -> bool {
+        let mut offset = 0;
+
+        for (is_revcmp, bases, _) in slices {
+            let base_len = bases.len().min(allele.len().saturating_sub(offset));
+            if is_revcmp {
+                for b in bases[..base_len].iter().rev() {
+                    match (b, allele[offset]) {
+                        (b'A', b'T') | (b'T', b'A') | (b'C', b'G') | (b'G', b'C') => offset += 1,
+                        _ => return false,
+                    }
+                }
+            } else if bases[..base_len] != allele[offset..offset + base_len] {
+                return false;
+            }
+            offset += base_len;
+        }
+        true
     }
-    fn matches_ref(&self, read_bases: &[u8]) -> bool {
-        self.ref_allele() == read_bases
+    fn matches_alt(&self, slices: SlicesForVariant) -> bool {
+        self.matches_seq(slices, self.alt_allele())
+
+    }
+    fn matches_ref(&self, slices: SlicesForVariant) -> bool {
+        self.matches_seq(slices, self.ref_allele())
+    }
+
+    fn score_alt(&self, slices: SlicesForVariant, penalties: &Penalty, quals: &[u8]) -> f64 {
+        let mut score = 0.0;
+        let mut offset = 0;
+        let alt = self.alt_allele();
+
+        for (is_revcmp, bases, base_quals) in slices {
+            let base_len = bases.len().min(alt.len().saturating_sub(offset));
+            for i in 0..base_len {
+                let q = (base_quals[i] as usize).min(MAX_Q - 1);
+                score += if is_revcmp {
+                    match (bases[i], alt[offset + i]) {
+                        (b'A', b'T') | (b'T', b'A') | (b'C', b'G') | (b'G', b'C') => {
+                            penalties.log_likelihood_match[q]
+                        },
+                        _ => penalties.log_likelihood_mismatch[q],
+                    }
+                } else if bases[i] == alt[offset + i] {
+                    penalties.log_likelihood_match[q]
+                } else {
+                    penalties.log_likelihood_mismatch[q]
+                };
+            }
+            offset += base_len;
+        }
+        score
     }
 
     /// Provides an adjusted score for a read chunk that **matches the ALT allele**.
@@ -64,8 +111,6 @@ pub trait Variant {
     /// Provides an adjusted score for a read chunk that **matches the REF allele**.
     /// This is called when a variant is present, but the read *agrees* with the reference.
     fn score_ref_match(&self, penalties: &Penalty, quals: &[u8]) -> f64;
-
-    fn len(&self) -> usize { self.ref_allele().len().max(self.alt_allele().len()) }
 
     /// End position (1-based, exclusive) — allows easy overlap check
     fn end(&self) -> i64 {
