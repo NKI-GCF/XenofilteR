@@ -1,127 +1,55 @@
-#[cfg(test)]
-use crate::alignment::stringify_record;
-use crate::alignment::{AlignmentError, UnifiedOp, UnifiedOpIterator};
-use crate::{MAX_Q, Penalty};
-use anyhow::{Result, anyhow};
-use rust_htslib::bam::record::{Cigar, Record};
+use crate::Penalty;
+use anyhow::Result;
+use rust_htslib::bam::record::Record;
 use smallvec::SmallVec;
-use crate::variant::Variant;
-use crate::alignment::SegmentVec;
+use crate::variant::{VntPerRec, VariantEval};
+use crate::at::At;
+use crate::alignment::{AlignmentError, SegmentVec};
 
-
-#[derive(Default)]
-struct ReadEnd<'a> {
-    segment: SmallVec<[Segment<'a>; 4]>,
-    variant: SmallVec<[(f64, &'a dyn Variant); 8]>,
+pub(crate) struct Fragment<'r> {
+    segment: SegmentVec<'r>,
 }
 
-pub(crate) struct Fragment<'a> {
-    read_end: SmallVec<[ReadEnd<'a>; 2]>,
-    penalty: &'a Penalty,
-}
+impl<'r> Fragment<'r> {
+    pub(crate) fn score<'v, 's>(&'s self, pen: &'r Penalty, mut vnt_per_rec: VntPerRec<'v>) -> Result<f64, AlignmentError> 
+        where 'r: 's, 'v: 's
+    {
+        let mut at = At::new(pen, &self.segment);
+        let mut score = at.score(&mut vnt_per_rec[0])?;
 
-impl<'a> Fragment<'a> {
-    pub fn score(&mut self) -> Result<f64, AlignmentError> {
-        let mut total = 0.0;
-        for read_end in self.read_end.iter_mut() {
-            total += read_end.score(self.penalty)?;
+        for i in 1..self.segment.len() {
+            at.update_seg_i(i);
+            score += at.score(&mut vnt_per_rec[i])?;
         }
-        Ok(total)
-    }
-}
-
-struct At {
-    pub score: f64,
-    pub pos: i64,
-    pub offset: usize,
-    pub seg_idx: usize,
-}
-
-impl At {
-    fn increment_and_score(&mut self, score: f64) {
-        self.score += score;
-        self.pos += 1;
-        self.offset += 1;
-    }
-}
-impl<'a> ReadEnd<'a> {
-    fn score(&mut self, penalty: &Penalty) -> Result<f64, AlignmentError> {
-        let mut at = At { score: 0.0, pos: -1, offset: 0, seg_idx: 0 };
-
-        // 1. Base Reference Scoring
-        for seg in &self.segment {
-            let op_iter = UnifiedOpIterator::new(seg.rec)
-                .map_err(|e| anyhow!("Failed to create UnifiedOpIterator: {}", e))?;
-            
-            at.offset = 0; 
-
-            for op_res in op_iter {
-                let op = op_res?;
-                match op {
-                    UnifiedOp::Mis(len) => {
-                        for i in 0..len as usize {
-                            let q = seg.rec.qual()[at.offset + i];
-                            at.increment_and_score(penalty.log_likelihood_mismatch[(q as usize).min(MAX_Q - 1)]);
-                        }
-                    }
-                    UnifiedOp::Match(len) => {
-                        for i in 0..len as usize {
-                            let q = seg.rec.qual()[at.offset + i];
-                            at.increment_and_score(penalty.log_likelihood_match[(q as usize).min(MAX_Q - 1)]);
-                        }
-                    }
-                    UnifiedOp::Del(len) => {
-                        at.score += penalty.gap_open + (len as f64 - 1.0) * penalty.gap_extend;
-                        at.pos += len as i64;
-                    }
-                    UnifiedOp::Ins(len) => {
-                        at.score += penalty.gap_open + (len as f64 - 1.0) * penalty.gap_extend;
-                        at.offset += len as usize;
-                    }
-                    UnifiedOp::RefSkip(len) => at.pos += len as i64,
-                    UnifiedOp::Relocate { pos, penalty: penalty_score } => {
-                        at.score -= penalty_score;
-                        at.pos = pos;
-                    }
-                }
-            }
-            at.seg_idx += 1;
-        }
-
-        let base_reference_score = at.score;
-
-        for (delta, variant) in self.variant.iter_mut() {
-        }
-
-        let best_improvement = self.maximize_delta();
-        
-        Ok(base_reference_score + best_improvement)
+        Ok(score + self.maximize_delta(vnt_per_rec))
     }
 
+    fn maximize_delta<'v>(&self, delta: VntPerRec<'v>) -> f64 {
+        let mut variants: SmallVec<[&VariantEval<'v>; 4]> = delta
+            .iter()
+            .flatten()
+            .filter(|v| v.delta() > 0.0)
+            .collect();
 
-    fn maximize_delta(&mut self) -> f64 {
-        self.variant.retain(|v| v.0 > 0.0);
-        if self.variant.is_empty() {
+        if variants.is_empty() {
             return 0.0;
         }
 
-        // Must sort by end coordinate for Weighted Interval Scheduling
-        self.variant.sort_unstable_by_key(|v| v.1.end());
+        // Sort by end coordinate for Weighted Interval Scheduling
+        variants.sort_unstable_by_key(|v| v.end());
 
-        let mut dp = vec![0.0; self.variant.len()];
-        dp[0] = self.variant[0].0;
+        let mut dp = vec![0.0; variants.len()];
+        dp[0] = variants[0].delta();
 
-        for i in 1..self.variant.len() {
-            let current_weight = self.variant[i].0;
-            let current_start = self.variant[i].1.pos();
-            
+        for i in 1..variants.len() {
+            let current_weight = variants[i].delta();
+            let current_start = variants[i].start();
+
             let mut incl_weight = current_weight;
-            
-            // partition_point returns the index of the first element that evaluates to `false`.
-            let latest_non_overlapping = self.variant[..i].partition_point(|v| v.1.end() <= current_start);
-            
-            if latest_non_overlapping > 0 {
-                incl_weight += dp[latest_non_overlapping - 1];
+
+            let latest = variants[..i].partition_point(|v| v.end() <= current_start);
+            if latest > 0 {
+                incl_weight += dp[latest - 1];
             }
 
             dp[i] = dp[i - 1].max(incl_weight);
@@ -165,84 +93,21 @@ const fn revcmp_encoded(b: u8) -> u8 {
     }
 }
 
-/// Calculates the penalty for a translocation.
-/// This penalty is a trade-off between the cost of the unaligned/soft-clipped bases
-/// and the quality of the aligned segment.
-/// (Penalty for unaligned bases) - (Match Log-Likelihood Score)
-fn calculate_translocation_penalty(penalty: &Penalty, record: &Record) -> Result<f64> {
-    let cigar_view = record.cigar();
-
-    let mut qual_iter = record.qual().iter().copied();
-
-    let mut clipped_quality_penalty = 0.0;
-    let mut total_match_log_likelihood = 0.0;
-
-    for op in cigar_view.iter() {
-        let len = op.len() as usize;
-        match op {
-            Cigar::Match(_) | Cigar::Equal(_) | Cigar::Diff(_) => {
-                for q in qual_iter.by_ref().take(len) {
-                    let q_idx = q as usize;
-                    if q_idx < MAX_Q {
-                        total_match_log_likelihood += penalty.log_likelihood_match[q_idx];
-                    }
-                }
-            }
-            Cigar::Ins(_) => {
-                qual_iter.by_ref().nth(len.saturating_sub(1));
-            }
-            Cigar::SoftClip(_) => {
-                for q in qual_iter.by_ref().take(len) {
-                    let q_idx = q as usize;
-                    if q_idx < MAX_Q {
-                        clipped_quality_penalty += penalty.log_likelihood_mismatch[q_idx].abs();
-                    }
-                }
-            }
-            Cigar::Del(_) | Cigar::RefSkip(_) | Cigar::HardClip(_) | Cigar::Pad(_) => {}
-        }
-    }
-
-    let penalty = clipped_quality_penalty - total_match_log_likelihood;
-    Ok(penalty.max(0.0))
-}
-
-pub fn build_fragment<'a>(
-    penalty: &'a Penalty,
-    records: &'a [Record],
+pub fn build_fragment<'r>(
+    records: &'r [Record],
     order: SmallVec<[usize; 2]>,
-    variants_per_record: SmallVec<[SmallVec<[&'a dyn Variant; 8]>; 2]>,
-) -> Result<Fragment<'a>> {
-    let mut read_end = SmallVec::<[ReadEnd<'a>; 2]>::new();
-    let mut current_read_end = ReadEnd { segment: SmallVec::new(), variant: SmallVec::new() };
+) -> Result<Fragment<'r>> {
+    let mut segment = SegmentVec::<'r>::new();
 
     for &idx in &order {
-        let record = &records[idx];
-        if record.is_secondary() {
-            if !record.is_first_in_template() { break; }
-            continue;
-        }
-
-        let seg = Segment {
-            rec: record,
-        };
-
-        current_read_end.segment.push(seg);
-        if let Some(vars) = variants_per_record.get(idx) {
-            current_read_end.variant.extend(vars.iter().map(|&v| (0.0, v)));
-        }
-
-        // When we hit a mate switch, finish the current read-end
-        if !record.is_supplementary() && current_read_end.segment.len() > 1 {
-            read_end.push(std::mem::take(&mut current_read_end));
+        let rec = &records[idx];
+        if !rec.is_secondary() {
+            segment.push(Segment { rec });
+        } else if !rec.is_first_in_template() {
+            break;
         }
     }
-
-    if !current_read_end.segment.is_empty() {
-        read_end.push(current_read_end);
-    }
-
-    Ok(Fragment { read_end, penalty })
+    Ok(Fragment { segment })
 }
 
 #[cfg(test)]

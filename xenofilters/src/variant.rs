@@ -1,6 +1,7 @@
 mod population_variant;
 mod sample_variant;
 mod variant_store;
+mod variant_eval;
 
 pub(super) use population_variant::{PopulationVariant, parse_population_record};
 pub(super) use sample_variant::{SampleVariant, parse_sample_record};
@@ -9,13 +10,12 @@ use crate::Penalty;
 use anyhow::{Result, anyhow};
 use rust_htslib::bcf::{self, Read};
 use std::path::Path;
-use crate::alignment::{Segment,AlignmentError};
-use crate::alignment::{UnifiedOp, UnifiedOpIterator};
-use crate::MAX_Q;
 use smallvec::SmallVec;
+pub(crate) use variant_eval::VariantEval;
 
-type SliceInfo<'a> = (bool, &'a [u8], &'a [u8]); // (is_revcmp, bases, quals)
-type SlicesForVariant<'a> = SmallVec<[SliceInfo<'a>; 1]>;
+pub(crate) type DeltaPerRec<'a> = SmallVec<[VariantEval<'a>; 0]>;
+pub(crate) type VntPerRec<'a> = SmallVec<[DeltaPerRec<'a>; 2]>;
+type SlicesForVariant<'a> = SmallVec<[(bool, &'a [u8], &'a [u8]); 1]>;
 
 fn reverse_complement_encoded_slice(bases: &[u8]) -> Vec<u8> {
     bases.iter().rev().map(|&b| match b {
@@ -75,33 +75,6 @@ pub trait Variant {
     }
     fn matches_ref(&self, slices: SlicesForVariant) -> bool {
         self.matches_seq(slices, self.ref_allele())
-    }
-
-    fn score_alt(&self, slices: SlicesForVariant, penalties: &Penalty, quals: &[u8]) -> f64 {
-        let mut score = 0.0;
-        let mut offset = 0;
-        let alt = self.alt_allele();
-
-        for (is_revcmp, bases, base_quals) in slices {
-            let base_len = bases.len().min(alt.len().saturating_sub(offset));
-            for i in 0..base_len {
-                let q = (base_quals[i] as usize).min(MAX_Q - 1);
-                score += if is_revcmp {
-                    match (bases[i], alt[offset + i]) {
-                        (b'A', b'T') | (b'T', b'A') | (b'C', b'G') | (b'G', b'C') => {
-                            penalties.log_likelihood_match[q]
-                        },
-                        _ => penalties.log_likelihood_mismatch[q],
-                    }
-                } else if bases[i] == alt[offset + i] {
-                    penalties.log_likelihood_match[q]
-                } else {
-                    penalties.log_likelihood_mismatch[q]
-                };
-            }
-            offset += base_len;
-        }
-        score
     }
 
     /// Provides an adjusted score for a read chunk that **matches the ALT allele**.

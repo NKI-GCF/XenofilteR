@@ -4,7 +4,8 @@ use crate::fragment_state::FragmentState;
 use anyhow::{Result, anyhow};
 use rust_htslib::bam::record::{Aux, Record};
 use std::cmp::Ordering;
-use smallvec::SmallVec;
+use smallvec::{SmallVec, smallvec};
+use crate::variant::VntPerRec;
 
 pub(crate) enum Decision {
     First,
@@ -44,35 +45,33 @@ impl LineByLine {
         state: &FragmentState,
         aln_idx: usize,
     ) -> Result<f64> {
-        let mut ranges = Vec::with_capacity(4);
+        let mut ranges: SmallVec<[(usize, i64, i64); 2]> = SmallVec::with_capacity(state.records.len());
         for rec in &state.records {
             if let Some((tid, start, end)) = alignment_range(rec) {
                 ranges.push((tid as usize, start, end));
             }
         }
 
-        let mut variants_per_rec = SmallVec::with_capacity(state.records.len());
+        let mut dvnt_per_rec = SmallVec::with_capacity(state.records.len());
         for rec in &state.records {
             if let Some((tid, start, end)) = alignment_range(rec) {
-                let ranges = vec![(tid as usize, start, end)];
-                let vars = self.aln.get(aln_idx)
+                let ranges: SmallVec<[(usize, i64, i64); 1]> = smallvec![(tid as usize, start, end)];
+                let delta_vars = self.aln.get(aln_idx)
                     .and_then(|a| a.variant_store())
                     .map(|s| s.variants_overlapping_multi(&ranges))
                     .unwrap_or_default();
-                variants_per_rec.push(vars);
+                dvnt_per_rec.push(delta_vars);
             } else {
-                variants_per_rec.push(SmallVec::new());
+                dvnt_per_rec.push(SmallVec::new());
             }
         }
 
-        let mut fragment = build_fragment(
-            &self.penalties,
+        let fragment = build_fragment(
             &state.records,
-            state.order_mates(),
-            variants_per_rec,
+            state.order_mates()
         )?;
 
-        fragment.score().map_err(|e| {
+        fragment.score(&self.penalties, dvnt_per_rec).map_err(|e| {
             anyhow!(
                 "Error scoring fragment for alignment {aln_idx}: {}\n{}",
                 e,

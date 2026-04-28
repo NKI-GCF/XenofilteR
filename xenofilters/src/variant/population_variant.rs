@@ -2,6 +2,7 @@ use crate::Penalty;
 use crate::variant::Variant;
 use anyhow::{Result, anyhow};
 use rust_htslib::bcf::record::Record;
+use crate::MAX_Q;
 
 /// FIXME a variant could have multiple ALT alleles, but for simplicity we only consider one here.
 /// We can extend this later if needed.

@@ -11,6 +11,7 @@ use rust_htslib::bam::record::CigarString;
 use rust_htslib::bam::record::{Cigar, Record};
 use smallvec::{SmallVec, smallvec};
 use crate::variant::Variant;
+use crate::alignment::stringify_record;
 
 pub(crate) fn setup_penalties() -> Penalty {
     let c = Config::default();
