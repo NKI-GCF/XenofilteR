@@ -2,8 +2,6 @@ use crate::alignment::PrepareError;
 use crate::alignment::{AlignmentError, MdOp, MdOpIterator};
 use rust_htslib::bam::record::{Cigar, Record};
 use std::cmp::min;
-use crate::variant::VariantEval;
-use crate::at::At;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum UnifiedOp {

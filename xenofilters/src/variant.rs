@@ -123,12 +123,11 @@ pub fn vcf_reader<V: Variant>(
         for v in variants {
             let pos = v.pos();
             if is_sorted {
-                if let Some(last) = last_pos {
-                    if pos < last {
+                if let Some(last) = last_pos
+                    && pos < last {
                         eprintln!("Variants in {} are not sorted by position.", f.display());
                         is_sorted = false;
                     }
-                }
                 last_pos = Some(pos);
             }
             let span = v.end() - pos;
