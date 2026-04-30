@@ -3,3 +3,4 @@ xenofilters/target-valhallen
 xenofilters/*.profraw
 xenofilters/*.profdata
 xenofilters/tests
+xenofilters/tags
