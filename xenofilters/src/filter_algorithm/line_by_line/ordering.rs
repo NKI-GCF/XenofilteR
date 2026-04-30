@@ -1,11 +1,10 @@
 use super::core::{AlnBuffer, LineByLine};
-use crate::alignment::{build_fragment, stringify_record};
+use crate::alignment::{Fragment, stringify_record};
 use crate::fragment_state::FragmentState;
 use anyhow::{Result, anyhow};
 use rust_htslib::bam::record::{Aux, Record};
 use std::cmp::Ordering;
-use smallvec::{SmallVec, smallvec};
-use crate::variant::VntPerRec;
+use smallvec::SmallVec;
 
 pub(crate) enum Decision {
     First,
@@ -45,33 +44,27 @@ impl LineByLine {
         state: &FragmentState,
         aln_idx: usize,
     ) -> Result<f64> {
-        let mut ranges: SmallVec<[(usize, i64, i64); 2]> = SmallVec::with_capacity(state.records.len());
-        for rec in &state.records {
-            if let Some((tid, start, end)) = alignment_range(rec) {
-                ranges.push((tid as usize, start, end));
-            }
-        }
-
         let mut dvnt_per_rec = SmallVec::with_capacity(state.records.len());
-        for rec in &state.records {
+        let mut segment = SmallVec::new();
+
+        for idx in state.order_mates() {
+            let rec = &state.records[idx];
             if let Some((tid, start, end)) = alignment_range(rec) {
-                let ranges: SmallVec<[(usize, i64, i64); 1]> = smallvec![(tid as usize, start, end)];
                 let delta_vars = self.aln.get(aln_idx)
                     .and_then(|a| a.variant_store())
-                    .map(|s| s.variants_overlapping_multi(&ranges))
+                    .map(|s| s.overlapping_multi(tid, start, end))
                     .unwrap_or_default();
                 dvnt_per_rec.push(delta_vars);
             } else {
                 dvnt_per_rec.push(SmallVec::new());
             }
+            if !rec.is_secondary() {
+                segment.push(rec);
+            } else if !rec.is_first_in_template() {
+                break;
+            }
         }
-
-        let fragment = build_fragment(
-            &state.records,
-            state.order_mates()
-        )?;
-
-        fragment.score(&self.penalties, dvnt_per_rec).map_err(|e| {
+        Fragment::new(segment).score(&self.penalties, dvnt_per_rec).map_err(|e| {
             anyhow!(
                 "Error scoring fragment for alignment {aln_idx}: {}\n{}",
                 e,

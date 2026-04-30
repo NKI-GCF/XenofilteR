@@ -3,14 +3,12 @@ mod mdopiterator;
 mod ops;
 mod prepared;
 mod fragment;
-use smallvec::SmallVec;
 
 pub(crate) use errors::{AlignmentError, MdOpIteratorError, PrepareError};
 pub(crate) use mdopiterator::{MdOp, MdOpIterator};
 pub(crate) use ops::{UnifiedOp, UnifiedOpIterator};
 pub(crate) use prepared::{PreparedAlignmentPairIter, stringify_record};
-pub(crate) use fragment::{build_fragment, Segment};
-pub(crate) type SegmentVec<'a> = SmallVec<[Segment<'a>; 2]>;
+pub(crate) use fragment::Fragment;
 
 #[cfg(test)]
 pub(crate) use prepared::PreparedAlignmentPair;

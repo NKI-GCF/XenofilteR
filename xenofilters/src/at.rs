@@ -1,9 +1,10 @@
 use crate::{MAX_Q, Penalty};
 use crate::variant::DeltaPerRec;
-use crate::alignment::SegmentVec;
 use anyhow::{Result, anyhow};
 use crate::alignment::{UnifiedOpIterator, UnifiedOp};
 use crate::variant::VariantEval;
+use rust_htslib::bam::record::Record;
+use smallvec::SmallVec;
 
 #[derive(Clone, Copy)]
 struct Cell {
@@ -20,7 +21,7 @@ impl Default for Cell {
 
 pub(crate) struct At<'r, 's> {
     pen: &'r Penalty,
-    seg: &'s SegmentVec<'r>,
+    seg: &'s SmallVec<[&'r Record; 2]>,
     seg_i: usize,
     refpos: i64,
     nt_i: usize,
@@ -29,12 +30,12 @@ pub(crate) struct At<'r, 's> {
 }
 
 impl<'r, 's> At<'r, 's> {
-    pub(crate) fn new(pen: &'r Penalty, seg: &'s SegmentVec<'r>) -> Self {
+    pub(crate) fn new(pen: &'r Penalty, seg: &'s SmallVec<[&'r Record; 2]>) -> Self {
         Self {
             pen,
             seg,
             seg_i: 0,
-            refpos: seg[0].rec.pos(),
+            refpos: seg[0].pos(),
             nt_i: 0,
             prev: Vec::new(),
             curr: Vec::new(),
@@ -42,7 +43,7 @@ impl<'r, 's> At<'r, 's> {
     }
     pub(crate) fn update_seg_i(&mut self, seg_i: usize) {
         self.seg_i = seg_i;
-        self.refpos = self.seg[seg_i].rec.pos();
+        self.refpos = self.seg[seg_i].pos();
         self.nt_i = 0;
     }
     pub(crate) fn refpos(&self) -> i64 {
@@ -52,10 +53,10 @@ impl<'r, 's> At<'r, 's> {
         self.nt_i
     }
     fn segment_orientation_mismatch(&self, seg_i: usize) -> bool {
-         seg_i != self.seg_i && self.seg[seg_i].rec.is_reverse() != self.seg[self.seg_i].rec.is_reverse()
+         seg_i != self.seg_i && self.seg[seg_i].is_reverse() != self.seg[self.seg_i].is_reverse()
     }
     fn q(&self, seg_i: usize, mut nt_i: usize) -> usize {
-        let qual = self.seg[seg_i].rec.qual();
+        let qual = self.seg[seg_i].qual();
         if self.segment_orientation_mismatch(seg_i) {
             nt_i = qual.len() - 1 - nt_i;
         }
@@ -63,7 +64,7 @@ impl<'r, 's> At<'r, 's> {
     }
     fn base(&self, seg_i: usize, nt_i: usize) -> u8 {
         if self.segment_orientation_mismatch(seg_i) {
-            let encoded = self.seg[seg_i].rec.seq().encoded;
+            let encoded = self.seg[seg_i].seq().encoded;
             match encoded[encoded.len() - 1 - nt_i] {
                 b'A' => b'T',
                 b'C' => b'G',
@@ -72,7 +73,7 @@ impl<'r, 's> At<'r, 's> {
                 _ => b'N',
             }
         } else {
-            self.seg[seg_i].rec.seq().encoded[nt_i]
+            self.seg[seg_i].seq().encoded[nt_i]
         }
     }
     /// Score a variant's alt allele against read bases from a specific segment.
@@ -122,7 +123,7 @@ impl<'r, 's> At<'r, 's> {
         }
 
         // Compute the nt_i offset for this segment at ref_start
-        let seg_ref_start = self.seg[seg_i].rec.pos();
+        let seg_ref_start = self.seg[seg_i].pos();
         let nt_i_base = (ref_start - seg_ref_start) as usize;
 
         for i in 1..=n {
@@ -184,14 +185,17 @@ impl<'r, 's> At<'r, 's> {
 
         // Score variant bases that fall within segments before the current one.
         for prior_seg_i in 0..self.seg_i {
-            let seg_ref_start = self.seg[prior_seg_i].rec.pos();
-            let seg_ref_end = seg_ref_start + self.seg[prior_seg_i].rec.cigar().len() as i64;
+            if self.seg[prior_seg_i].is_last_in_template() != self.seg[self.seg_i].is_last_in_template() {
+                continue; // skip segments from different reads in the pair
+            }
+            let seg_ref_start = self.seg[prior_seg_i].pos();
+            let seg_ref_end = seg_ref_start + self.seg[prior_seg_i].cigar().len() as i64;
 
             // prior (or following) segment bases contribute to alt scoring only, no incurrence.
             self.score_variants_in_window(vnt, prior_seg_i, seg_ref_start, seg_ref_end, 0.0);
         }
 
-        let op_iter = UnifiedOpIterator::new(self.seg[self.seg_i].rec)
+        let op_iter = UnifiedOpIterator::new(self.seg[self.seg_i])
             .map_err(|e| anyhow!("Failed to create UnifiedOpIterator: {}", e))?;
 
         for op_res in op_iter {
@@ -235,8 +239,11 @@ impl<'r, 's> At<'r, 's> {
         }
 
         for next_seg_i in (self.seg_i + 1)..self.seg.len() {
-            let seg_ref_start = self.seg[next_seg_i].rec.pos();
-            let seg_ref_end = seg_ref_start + self.seg[next_seg_i].rec.seq().len() as i64;
+            if self.seg[next_seg_i].is_last_in_template() != self.seg[self.seg_i].is_last_in_template() {
+                break; // skip segments from different reads in the pair
+            }
+            let seg_ref_start = self.seg[next_seg_i].pos();
+            let seg_ref_end = seg_ref_start + self.seg[next_seg_i].seq().len() as i64;
 
             self.score_variants_in_window(vnt, next_seg_i, seg_ref_start, seg_ref_end, 0.0);
         }

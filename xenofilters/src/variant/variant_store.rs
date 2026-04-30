@@ -2,24 +2,16 @@ use smallvec::SmallVec;
 use crate::variant::{Variant, VariantEval};
 
 pub(crate) trait VariantStoreTrait {
-    fn variants_overlapping_multi<'s>(
-        &'s self,
-        ranges: &[(usize, i64, i64)],
-    ) -> SmallVec<[VariantEval<'s>; 0]>;
+    fn overlapping_multi<'s>(&'s self, rid: i32, start: i64, end: i64) -> SmallVec<[VariantEval<'s>; 0]>;
 }
 
 impl<V: Variant> VariantStoreTrait for VariantStore<V> {
-    fn variants_overlapping_multi<'s>(
-        &'s self,
-        ranges: &[(usize, i64, i64)],
-    ) -> SmallVec<[VariantEval<'s>; 0]> {
+    fn overlapping_multi<'s>(&'s self, rid: i32, start: i64, end: i64) -> SmallVec<[VariantEval<'s>; 0]> {
         let mut hits = SmallVec::new();
-        for &(rid, start, end) in ranges {
-            for  v in self.variants_overlapping(rid, start, end) {
-                let mut eval = VariantEval::new();
-                eval.set_variant(v as &dyn Variant);
-                hits.push(eval);
-            }
+        for  v in self.overlapping(rid, start, end) {
+            let mut eval = VariantEval::new();
+            eval.set_variant(v as &dyn Variant);
+            hits.push(eval);
         }
         hits
     }
@@ -34,13 +26,8 @@ pub(crate) struct VariantStore<V: Variant> {
 }
 
 impl<V: Variant> VariantStore<V> {
-    pub(crate) fn variants_overlapping(
-        &self,
-        rid: usize,
-        read_start: i64,
-        read_end: i64,
-    ) -> SmallVec<[&V; 0]> {
-        let Some(chr_vars) = self.per_chr.get(rid) else {
+    pub(crate) fn overlapping(&self, rid: i32, read_start: i64, read_end: i64) -> SmallVec<[&V; 0]> {
+        let Some(chr_vars) = self.per_chr.get(rid as usize) else {
             return SmallVec::new();
         };
 

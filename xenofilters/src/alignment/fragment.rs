@@ -4,13 +4,16 @@ use rust_htslib::bam::record::Record;
 use smallvec::SmallVec;
 use crate::variant::{VntPerRec, VariantEval};
 use crate::at::At;
-use crate::alignment::{AlignmentError, SegmentVec};
+use crate::alignment::AlignmentError;
 
 pub(crate) struct Fragment<'r> {
-    segment: SegmentVec<'r>,
+    segment: SmallVec<[&'r Record; 2]>,
 }
 
 impl<'r> Fragment<'r> {
+    pub(crate) fn new(segment: SmallVec<[&'r Record; 2]>) -> Self {
+        Self { segment }
+    }
     pub(crate) fn score<'v, 's>(&'s self, pen: &'r Penalty, mut vnt_per_rec: VntPerRec<'v>) -> Result<f64, AlignmentError> 
         where 'r: 's, 'v: 's
     {
@@ -25,7 +28,7 @@ impl<'r> Fragment<'r> {
     }
 
     fn maximize_delta<'v>(&self, delta: VntPerRec<'v>) -> f64 {
-        let mut variants: SmallVec<[&VariantEval<'v>; 4]> = delta
+        let mut variants: SmallVec<[&VariantEval; 4]> = delta
             .iter()
             .flatten()
             .filter(|v| v.delta() > 0.0)
@@ -57,57 +60,6 @@ impl<'r> Fragment<'r> {
 
         *dp.last().unwrap_or(&0.0)
     }
-}
-
-pub(crate) struct Segment<'a> {
-    pub(crate) rec: &'a Record,
-}
-
-impl <'a> Segment<'a> {
-    pub(crate) fn ref_start(&self) -> i64 {
-        self.rec.pos()
-    }
-    pub(crate) fn ref_end(&self) -> i64 {
-        self.rec.cigar().end_pos()
-    }
-}
-
-const fn revcmp_encoded(b: u8) -> u8 {
-    match b {
-        1 => 8,   // A -> T
-        8 => 1,   // T -> A
-        2 => 4,   // C -> G
-        4 => 2,   // G -> C
-        3 => 3,   // M -> M (A/C)
-        5 => 5,   // R -> R (A/G)
-        6 => 6,   // S -> S (C/G)
-        7 => 7,   // V -> V (A/C/G)
-        9 => 9,   // W -> W (A/T)
-        10 => 10, // Y -> Y (C/T)
-        11 => 11, // H -> H (A/C/T)
-        12 => 12, // K -> K (G/T)
-        13 => 13, // D -> D (A/G/T)
-        14 => 14, // B -> B (C/G/T)
-        15 => 15, // N -> N
-        _ => b,   // = or garbage
-    }
-}
-
-pub fn build_fragment<'r>(
-    records: &'r [Record],
-    order: SmallVec<[usize; 2]>,
-) -> Result<Fragment<'r>> {
-    let mut segment = SegmentVec::<'r>::new();
-
-    for &idx in &order {
-        let rec = &records[idx];
-        if !rec.is_secondary() {
-            segment.push(Segment { rec });
-        } else if !rec.is_first_in_template() {
-            break;
-        }
-    }
-    Ok(Fragment { segment })
 }
 
 #[cfg(test)]
