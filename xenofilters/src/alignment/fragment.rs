@@ -186,12 +186,14 @@ impl<'r> Fragment<'r> {
                 // Use weighted_ref_score instead of ref_score for variant positions
                 vnt[i].update(weighted_ref_score, alt_score);
                 let fully_processed = vnt[i].ref_end() <= end && vnt[i].alt_end() <= end;
-                if !fully_processed {
-                    i += 1;
+                if fully_processed {
+                    vnt.remove(i);
                     continue;
                 }
+            } else {
+                vnt[i].update(ref_score, 0.0);
             }
-            vnt.remove(i);
+            i += 1;
         }
     }
     /// Score a variant's alt allele against read bases from a specific segment.
