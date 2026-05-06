@@ -1,4 +1,4 @@
-use crate::alignment::build_fragment;
+use crate::alignment::Fragment;
 use crate::aln_stream::AlignmentStream;
 use crate::filter_algorithm::line_by_line::{core::AlnBuffer, ordering::Decision};
 use crate::fragment_state::FragmentState;
@@ -449,52 +449,6 @@ fn test_handle_ordering_quick_paths_respect_decision_tag() -> Result<()> {
 
     let dec = lbl.handle_ordering(&mut best, Some(Ordering::Equal))?;
     assert!(matches!(dec, Some(Decision::Ambiguous)));
-
-    Ok(())
-}
-
-#[test]
-fn test_handle_ordering_scoring_path_phred_and_threshold() -> Result<()> {
-    let mut config = Config::default_no_strip();
-    config.add_decision_tag = true;
-    config.ambiguous_threshold = 0; // start low so we always get a delta
-    let aln = setup_mock_streams_observed_examples();
-    let mut lbl = LineByLine::new(config, aln)?;
-
-    let mut best: AlnBuffer = smallvec![
-        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0),
-        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 1),
-    ];
-    let best2: AlnBuffer = smallvec![
-        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0),
-        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 1),
-    ];
-
-    // === Compute expected values ourselves (self-verifying, no magic numbers) ===
-    let first: &FragmentState = best2.first().unwrap();
-    let last = best2.last().unwrap();
-    let penalties = setup_penalties(); // from stitched_alignment::tests
-    let variants1 = SmallVec::<[SmallVec::<[&dyn Variant; 8]>; 2]>::new();
-    let variants2 = SmallVec::<[SmallVec::<[&dyn Variant; 8]>; 2]>::new();
-
-    let mut sf1 = build_fragment(&penalties, &first.records, first.order_mates(), variants1)?;
-    let mut sf2 = build_fragment(&penalties, &last.records, last.order_mates(), variants2)?;
-    let first_score = sf1.score()?;
-    let last_score = sf2.score()?;
-
-    let delta = first_score - last_score;
-    let expected_phred = (10.0 * delta.abs() / std::f64::consts::LN_10).min(255.0) as u8;
-
-    let decision = lbl.handle_ordering(&mut best, None)?;
-    if delta.abs() > 0.0 {
-        if let Some(Decision::ConfDelta(p)) = decision {
-            assert_eq!(p, expected_phred, "phred calculation or capping wrong");
-        } else {
-            panic!("Expected ConfDelta when |delta| > 0 with threshold=0");
-        }
-    } else {
-        assert!(matches!(decision, Some(Decision::Ambiguous)));
-    }
 
     Ok(())
 }

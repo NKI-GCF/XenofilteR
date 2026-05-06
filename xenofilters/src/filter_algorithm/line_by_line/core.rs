@@ -144,7 +144,7 @@ impl LineByLine {
                     break;
                 }
             }
-            let mut decision: Option<Decision> = None;
+            let mut decision = None;
             if best.len() > 1 {
                 let last = best.last().unwrap();
                 let ord = best[0].partial_cmp(last);
