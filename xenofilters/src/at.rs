@@ -46,12 +46,6 @@ impl<'r, 's> At<'r, 's> {
         self.refpos = self.seg[seg_i].pos();
         self.nt_i = 0;
     }
-    pub(crate) fn refpos(&self) -> i64 {
-        self.refpos
-    }
-    pub(crate) fn nt_i(&self) -> usize {
-        self.nt_i
-    }
     fn segment_orientation_mismatch(&self, seg_i: usize) -> bool {
          seg_i != self.seg_i && self.seg[seg_i].is_reverse() != self.seg[self.seg_i].is_reverse()
     }

@@ -1,13 +1,11 @@
-use crate::alignment::Fragment;
 use crate::aln_stream::AlignmentStream;
 use crate::filter_algorithm::line_by_line::{core::AlnBuffer, ordering::Decision};
 use crate::fragment_state::FragmentState;
-use crate::tests::{MockStream, create_record, setup_penalties};
+use crate::tests::{MockStream, create_record};
 use crate::{Config, LineByLine, StripReadSuffix};
 use anyhow::Result;
 use smallvec::{SmallVec, smallvec};
 use std::cmp::Ordering;
-use crate::variant::Variant;
 
 fn setup_mock_streams() -> SmallVec<[Box<dyn AlignmentStream>; 2]> {
     let stream1 = MockStream::new(
@@ -101,9 +99,11 @@ fn setup_mock_streams_observed_examples() -> SmallVec<[Box<dyn AlignmentStream>;
 // %s/\vmock_rec\((b".*?")/create_record(\1, "10M", &[], &[], "10", false)?/g
 #[test]
 fn test_qname_suffix_logic() -> Result<()> {
-    let mut config = Config::default();
+    let mut config = Config {
+        strip_read_suffix: StripReadSuffix::Auto,
+        ..Config::default()
+    };
 
-    config.strip_read_suffix = StripReadSuffix::Auto;
     let lbl = LineByLine::new(config.clone(), smallvec![])?;
     let best: AlnBuffer = smallvec![FragmentState::from_record(
         create_record(b"read/1", "10M", &[], &[], "10", false)?,
@@ -128,9 +128,11 @@ fn test_qname_suffix_logic() -> Result<()> {
 
 #[test]
 fn test_branch_counters_and_skipping() -> Result<()> {
-    let mut config = Config::default();
-    config.discard_unmapped = true;
-    config.skip_secondary = true;
+    let mut config = Config {
+        discard_unmapped: true,
+        skip_secondary: true,
+        ..Config::default()
+    };
 
     let mut lbl = LineByLine::new(config.clone(), smallvec![])?;
 
@@ -227,8 +229,10 @@ fn test_fragment_finished_transitions() -> Result<()> {
 }
 #[test]
 fn test_process_multi_stream_sync_r4() -> Result<()> {
-    let mut config = Config::default();
-    config.discard_unmapped = true;
+    let config = Config {
+        discard_unmapped: true,
+        ..Config::default()
+    };
     let mut lbl = LineByLine::new(config, setup_mock_streams_r4())?;
 
     // R4 -> stream 1 (mismatch vs unmapped)
@@ -248,11 +252,14 @@ fn test_process_multi_stream_sync_r4() -> Result<()> {
 
 #[test]
 fn test_process_multi_stream_sync() -> Result<()> {
-    let mut config = Config::default();
-    config.discard_unmapped = true;
-    config.gap_open = 6.0;
-    config.gap_extend = 1.0;
-    config.mismatch_penalty = 4.0;
+    let config = Config {
+        discard_unmapped: true,
+        gap_open: 6.0,
+        gap_extend: 1.0,
+        mismatch_penalty: 4.0,
+        ..Config::default()
+    };
+
     let mut lbl = LineByLine::new(config, setup_mock_streams())?;
 
     // Streams now contain R1..R7
@@ -373,11 +380,13 @@ fn test_scoring_path_coverage() -> Result<()> {
 
 #[test]
 fn test_observed_pe_scoring1() -> Result<()> {
-    let mut config = Config::default();
-    config.discard_unmapped = true;
-    config.gap_open = 6.0;
-    config.gap_extend = 1.0;
-    config.mismatch_penalty = 4.0;
+    let config = Config {
+        discard_unmapped: true,
+        gap_open: 6.0,
+        gap_extend: 1.0,
+        mismatch_penalty: 4.0,
+        ..Config::default()
+    };
 
     let mut lbl = LineByLine::new(config, setup_mock_streams_observed_examples())?;
 
@@ -403,37 +412,42 @@ impl LineByLine {
 
 #[test]
 fn test_ambiguous_log_threshold_conversion() -> Result<()> {
-    let mut config = Config::default_no_strip();
+    let mut config = Config {
+        ambiguous_threshold: 0,
+        ..Config::default()
+    };
     let aln = setup_mock_streams(); // any valid stream works for new()
     let aln_clone1 = setup_mock_streams(); // any valid stream works for new()
     let aln_clone2 = setup_mock_streams(); // any valid stream works for new()
     let aln_clone3 = setup_mock_streams(); // any valid stream works for new()
 
     // threshold = 0 → exactly 0.0 (or EPSILON if you changed it)
-    config.ambiguous_threshold = 0;
     let lbl = LineByLine::new(config.clone(), aln_clone1)?;
     assert_eq!(lbl.test_ambiguous_log_threshold(), 0.0);
 
     // standard phred values → correct natural-log ratio
     config.ambiguous_threshold = 10;
     let lbl = LineByLine::new(config.clone(), aln_clone2)?;
-    assert!((lbl.test_ambiguous_log_threshold() - 2.302585092994046).abs() < 1e-9);
+    let ln_10 = std::f64::consts::LN_10;
+    assert!((lbl.test_ambiguous_log_threshold() - ln_10).abs() < 1e-9);
 
     config.ambiguous_threshold = 20;
     let lbl = LineByLine::new(config.clone(), aln_clone3)?;
-    assert!((lbl.test_ambiguous_log_threshold() - 4.605170185988092).abs() < 1e-9);
+    assert!((lbl.test_ambiguous_log_threshold() - ln_10 * 2.0).abs() < 1e-9);
 
     config.ambiguous_threshold = 3;
     let lbl = LineByLine::new(config, aln)?;
-    assert!((lbl.test_ambiguous_log_threshold() - 0.6907755278982138).abs() < 1e-9);
+    assert!((lbl.test_ambiguous_log_threshold() - ln_10 * 3.0 / 10.0).abs() < 1e-9);
 
     Ok(())
 }
 
 #[test]
 fn test_handle_ordering_quick_paths_respect_decision_tag() -> Result<()> {
-    let mut config = Config::default_no_strip();
-    config.add_decision_tag = true;
+    let config = Config {
+        add_decision_tag: true,
+        ..Config::default()
+    };
     let mut lbl = LineByLine::new(config, setup_mock_streams())?;
 
     let mut best: AlnBuffer = smallvec![
@@ -455,9 +469,11 @@ fn test_handle_ordering_quick_paths_respect_decision_tag() -> Result<()> {
 
 #[test]
 fn test_handle_ordering_ambiguous_when_below_threshold_and_negative_delta() -> Result<()> {
-    let mut config = Config::default_no_strip();
-    config.add_decision_tag = true;
-    config.ambiguous_threshold = 30; // higher than your observed delta → forces ambiguous
+    let config = Config {
+        add_decision_tag: true,
+        ambiguous_threshold: 30, // higher than your observed delta → forces ambiguous
+        ..Config::default()
+    };
     let aln = setup_mock_streams_observed_examples();
     let mut lbl = LineByLine::new(config, aln)?;
 
@@ -484,8 +500,10 @@ fn test_handle_ordering_ambiguous_when_below_threshold_and_negative_delta() -> R
 
 #[test]
 fn test_handle_ordering_when_decision_tag_is_disabled() -> Result<()> {
-    let mut config = Config::default_no_strip();
-    config.add_decision_tag = false;
+    let config = Config {
+        add_decision_tag: false,
+        ..Config::default()
+    };
     let mut lbl = LineByLine::new(config, setup_mock_streams())?;
 
     let mut best: AlnBuffer = smallvec![

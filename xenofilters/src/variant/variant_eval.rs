@@ -1,4 +1,3 @@
-use crate::at::At;
 use crate::variant::Variant;
 
 pub(crate) struct VariantEval<'a> {
@@ -36,10 +35,6 @@ impl<'a> VariantEval<'a> {
     }
     pub(crate) fn alt_end(&self) -> i64 {
         self.vnt().pos() + self.vnt().alt_allele().len() as i64
-    }
-    pub (crate) fn base(&self, at: &At) -> Option<u8> {
-        let vnt = self.vnt();
-        usize::try_from(at.refpos() - vnt.pos()).ok().and_then(|n| vnt.ref_allele().get(n).copied())
     }
     pub(crate) fn update(&mut self, add: f64, alt_score: f64) {
         self.incurred += add;

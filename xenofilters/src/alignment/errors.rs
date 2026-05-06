@@ -18,9 +18,6 @@ pub enum AlignmentError {
 
     #[error(transparent)]
     Anyhow(#[from] anyhow::Error),
-
-    #[error("Unexpected end of sequence.")]
-    UnexpectedEnd,
 }
 
 #[derive(Debug, Error)]

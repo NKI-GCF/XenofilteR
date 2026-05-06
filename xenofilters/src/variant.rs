@@ -14,17 +14,6 @@ pub(crate) use variant_eval::VariantEval;
 
 pub(crate) type DeltaPerRec<'a> = SmallVec<[VariantEval<'a>; 0]>;
 pub(crate) type VntPerRec<'a> = SmallVec<[DeltaPerRec<'a>; 2]>;
-type SlicesForVariant<'a> = SmallVec<[(bool, &'a [u8], &'a [u8]); 1]>;
-
-fn reverse_complement_encoded_slice(bases: &[u8]) -> Vec<u8> {
-    bases.iter().rev().map(|&b| match b {
-        b'A' => b'T',
-        b'T' => b'A',
-        b'C' => b'G',
-        b'G' => b'C',
-        _ => b'N',
-    }).collect()
-}
 
 /// Trait for any object that can be scored against an alignment.
 pub trait Variant: Sync + Send {

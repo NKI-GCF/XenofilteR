@@ -18,5 +18,4 @@ pub(crate) mod tests {
     use super::*;
     pub(crate) use ops::tests::*;
     pub(crate) use prepared::tests::*;
-    pub(crate) use fragment::tests::*;
 }

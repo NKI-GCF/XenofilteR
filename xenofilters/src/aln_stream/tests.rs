@@ -4,8 +4,8 @@ use anyhow::Result;
 use rust_htslib::bam::record::Record;
 use crate::variant::VariantStoreTrait;
 
-pub struct MockStream {
-    pub reads: Vec<Record>,
+pub(crate) struct MockStream {
+    pub(crate) reads: Vec<Record>,
     written: Vec<(Record, Option<bool>)>,
     aln_stream: AlnStream,
     i: usize,
@@ -36,7 +36,7 @@ impl AlignmentStream for MockStream {
 }
 
 impl MockStream {
-    pub fn new(i: usize, reads: Vec<Record>) -> Self {
+    pub(crate) fn new(i: usize, reads: Vec<Record>) -> Self {
         let aln_stream = AlnStream {
             ambiguous: None,
             bam: None,
@@ -50,7 +50,7 @@ impl MockStream {
             reads,
             written: Vec::new(),
             aln_stream,
-            i,
+            i
         }
     }
     fn next_rec(&mut self) -> Result<Option<Record>> {
@@ -72,13 +72,11 @@ impl MockStream {
         self.aln_stream.next_rec()
     }
     fn un_next(&mut self, rec: Record) -> Result<()> {
-        /*
-        #[cfg(test)]
         eprintln!(
             "Un-next({}) read: {}",
             self.i,
             std::str::from_utf8(rec.qname()).unwrap_or("Invalid UTF-8")
-        );*/
+        );
         self.aln_stream.un_next(rec)
     }
     fn write_record(&mut self, rec: Record, state: Option<bool>) -> Result<()> {

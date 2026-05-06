@@ -83,8 +83,6 @@ impl PartialOrd for FragmentState {
         for pair_result in iter {
             balance = match pair_result {
                 Ok(mut pair) => {
-                    #[cfg(test)]
-                    let pair_str = format!("{:?}", pair);
                     let (first, second) = pair.are_perfect_match();
                     /*#[cfg(test)]
                     eprintln!(

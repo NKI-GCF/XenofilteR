@@ -126,19 +126,11 @@ pub(crate) struct Config {
 struct Penalty {
     pub(crate) gap_open: f64,
     pub(crate) gap_extend: f64,
-    pub(crate) mismatch_penalty: f64,
     pub(crate) log_likelihood_mismatch: [f64; MAX_Q],
     pub(crate) log_likelihood_match: [f64; MAX_Q],
 }
 
 impl Config {
-    pub(crate) fn nreads(&self) -> usize {
-        match self.is_paired {
-            Some(true) => 2,
-            Some(false) => 1,
-            None => panic!("is_paired not set"), // don't call before AlnStream::new
-        }
-    }
     fn validate_and_init(&mut self) -> Result<()> {
         ensure!(
             self.output.len() <= self.alignment.len(),
@@ -197,7 +189,6 @@ impl Config {
         Penalty {
             gap_open: self.gap_open,
             gap_extend: self.gap_extend,
-            mismatch_penalty: self.mismatch_penalty,
             log_likelihood_mismatch,
             log_likelihood_match,
         }
@@ -227,11 +218,4 @@ pub(crate) mod tests {
     pub(crate) use alignment::tests::*;
     pub(crate) use aln_stream::tests::*;
     pub(crate) use bam_format::BamFormat;
-    impl Config {
-        pub(crate) fn default_no_strip() -> Self {
-            let mut c = Config::default();
-            c.strip_read_suffix = StripReadSuffix::False;
-            c
-        }
-    }
 }

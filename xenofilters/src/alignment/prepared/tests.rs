@@ -6,10 +6,7 @@ use anyhow::Result;
 use rust_htslib::bam::record::Record;
 
 fn print_req(i: usize, rec: &Record) {
-    let qname = String::from_utf8_lossy(rec.qname());
-    let cigar = rec.cigar().to_string();
-    let stringified = stringify_record(rec);
-    eprintln!("{i}:{stringified}");
+    eprintln!("{i}:{}", stringify_record(rec));
 }
 
 pub fn read_len_from_cigar(cigar: &str) -> usize {
@@ -194,7 +191,6 @@ fn test_make_prepared_pair_invalid_cigar() -> Result<()> {
 #[test]
 fn test_make_prepared_pair_unmapped() -> Result<()> {
     let rec1 = create_record(b"read1", "10M", &[], &[30; 10], "10", false)?;
-    let rec2 = create_record(b"read1", "*", &[], &[], "10", false)?;
 
     let iter1 = UnifiedOpIterator::new(&rec1).unwrap();
     let iter2 = UnifiedOpIterator::empty(false);
@@ -209,9 +205,6 @@ fn test_make_prepared_pair_unmapped() -> Result<()> {
 }
 #[test]
 fn test_make_prepared_pair_unmapped_both() -> Result<()> {
-    let rec1 = create_record(b"read1", "*", &[], &[], "10", false)?;
-    let rec2 = create_record(b"read1", "*", &[], &[], "10", false)?;
-
     let iter1 = UnifiedOpIterator::empty(false);
     let iter2 = UnifiedOpIterator::empty(false);
 
@@ -226,39 +219,6 @@ fn test_make_prepared_pair_unmapped_both() -> Result<()> {
     }
     Ok(())
 }
-/*#[test]
-fn test_make_prepared_pair_unmapped_invalid() -> Result<()> {
-    let rec1 = create_record(b"read1", "10M", &[], &vec![30; 10], "10", false)?;
-    let mut rec2 = create_record(b"read1", "10M", &[], &vec![30; 10], "10", false)?;
-
-    let result = {
-        let iter1 = UnifiedOpIterator::new(&rec1).unwrap();
-        match UnifiedOpIterator::new(&rec2) {
-            Ok(_) => Err(PrepareError::InvalidAlignment(
-                "Expected unmapped alignment".to_string(),
-            )),
-            Err(e) => Err(e),
-        }
-    };
-    assert!(result.is_err());
-    Ok(())
-}
-#[test]
-fn test_make_prepared_pair_unmapped_invalid_both() -> Result<()> {
-    let mut rec1 = create_record(b"read1", "*", &[], &[], "10", false)?;
-    let mut rec2 = create_record(b"read1", "*", &[], &[], "10", false)?;
-
-    let result = {
-        match UnifiedOpIterator::new(&rec1) {
-            Ok(_) => Err(PrepareError::InvalidAlignment(
-                "Expected unmapped alignment".to_string(),
-            )),
-            Err(e) => Err(e),
-        }
-    };
-    assert!(result.is_err());
-    Ok(())
-}*/
 #[test]
 fn test_make_prepared_pair_different_lengths() -> Result<()> {
     let result = make_prepared_pair("10M", "10", "9M", "9");

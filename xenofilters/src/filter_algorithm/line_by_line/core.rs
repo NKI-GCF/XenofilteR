@@ -1,4 +1,3 @@
-use super::ordering::Decision;
 use crate::aln_stream::AlignmentStream;
 use crate::fragment_state::FragmentState;
 use crate::{Config, Penalty, StripReadSuffix};
