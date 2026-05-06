@@ -1,4 +1,3 @@
-use crate::Penalty;
 use crate::variant::Variant;
 use anyhow::{Result, anyhow};
 use rust_htslib::bcf::record::Record;
@@ -10,7 +9,7 @@ pub struct PopulationVariant {
     ref_a: Vec<u8>,
     alt_a: Vec<u8>,
     /// Allele frequency, e.g., 0.01 (1%)
-    allele_frequency: f32,
+    allele_frequency: f64,
 }
 
 impl Variant for PopulationVariant {
@@ -23,43 +22,8 @@ impl Variant for PopulationVariant {
     fn alt_allele(&self) -> &[u8] {
         &self.alt_a
     }
-
-    fn score_alt_match(&self, penalties: &Penalty, quals: &[u8]) -> f64 {
-        // This read matches the ALT.
-        // Score = P(Variant is truth) * (Score for Match) + P(Ref is truth) * (Score for Mismatch)
-        let len = match quals.len() {
-            0 => return 0.0,
-            l => l as f64,
-        };
-        let mut score_match = 0.0;
-        let mut score_mismatch = 0.0;
-        for q in quals {
-            score_match += penalties.log_likelihood_match[*q as usize];
-            score_mismatch += penalties.log_likelihood_mismatch[*q as usize];
-        }
-        let p_variant = self.allele_frequency as f64;
-        p_variant * (score_match / len) + (1.0 - p_variant) * (score_mismatch / len)
-    }
-
-    fn score_ref_match(&self, penalties: &Penalty, quals: &[u8]) -> f64 {
-        let p_variant = self.allele_frequency as f64;
-
-        // This read matches the REF.
-        // Score = P(Ref is truth) * (Score for Match) + P(Variant is truth) * (Score for Mismatch)
-
-        let len = quals.len();
-        if len == 0 {
-            return 0.0;
-        }
-        let len = len as f64;
-
-        let mut score_match = 0.0;
-        let mut score_mismatch = 0.0;
-        for q in quals {
-            score_match += penalties.log_likelihood_match[*q as usize];
-            score_mismatch += penalties.log_likelihood_mismatch[*q as usize];
-        }
-        (1.0 - p_variant) * (score_match / len) + p_variant * (score_mismatch / len)
+    fn p_variant(&self) -> f64 {
+        self.allele_frequency
     }
 }
 
@@ -80,7 +44,7 @@ pub fn parse_population_record(record: &mut Record) -> Result<Vec<PopulationVari
             pos: record.pos(),
             ref_a: ref_a.clone(),
             alt_a: alt_a.to_vec(),
-            allele_frequency: af_values[i],
+            allele_frequency: af_values[i] as f64,
         });
     }
     Ok(variants)

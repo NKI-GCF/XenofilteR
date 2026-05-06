@@ -1,4 +1,3 @@
-use crate::Penalty;
 use crate::variant::Variant;
 use anyhow::Result;
 use rust_htslib::bcf::record::Record;
@@ -11,7 +10,7 @@ pub struct SampleVariant {
     ref_a: Vec<u8>,
     alt_a: Vec<u8>,
     /// Genotype Quality (GQ) from the FORMAT field
-    genotype_quality: f32,
+    genotype_quality: f64,
     /// True if GT is 0/1 or 1/1
     is_called: bool,
 }
@@ -26,52 +25,13 @@ impl Variant for SampleVariant {
     fn alt_allele(&self) -> &[u8] {
         &self.alt_a
     }
-
-    fn score_alt_match(&self, penalties: &Penalty, quals: &[u8]) -> f64 {
-        let len = match quals.len() {
-            0 => return 0.0,
-            l => l as f64,
-        };
-
-        let mut score_match = 0.0;
-        let mut score_mismatch = 0.0;
-        for q in quals {
-            score_match += penalties.log_likelihood_match[*q as usize];
-            score_mismatch += penalties.log_likelihood_mismatch[*q as usize];
-        }
-        // P(Genotype is correct)
-        let p_gt_correct = 1.0 - 10f64.powf(-(self.genotype_quality as f64) / 10.0);
-
-        // P(Variant is truth) = P(GT is correct) if ALT is called,
-        // OR 1-P(GT is correct) if REF is called.
-        let p_variant = if self.is_called {
+    fn p_variant(&self) -> f64 {
+        let p_gt_correct = 1.0 - 10f64.powf(-self.genotype_quality / 10.0);
+        if self.is_called {
             p_gt_correct
         } else {
             1.0 - p_gt_correct
-        };
-        p_variant * (score_match / len) + (1.0 - p_variant) * (score_mismatch / len)
-    }
-
-    fn score_ref_match(&self, penalties: &Penalty, quals: &[u8]) -> f64 {
-        let len = quals.len();
-        if len == 0 {
-            return 0.0;
         }
-        let len = len as f64;
-        let p_gt_correct = 1.0 - 10f64.powf(-(self.genotype_quality as f64) / 10.0);
-        let p_variant = if self.is_called {
-            p_gt_correct
-        } else {
-            1.0 - p_gt_correct
-        };
-
-        let mut score_match = 0.0;
-        let mut score_mismatch = 0.0;
-        for q in quals {
-            score_match += penalties.log_likelihood_match[*q as usize];
-            score_mismatch += penalties.log_likelihood_mismatch[*q as usize];
-        }
-        (1.0 - p_variant) * (score_match / len) + p_variant * (score_mismatch / len)
     }
 }
 
@@ -104,7 +64,7 @@ pub fn parse_sample_record(record: &mut Record) -> Result<Vec<SampleVariant>> {
             pos: record.pos(),
             ref_a: ref_a.clone(),
             alt_a: alt_a.to_vec(),
-            genotype_quality: gq,
+            genotype_quality: gq as f64,
             is_called,
         });
     }

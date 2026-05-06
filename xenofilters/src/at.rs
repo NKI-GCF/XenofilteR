@@ -93,23 +93,25 @@ impl<'r, 's> At<'r, 's> {
         if eff_ref_start >= eff_ref_end { return None; }
 
         // Derive the alt slice from the ref offset (valid for MNPs; see caveat below)
-        let alt = vnt.vnt().alt_allele();
+        let vnt = vnt.vnt();
+        let alt = vnt.alt_allele();
+        let p_variant = vnt.p_variant();
         let ref_consumed = (eff_ref_start - vnt_start) as usize;
         let ref_slice_len = (eff_ref_end - eff_ref_start) as usize;
         let alt_slice = &alt[ref_consumed.min(alt.len())..(ref_consumed + ref_slice_len).min(alt.len())];
 
         if alt_slice.is_empty() && ref_slice_len == 0 { return None; }
 
-        Some(self.score_variant_two_row_seg(alt_slice, ref_slice_len, seg_i, eff_ref_start))
+        Some(self.score_variant_two_row_seg(alt_slice, ref_slice_len, seg_i, eff_ref_start, p_variant))
     }
 
-    /// NW alignment of `alt` against the read bases in `seg_i` starting at `ref_start`.
     fn score_variant_two_row_seg(
         &mut self,
         alt: &[u8],
         ref_len: usize,
         seg_i: usize,
         ref_start: i64,
+        p_variant: f64,  // passed in from vnt.vnt().p_variant()
     ) -> f64 {
         let n = alt.len();
         let m = n.max(ref_len);
@@ -117,12 +119,16 @@ impl<'r, 's> At<'r, 's> {
         self.prev.resize(m + 1, Cell::default());
         self.curr.resize(m + 1, Cell::default());
 
+        // Initialise first row: gaps in the read (deletions relative to alt)
         self.prev[0].m = 0.0;
+        self.prev[0].i = f64::NEG_INFINITY;
+        self.prev[0].d = f64::NEG_INFINITY;
         for j in 1..=m {
             self.prev[j].i = self.pen.gap_open + (j as f64 * self.pen.gap_extend);
+            self.prev[j].m = f64::NEG_INFINITY;
+            self.prev[j].d = f64::NEG_INFINITY;
         }
 
-        // Compute the nt_i offset for this segment at ref_start
         let seg_ref_start = self.seg[seg_i].pos();
         let nt_i_base = (ref_start - seg_ref_start) as usize;
 
@@ -130,24 +136,33 @@ impl<'r, 's> At<'r, 's> {
             let alt_base = alt[i - 1];
 
             self.curr[0].d = self.pen.gap_open + (i as f64 * self.pen.gap_extend);
-            self.curr[0].m = -f64::INFINITY;
-            self.curr[0].i = -f64::INFINITY;
+            self.curr[0].m = f64::NEG_INFINITY;
+            self.curr[0].i = f64::NEG_INFINITY;
 
             for j in 1..=m {
                 let nt_i = nt_i_base + j - 1;
                 let read_base = self.base(seg_i, nt_i);
                 let q = self.q(seg_i, nt_i);
 
-                let score_match = if alt_base == read_base {
-                    self.pen.log_likelihood_match[q]
+                let lm = self.pen.log_likelihood_match[q];
+                let lmm = self.pen.log_likelihood_mismatch[q];
+
+                // Weight match/mismatch score by variant probability,
+                // mirroring score_alt_match / score_ref_match
+                let per_base_score = if alt_base == read_base {
+                    p_variant * lm + (1.0 - p_variant) * lmm
                 } else {
-                    self.pen.log_likelihood_mismatch[q]
+                    (1.0 - p_variant) * lm + p_variant * lmm
                 };
 
-                self.curr[j].m = score_match
-                    + self.prev[j - 1].m.max(self.prev[j - 1].i).max(self.prev[j - 1].d);
+                self.curr[j].m = per_base_score
+                    + self.prev[j - 1].m
+                        .max(self.prev[j - 1].i)
+                        .max(self.prev[j - 1].d);
+
                 self.curr[j].i = (self.curr[j - 1].m + self.pen.gap_open + self.pen.gap_extend)
                     .max(self.curr[j - 1].i + self.pen.gap_extend);
+
                 self.curr[j].d = (self.prev[j].m + self.pen.gap_open + self.pen.gap_extend)
                     .max(self.prev[j].d + self.pen.gap_extend);
             }
