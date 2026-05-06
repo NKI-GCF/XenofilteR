@@ -10,7 +10,6 @@ mod bam_format;
 mod filter_algorithm;
 mod fragment_state;
 mod variant;
-mod at;
 
 use std::path::PathBuf;
 

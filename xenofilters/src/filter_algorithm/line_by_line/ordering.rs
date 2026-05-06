@@ -64,7 +64,7 @@ impl LineByLine {
                 break;
             }
         }
-        Fragment::new(segment).score(&self.penalties, dvnt_per_rec).map_err(|e| {
+        Fragment::new(&self.penalties, segment).score(dvnt_per_rec).map_err(|e| {
             anyhow!(
                 "Error scoring fragment for alignment {aln_idx}: {}\n{}",
                 e,
