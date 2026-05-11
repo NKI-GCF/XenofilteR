@@ -35,88 +35,45 @@ impl FragmentState {
 
 impl PartialOrd for FragmentState {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        /*#[cfg(test)]
-        eprintln!(
-            "Comparing FragmentStates:\nself unmapped: {}, other unmapped: {}, self single/mate_unmapped: {}, other single/mate_unmapped: {}",
-            self.records[0].is_unmapped(),
-            other.records[0].is_unmapped(),
-            self.records[0].is_paired() == false || self.records[0].is_mate_unmapped(),
-            other.records[0].is_paired() == false || other.records[0].is_mate_unmapped(),
-        );*/
-        // If the record is unmapped, it is always the first record.
-        if self.records[0].is_unmapped()
-            && (!self.records[0].is_paired() || self.records[0].is_mate_unmapped())
-        {
-            if other.records[0].is_unmapped()
-                && (!other.records[0].is_paired() || other.records[0].is_mate_unmapped())
-            {
-                //#[cfg(test)]
-                //eprintln!("both all reads unmapped");
-                return Some(Ordering::Equal);
-            }
-            //#[cfg(test)]
-            //eprintln!("self totally unmapped, other not");
-            return Some(Ordering::Less);
+        // Fast path: unmapped handling (unchanged)
+        if let Some(ord) = self.quick_unmapped_cmp(&self.records[0], &other.records[0]) {
+            return Some(ord);
         }
 
-        if other.records[0].is_unmapped()
-            && (!other.records[0].is_paired() || other.records[0].is_mate_unmapped())
-        {
-            //#[cfg(test)]
-            //eprintln!("other totally unmapped, self not");
-            return Some(Ordering::Greater);
-        }
+        let mut iter = PreparedAlignmentPairIter::new(&self.records, &other.records);
 
-        if self.records[0].is_unmapped() && other.records[0].is_mate_unmapped() {
-            //#[cfg(test)]
-            //eprintln!("distinct records are mapped");
-            return None;
-        }
-        if self.records[0].is_mate_unmapped() && other.records[0].is_unmapped() {
-            //#[cfg(test)]
-            //eprintln!("distinct records are mapped");
-            return None;
-        }
+        while let Some(pair_result) = iter.next() {
+            let mut pair = match pair_result {
+                Ok(p) => p,
+                Err(_) => return None, // per-base evaluate
+            };
 
-        let iter = PreparedAlignmentPairIter::new(&self.records, &other.records);
-        let mut balance = None;
-        for pair_result in iter {
-            balance = match pair_result {
-                Ok(mut pair) => {
-                    let (first, second) = pair.are_perfect_match();
-                    /*#[cfg(test)]
-                    eprintln!(
-                        "Comparing fragment states:first perfect: {first}, second perfect: {second}",
-                    );*/
-                    if first {
-                        if second {
-                            match balance {
-                                Some(Ordering::Greater) => break,
-                                Some(Ordering::Less) => break,
-                                _ => Some(Ordering::Equal),
-                            }
-                        } else {
-                            match balance {
-                                Some(Ordering::Less) => break,
-                                None => Some(Ordering::Greater),
-                                _ => return Some(Ordering::Greater),
-                            }
-                        }
-                    } else if second {
-                        match balance {
-                            Some(Ordering::Greater) => break,
-                            None => Some(Ordering::Less),
-                            _ => return Some(Ordering::Less),
-                        }
-                    } else {
-                        // both mapped but not perfect means no quick winner.
-                        return None;
-                    }
-                }
-                Err(e) => panic!("Error during prepared alignment pair iteration: {:?}", e),
+            match pair.host_graft_are_perfect_match() {
+                (true, true) => continue, // perfect match for both => tie-break with next pair
+                (true, false) => return Some(Ordering::Greater), // host better
+                (false, true) => return Some(Ordering::Less),    // graft better
+                (false, false) => return None, // both imperfect => per-base evaluation
             }
         }
-        balance
+        // All pairs matched equally perfect
+        Some(Ordering::Equal)
+    }
+}
+
+impl FragmentState {
+    #[inline]
+    fn quick_unmapped_cmp(&self, a: &Record, b: &Record) -> Option<Ordering> {
+        if a.is_unmapped() && (!a.is_paired() || a.is_mate_unmapped()) {
+            if b.is_unmapped() && (!b.is_paired() || b.is_mate_unmapped()) {
+                Some(Ordering::Equal)
+            } else {
+                Some(Ordering::Less)
+            }
+        } else if b.is_unmapped() && (!b.is_paired() || b.is_mate_unmapped()) {
+            Some(Ordering::Greater)
+        } else {
+            None
+        }
     }
 }
 

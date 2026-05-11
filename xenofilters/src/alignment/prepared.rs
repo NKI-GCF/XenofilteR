@@ -23,7 +23,7 @@ pub struct PreparedAlignmentPair<'a> {
 }
 
 impl<'a> PreparedAlignmentPair<'a> {
-    pub fn are_perfect_match(&'a mut self) -> (bool, bool) {
+    pub fn host_graft_are_perfect_match(&'a mut self) -> (bool, bool) {
         (self.iter1.is_single_match(), self.iter2.is_single_match())
     }
 }

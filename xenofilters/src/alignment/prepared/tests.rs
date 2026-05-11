@@ -61,22 +61,22 @@ pub fn make_prepared_pair(
 #[test]
 fn test_perfect_match() -> Result<()> {
     let mut pair = make_prepared_pair("10M", "10", "10M", "10").unwrap();
-    let (is_host_perfect, is_graft_perfect) = pair.are_perfect_match();
+    let (is_host_perfect, is_graft_perfect) = pair.host_graft_are_perfect_match();
     assert!(is_host_perfect);
     assert!(is_graft_perfect);
 
     let mut pair = make_prepared_pair("10M", "10", "9M1I", "9").unwrap();
-    let (is_host_perfect, is_graft_perfect) = pair.are_perfect_match();
+    let (is_host_perfect, is_graft_perfect) = pair.host_graft_are_perfect_match();
     assert!(is_host_perfect);
     assert!(!is_graft_perfect);
 
     let mut pair = make_prepared_pair("8M2D", "8^AC", "10M", "10").unwrap();
-    let (is_host_perfect, is_graft_perfect) = pair.are_perfect_match();
+    let (is_host_perfect, is_graft_perfect) = pair.host_graft_are_perfect_match();
     assert!(!is_host_perfect);
     assert!(is_graft_perfect);
 
     let mut pair = make_prepared_pair("10M", "10", "10M", "9A1").unwrap();
-    let (is_host_perfect, is_graft_perfect) = pair.are_perfect_match();
+    let (is_host_perfect, is_graft_perfect) = pair.host_graft_are_perfect_match();
     assert!(is_host_perfect);
     assert!(!is_graft_perfect);
     Ok(())
