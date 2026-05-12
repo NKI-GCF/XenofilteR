@@ -35,8 +35,7 @@ impl<'a> MdOpIterator<'a> {
 
     /// Very fast path used in hot `partial_cmp`
     pub fn is_single_operation(&self) -> bool {
-        let mut chars = self.chars.clone();
-        while let Some(c) = chars.next() {
+        for c in self.chars.clone() {
             if !c.is_ascii_digit() {
                 return false;
             }

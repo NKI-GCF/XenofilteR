@@ -40,9 +40,9 @@ impl PartialOrd for FragmentState {
             return Some(ord);
         }
 
-        let mut iter = PreparedAlignmentPairIter::new(&self.records, &other.records);
+        let iter = PreparedAlignmentPairIter::new(&self.records, &other.records);
 
-        while let Some(pair_result) = iter.next() {
+        for pair_result in iter {
             let mut pair = match pair_result {
                 Ok(p) => p,
                 Err(_) => return None, // per-base evaluate
