@@ -4,17 +4,18 @@ use rust_htslib::errors::Error as HtslibError;
 use smallvec::SmallVec;
 use std::str::Chars;
 
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MdOp {
     Match(u32),
     Mismatch(u8),
-    Deletion(SmallVec<[u8; 1]>),
+    Deletion(SmallVec<[u8; 4]>), // slightly larger stack buffer
 }
 
 #[cfg_attr(test, derive(Debug))]
 pub struct MdOpIterator<'a> {
     chars: Chars<'a>,
-    peeked: String,
+    peeked: Option<char>,
 }
 
 impl<'a> MdOpIterator<'a> {
@@ -25,24 +26,19 @@ impl<'a> MdOpIterator<'a> {
             Err(HtslibError::BamAuxTagNotFound) => "".chars(),
             Err(e) => return Err(MdOpIteratorError::Aux(e)),
         };
-        Ok(MdOpIterator {
-            chars,
-            peeked: String::new(),
-        })
+        Ok(Self { chars, peeked: None })
     }
+
     pub fn empty() -> Self {
-        MdOpIterator {
-            chars: "".chars(),
-            peeked: String::new(),
-        }
+        Self { chars: "".chars(), peeked: None }
     }
+
+    /// Very fast path used in hot `partial_cmp`
     pub fn is_single_operation(&self) -> bool {
-        for c in self.chars.clone() {
-            //#[cfg(test)]
-            //eprintln!("Checking char: {}", c);
-            match c {
-                n if n.is_ascii_digit() => continue,
-                _ => return false,
+        let mut chars = self.chars.clone();
+        while let Some(c) = chars.next() {
+            if !c.is_ascii_digit() {
+                return false;
             }
         }
         true
@@ -53,83 +49,35 @@ impl<'a> Iterator for MdOpIterator<'a> {
     type Item = Result<MdOp, MdOpIteratorError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let current_char = if let Some(c) = self.peeked.pop() {
-            c
-        } else {
-            self.chars.next()?
-        };
-        match current_char {
-            c @ ('A' | 'C' | 'G' | 'T' | 'N') => Some(Ok(MdOp::Mismatch(c as u8))),
+        let c = self.peeked.take().or_else(|| self.chars.next())?;
+
+        match c {
+            'A' | 'C' | 'G' | 'T' | 'N' => Some(Ok(MdOp::Mismatch(c as u8))),
+
             '^' => {
-                let mut deleted_bases: SmallVec<[u8; 1]> = SmallVec::new();
-                for c in self.chars.by_ref() {
-                    if matches!(c, 'A' | 'C' | 'G' | 'T' | 'N') {
-                        deleted_bases.push(c as u8);
+                let mut deleted = SmallVec::new();
+                for ch in self.chars.by_ref() {
+                    if matches!(ch, 'A' | 'C' | 'G' | 'T' | 'N') {
+                        deleted.push(ch as u8);
                     } else {
-                        self.peeked = String::from(c);
+                        self.peeked = Some(ch);
                         break;
                     }
                 }
-                Some(Ok(MdOp::Deletion(deleted_bases)))
+                Some(Ok(MdOp::Deletion(deleted)))
             }
+
             n if n.is_ascii_digit() => {
-                let mut num = n as u32 - '0' as u32;
-                for c in self.chars.by_ref() {
-                    if c.is_ascii_digit() {
-                        num = (c as u32 - '0' as u32) + (num * 10);
+                let mut num = (n as u32) - b'0' as u32;
+                for ch in self.chars.by_ref() {
+                    if ch.is_ascii_digit() {
+                        num = num * 10 + (ch as u32 - b'0' as u32);
                     } else {
-                        self.peeked = String::from(c);
+                        self.peeked = Some(ch);
                         break;
                     }
                 }
                 Some(Ok(MdOp::Match(num)))
-            }
-            x => Some(Err(MdOpIteratorError::MdParse(x))),
-        }
-    }
-}
-
-impl DoubleEndedIterator for MdOpIterator<'_> {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        let current_char = if let Some(c) = self.peeked.pop() {
-            c
-        } else {
-            self.chars.next_back()?
-        };
-
-        match current_char {
-            n if n.is_ascii_digit() => {
-                let mut num = n as u32 - '0' as u32;
-                let mut power_of_10 = 10;
-                for c in self.chars.by_ref().rev() {
-                    if c.is_ascii_digit() {
-                        num += (c as u32 - '0' as u32) * power_of_10;
-                        power_of_10 *= 10;
-                    } else {
-                        self.peeked = String::from(c);
-                        break;
-                    }
-                }
-                Some(Ok(MdOp::Match(num)))
-            }
-
-            m @ ('A' | 'C' | 'G' | 'T' | 'N') => {
-                for c in self.chars.by_ref().rev() {
-                    match c {
-                        '^' => {
-                            self.peeked.push(m);
-                            return Some(Ok(MdOp::Deletion(
-                                self.peeked.drain(..).map(|b| b as u8).collect(),
-                            )));
-                        }
-                        'A' | 'C' | 'G' | 'T' | 'N' => self.peeked.insert(0, c),
-                        _ => {
-                            self.peeked.insert(0, c);
-                            break;
-                        }
-                    }
-                }
-                Some(Ok(MdOp::Mismatch(m as u8)))
             }
             x => Some(Err(MdOpIteratorError::MdParse(x))),
         }

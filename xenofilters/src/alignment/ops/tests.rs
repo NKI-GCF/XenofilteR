@@ -122,7 +122,7 @@ fn mismatch_cig_10m_md_5a4() -> Result<()> {
     let ops: Vec<UnifiedOp> = uop_iter.map(|r| r.unwrap()).collect();
     assert_eq!(
         ops,
-        vec![UnifiedOp::Match(4), UnifiedOp::Mis(1), UnifiedOp::Match(5)]
+        vec![UnifiedOp::Match(5), UnifiedOp::Mis(1), UnifiedOp::Match(4)]
     );
     Ok(())
 }

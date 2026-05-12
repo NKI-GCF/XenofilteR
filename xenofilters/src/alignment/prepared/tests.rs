@@ -193,7 +193,7 @@ fn test_make_prepared_pair_unmapped() -> Result<()> {
     let rec1 = create_record(b"read1", "10M", &[], &[30; 10], "10", false)?;
 
     let iter1 = UnifiedOpIterator::new(&rec1).unwrap();
-    let iter2 = UnifiedOpIterator::empty(false);
+    let iter2 = UnifiedOpIterator::empty();
 
     let mut pair = PreparedAlignmentPair { iter1, iter2 };
     assert_eq!(pair.iter1.seq_len(), 10);
@@ -205,8 +205,8 @@ fn test_make_prepared_pair_unmapped() -> Result<()> {
 }
 #[test]
 fn test_make_prepared_pair_unmapped_both() -> Result<()> {
-    let iter1 = UnifiedOpIterator::empty(false);
-    let iter2 = UnifiedOpIterator::empty(false);
+    let iter1 = UnifiedOpIterator::empty();
+    let iter2 = UnifiedOpIterator::empty();
 
     let mut pair = PreparedAlignmentPair { iter1, iter2 };
     match pair.iter1.next() {

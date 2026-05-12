@@ -71,14 +71,14 @@ impl<'a> Iterator for PreparedAlignmentPairIter<'a> {
         let read_graft = read_graft.take().unwrap();
 
         let iter1 = match read_host.is_unmapped() {
-            true => UnifiedOpIterator::empty(read_host.is_reverse()),
+            true => UnifiedOpIterator::empty(),
             false => match UnifiedOpIterator::new(read_host) {
                 Ok(iter) => iter,
                 Err(e) => return Some(Err(e)),
             },
         };
         let iter2 = match read_graft.is_unmapped() {
-            true => UnifiedOpIterator::empty(read_graft.is_reverse()),
+            true => UnifiedOpIterator::empty(),
             false => match UnifiedOpIterator::new(read_graft) {
                 Ok(iter) => iter,
                 Err(e) => return Some(Err(e)),

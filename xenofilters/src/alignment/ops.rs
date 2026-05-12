@@ -39,7 +39,6 @@ pub(crate) struct UnifiedOpIterator<'a> {
     next_md_op: Option<MdOp>,
     next_cig: Option<Cigar>,
     next_op: Option<UnifiedOp>,
-    is_rev: bool,
 }
 
 impl<'a> UnifiedOpIterator<'a> {
@@ -52,30 +51,18 @@ impl<'a> UnifiedOpIterator<'a> {
             next_op: None,
             next_md_op: None,
             next_cig: None,
-            is_rev: rec.is_reverse(),
         })
     }
-    pub(crate) fn empty(is_rev: bool) -> Self {
+    pub(crate) fn empty() -> Self {
         UnifiedOpIterator {
             cigar_iter: vec![].into_iter(),
             md_iter: MdOpIterator::empty(),
             next_op: None,
             next_md_op: None,
             next_cig: None,
-            is_rev,
         }
     }
 
-    /*pub fn peek(&'a mut self) -> Option<&'a UnifiedOp> {
-        if self.next_op.is_none() {
-            match self.next() {
-                Some(Ok(op)) => self.next_op = Some(op),
-                Some(Err(_)) => return None,
-                None => return None,
-            }
-        }
-        self.next_op.as_ref()
-    }*/
 
     fn match_md_op(&mut self, md_op: MdOp, cig_len: u32) -> Result<UnifiedOp, AlignmentError> {
         match md_op {
@@ -113,8 +100,6 @@ impl<'a> Iterator for UnifiedOpIterator<'a> {
         }
         let next_cig = if self.next_cig.is_some() {
             self.next_cig.take()
-        } else if self.is_rev {
-            self.cigar_iter.next_back()
         } else {
             self.cigar_iter.next()
         };
@@ -124,8 +109,6 @@ impl<'a> Iterator for UnifiedOpIterator<'a> {
             Some(Cigar::Match(len) | Cigar::Equal(len) | Cigar::Diff(len)) => {
                 let next_md_op = if self.next_md_op.is_some() {
                     self.next_md_op.take().map(Ok)
-                } else if self.is_rev {
-                    self.md_iter.next_back()
                 } else {
                     self.md_iter.next()
                 };
@@ -149,8 +132,6 @@ impl<'a> Iterator for UnifiedOpIterator<'a> {
             Some(Cigar::Del(len)) => {
                 let next_md_op = if self.next_md_op.is_some() {
                     self.next_md_op.take().map(Ok)
-                } else if self.is_rev {
-                    self.md_iter.next_back()
                 } else {
                     self.md_iter.next()
                 };
@@ -184,8 +165,6 @@ impl<'a> Iterator for UnifiedOpIterator<'a> {
                 //eprintln!("CIGAR operations exhausted, checking MD iterator");
                 let next_md_op = if self.next_md_op.is_some() {
                     self.next_md_op.take().map(Ok)
-                } else if self.is_rev {
-                    self.md_iter.next_back()
                 } else {
                     self.md_iter.next()
                 };
