@@ -1,40 +1,33 @@
 use super::core::LineByLine;
-use crate::alignment::stringify_record;
-use anyhow::{Result, anyhow};
-use rust_htslib::bam::record::{Aux, Record};
+use anyhow::Result;
+use noodles::sam::alignment::record::data::field::Tag;
+use noodles::sam::alignment::record_buf::data::field::Value;
+use noodles::sam::alignment::record_buf::RecordBuf;
+use noodles::sam::alignment::Record;
 
 impl LineByLine {
     pub(super) fn add_aux_tags(
         &mut self,
-        rec: &mut Record,
-        field: &[u8],
-        value: Aux,
+        rec: &mut RecordBuf,
+        field: &[u8; 2],
+        value: u8,
     ) -> Result<()> {
-        rec.push_aux(field, value).map_err(|e| {
-            anyhow!(
-                "Error adding {} tag to record: {}\n{}",
-                field.iter().map(|&b| b as char).collect::<String>(),
-                e,
-                stringify_record(rec)
-            )
-        })
+        let tag = Tag::new(field[0], field[1]);
+        let val = Value::from(value);
+        rec.data_mut().insert(tag, val);
+        Ok(())
     }
+
     pub(super) fn write_record(
         &mut self,
         i: usize,
-        rec: Record,
+        rec: &dyn Record,
         best_state: Option<bool>,
     ) -> Result<()> {
         match (i, best_state) {
             (i, Some(false)) => self.branch_counters[i << 1] += 1,
             (i, Some(true)) => self.branch_counters[1 + (i << 1)] += 1,
-            (i, None) => {
-                if (self.is_unmapped_skipped)(&rec) {
-                    self.branch_counters[24 + i] += 1;
-                    return Ok(());
-                }
-                self.branch_counters[16 + i] += 1;
-            }
+            (i, None) => self.branch_counters[16 + i] += 1,
         }
         if let Some(aln) = self.aln.get_mut(i) {
             aln.write_record(rec, best_state)

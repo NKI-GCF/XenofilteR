@@ -2,25 +2,26 @@ use crate::aln_stream::AlignmentStream;
 use crate::fragment_state::FragmentState;
 use crate::{Config, Penalty, StripReadSuffix};
 use anyhow::{Result, ensure};
-use rust_htslib::bam::record::Record;
+use noodles::sam::alignment::Record;
 use smallvec::{SmallVec, smallvec};
 
-pub type RecordEvalFn = fn(&Record) -> bool;
-pub type AlnBuffer = SmallVec<[FragmentState; 2]>;
+pub(crate) type RecordEvalFn = fn(&dyn Record) -> Result<bool>;
+pub(crate) type AlnBuffer = SmallVec<[FragmentState; 2]>;
 
-fn always_false(_: &Record) -> bool {
-    false
+fn always_false(_: &dyn Record) -> Result<bool> {
+    Ok(false)
 }
 
-fn unmapped_and_mate_unmapped(rec: &Record) -> bool {
-    rec.is_unmapped() && (!rec.is_paired() || rec.is_mate_unmapped())
+fn unmapped_and_mate_unmapped(rec: &dyn Record) -> Result<bool> {
+    let flags = rec.flags()?;
+    Ok(flags.is_unmapped() && (!flags.is_segmented() || flags.is_mate_unmapped()))
 }
 
-fn is_secondary(rec: &Record) -> bool {
-    rec.is_secondary()
+fn is_secondary(rec: &dyn Record) -> Result<bool> {
+    Ok(rec.flags()?.is_secondary())
 }
 
-pub struct LineByLine {
+pub(crate) struct LineByLine {
     pub(super) aln: SmallVec<[Box<dyn AlignmentStream>; 2]>,
     pub(super) branch_counters: [u64; 32],
     pub(super) is_secondary_skipped: RecordEvalFn,
@@ -36,8 +37,7 @@ impl LineByLine {
         config: Config,
         mut aln: SmallVec<[Box<dyn AlignmentStream>; 2]>,
     ) -> Result<Self> {
-        //#[cfg(test)]
-        //eprintln!("Unmapped discard: {}, Secondary skip: {}, Strip suffix: {:?}", config.discard_unmapped, config.skip_secondary, config.strip_read_suffix);
+
         let is_unmapped_skipped = match config.discard_unmapped {
             true => unmapped_and_mate_unmapped,
             false => always_false,
@@ -54,19 +54,6 @@ impl LineByLine {
 
         let is_new_qname = match config.strip_read_suffix {
             StripReadSuffix::True => |best: &AlnBuffer, qname2: &[u8]| {
-                /*eprintln!(
-                    "Comparing {} to {} with suffix stripped",
-                    String::from_utf8_lossy(best.first().unwrap().first_qname()),
-                    String::from_utf8_lossy(qname2)
-                );
-                eprintln!(
-                    "(stripped to {}) vs (stripped to {})",
-                    String::from_utf8_lossy(
-                        &best.first().unwrap().first_qname()
-                            [..best.first().unwrap().first_qname().len() - 2]
-                    ),
-                    String::from_utf8_lossy(&qname2[..qname2.len() - 2])
-                );*/
                 best.first()
                     .map(|b| b.first_qname())
                     .map(|qname1| qname1[..qname1.len() - 2] != qname2[..qname2.len() - 2])
@@ -90,11 +77,6 @@ impl LineByLine {
                 {
                     |best: &AlnBuffer, qname2: &[u8]| {
                         if let Some(first_qname) = best.first().map(|b| b.first_qname()) {
-                            /*eprintln!(
-                                "{} vs {}",
-                                std::str::from_utf8(first_qname).unwrap_or("<?>"),
-                                std::str::from_utf8(qname2).unwrap_or("<?>")
-                            );*/
                             if first_qname.ends_with(b"/1") || first_qname.ends_with(b"/2") {
                                 return best.first().map(|b| b.first_qname()).map(|qname1| {
                                     qname1[..qname1.len() - 2] != qname2[..qname2.len() - 2]
@@ -133,12 +115,6 @@ impl LineByLine {
         let mut i = 0;
         while i != self.aln.len() {
             while let Some(rec) = self.aln[i].next_rec()? {
-                /*#[cfg(test)]
-                eprintln!(
-                    "Processing record from alignment {i}: {}, best_len: {}",
-                    String::from_utf8_lossy(rec.qname()),
-                    best.len()
-                );*/
                 if self.handle_record_is_fragment_finished(i, rec, &mut best)? {
                     break;
                 }
@@ -149,11 +125,11 @@ impl LineByLine {
                 let ord = best[0].partial_cmp(last);
 
                 #[cfg(test)]
-                assert_eq!(best[0].records[0].qname(), last.records[0].qname());
+                assert_eq!(best[0].records[0].name(), last.records[0].name());
                 #[cfg(test)]
                 eprintln!(
                     "{}: {} vs {} => {:?}",
-                    std::str::from_utf8(best[0].records[0].qname()).unwrap_or("<?>"),
+                    std::str::from_utf8(best[0].records[0].name().as_ref().unwrap()).unwrap_or("<?>"),
                     best[0].get_nr(),
                     last.get_nr(),
                     ord
@@ -166,8 +142,6 @@ impl LineByLine {
                 if best.is_empty() {
                     break;
                 }
-                //#[cfg(test)]
-                //eprintln!("Processing best buffer of size {}", best.len());
                 self.handle_best(&mut best, decision)?;
                 i = 0;
             }

@@ -1,11 +1,12 @@
 use crate::aln_stream::AlignmentStream;
 use crate::filter_algorithm::line_by_line::{core::AlnBuffer, ordering::Decision};
 use crate::fragment_state::FragmentState;
-use crate::tests::{MockStream, create_record};
+use crate::tests::{MockStream, create_record, create_recordbuf};
 use crate::{Config, LineByLine, StripReadSuffix};
 use anyhow::Result;
 use smallvec::{SmallVec, smallvec};
 use std::cmp::Ordering;
+use noodles::sam::alignment::record::Flags;
 
 fn setup_mock_streams() -> SmallVec<[Box<dyn AlignmentStream>; 2]> {
     let stream1 = MockStream::new(
@@ -136,24 +137,22 @@ fn test_branch_counters_and_skipping() -> Result<()> {
 
     let mut lbl = LineByLine::new(config.clone(), smallvec![])?;
 
-    let mut unmapped_fwd = create_record(b"u", "*", &[], &[], "10", false)?;
-    unmapped_fwd.set_unmapped();
-    unmapped_fwd.set_paired();
-    unmapped_fwd.set_mate_unmapped();
+    let mut unmapped_fwd = create_recordbuf(b"u", "*", &[], &[], "10", false)?;
+    unmapped_fwd.flags_mut().toggle(Flags::from_bits(0x45).unwrap()); // unmapped, paired, first in
 
     let mut unmapped_rev = unmapped_fwd.clone();
-    unmapped_rev.set_reverse();
+    unmapped_rev.flags_mut().toggle(Flags::from_bits(0x10).unwrap()); // reverse
 
-    let mut secondary = create_record(b"s", "*", &[], &[], "10", false)?;
-    secondary.set_secondary();
+    let mut secondary = create_recordbuf(b"s", "*", &[], &[], "10", false)?;
+    secondary.flags_mut().toggle(Flags::from_bits(0x100).unwrap()); // secondary
 
-    let mut unmapped_single = create_record(b"u2", "*", &[], &[], "10", false)?;
-    unmapped_single.set_unmapped();
+    let mut unmapped_single = create_recordbuf(b"u2", "*", &[], &[], "10", false)?;
+    unmapped_single.flags_mut().toggle(Flags::from_bits(0x4).unwrap()); // unmapped, single-end
 
     // Should return early (skipped)
-    assert!(lbl.write_record(0, unmapped_fwd.clone(), None).is_ok());
-    assert!(lbl.write_record(0, unmapped_rev.clone(), None).is_ok());
-    assert!(lbl.write_record(0, unmapped_single, Some(false)).is_ok());
+    assert!(lbl.write_record(0, &unmapped_fwd, None).is_ok());
+    assert!(lbl.write_record(0, &unmapped_rev, None).is_ok());
+    assert!(lbl.write_record(0, &unmapped_single, Some(false)).is_ok());
     lbl.print_counters(0);
     assert_eq!(lbl.branch_counters[24], 2); // unmapped:0: 2
     assert_eq!(lbl.branch_counters[0], 1); // filter:0:
@@ -167,8 +166,8 @@ fn test_branch_counters_and_skipping() -> Result<()> {
 
     config.discard_unmapped = false;
     let mut lbl = LineByLine::new(config, smallvec![])?;
-    assert!(lbl.write_record(0, unmapped_fwd, None).is_ok());
-    assert!(lbl.write_record(0, unmapped_rev, None).is_ok());
+    assert!(lbl.write_record(0, &unmapped_fwd, None).is_ok());
+    assert!(lbl.write_record(0, &unmapped_rev, None).is_ok());
     lbl.print_counters(0);
     assert_eq!(lbl.branch_counters[16], 2); // ambiguous:0: 2
 
@@ -181,21 +180,13 @@ fn test_handle_ordering_logic() -> Result<()> {
     // Test logic in handle_ordering requires mocked AlnStream for write_record calls.
     // Direct testing of branch_counters incrementation via write_record:
     let mut lbl = lbl_setup;
+    let rec = create_record(b"r1", "M10", &[], &[], "10", false)?;
+    let rec2 = create_record(b"r2", "M10", &[], &[], "10", false)?;
+    let rec3 = create_record(b"r3", "M10", &[], &[], "10", false)?;
 
-    lbl.write_record(
-        0,
-        create_record(b"r1", "10M", &[], &[], "10", false)?,
-        Some(true),
-    )
-    .unwrap(); // Assigned alignment 0
-    lbl.write_record(
-        0,
-        create_record(b"r2", "10M", &[], &[], "10", false)?,
-        Some(false),
-    )
-    .unwrap(); // Filtered from alignment 0
-    lbl.write_record(0, create_record(b"r3", "10M", &[], &[], "10", false)?, None)
-        .unwrap(); // Ambiguous alignment 0
+    lbl.write_record(0, &rec, Some(true))?;
+    lbl.write_record(0, &rec2, Some(false))?;
+    lbl.write_record(0, &rec3, None)?;
 
     assert_eq!(lbl.branch_counters[1], 1); // 1 + (0 << 1)
     assert_eq!(lbl.branch_counters[0], 1); // (0 << 1)
@@ -207,19 +198,11 @@ fn test_handle_ordering_logic() -> Result<()> {
 fn test_fragment_finished_transitions() -> Result<()> {
     let lbl = LineByLine::new(Config::default(), smallvec![])?;
     let mut lbl = lbl;
-    let mut best: AlnBuffer = smallvec![FragmentState::from_record(
-        create_record(b"R1", "10M", &[], &[], "10", false)?,
-        0
-    )];
+    let rec = create_record(b"R1", "M10", &[], &[], "10", false)?;
+    let mut best: AlnBuffer = smallvec![FragmentState::from_record(rec.clone(), 0)];
 
     // Same QName: continues fragment
-    let fin = lbl
-        .handle_record_is_fragment_finished(
-            0,
-            create_record(b"R1", "10M", &[], &[], "10", false)?,
-            &mut best,
-        )
-        .unwrap();
+    let fin = lbl.handle_record_is_fragment_finished(0, rec, &mut best)?;
     assert!(!fin);
     assert_eq!(best[0].records.len(), 2);
 

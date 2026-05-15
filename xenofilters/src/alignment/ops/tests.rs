@@ -1,12 +1,14 @@
 use crate::alignment::AlignmentError;
 use crate::alignment::{UnifiedOp, UnifiedOpIterator};
-use crate::tests::read_len_from_cigar;
+use crate::tests::{read_len_from_cigar, create_cigar};
 use anyhow::Result;
-use rust_htslib::bam::record::{Aux, Cigar, CigarString, Record};
+use noodles::bam::record::Record;
+use noodles::sam::alignment::RecordBuf;
+use noodles::sam::alignment::record::cigar::op::Kind;
 
 impl UnifiedOp {
     #[must_use]
-    pub(crate) fn len(&self) -> u32 {
+    pub(crate) fn len(&self) -> usize {
         match self {
             UnifiedOp::Match(len)
             | UnifiedOp::Mis(len)
@@ -21,16 +23,16 @@ impl UnifiedOp {
 
 impl UnifiedOpIterator<'_> {
     pub(crate) fn seq_len(&self) -> u32 {
-        self.cigar_iter
+        self.cigar.iter()
             .as_slice()
             .iter()
-            .map(|c| match c {
-                Cigar::Match(len)
-                | Cigar::Equal(len)
-                | Cigar::Diff(len)
-                | Cigar::Ins(len)
-                | Cigar::SoftClip(len) => *len,
-                Cigar::Del(_) | Cigar::RefSkip(_) | Cigar::HardClip(_) | Cigar::Pad(_) => 0,
+            .map(|op| match op.kind() {
+                Kind::Match
+                | Kind::SequenceMatch
+                | Kind::SequenceMismatch
+                | Kind::Insertion
+                | Kind::SoftClip => op.len(),
+                Kind::Deletion | Kind::Skip | Kind::HardClip | Kind::Pad => 0,
             })
             .sum()
     }
@@ -43,15 +45,11 @@ pub(crate) fn create_record(
     qual: &[u8],
     md: &str,
     is_rev: bool,
-) -> Result<rust_htslib::bam::Record> {
+) -> Result<Record> {
     let mut record = Record::new();
-    let is_unmapped = cig_str == "*";
+    let is_unmapped = cig_str.is_empty();
 
-    let cigar = if is_unmapped {
-        CigarString::try_from("")?
-    } else {
-        CigarString::try_from(cig_str)?
-    };
+    let cigar = create_cigar(cig_str)?;
     let read_len = if is_unmapped {
         0
     } else {
@@ -74,7 +72,6 @@ pub(crate) fn create_record(
     if is_unmapped {
         record.set_unmapped();
     } else {
-        // HTSlib requires the MD tag to be set manually for tests
         record.push_aux(b"MD", Aux::String(md))?;
     }
 
@@ -82,15 +79,20 @@ pub(crate) fn create_record(
         record.set_reverse();
     }
 
-    /*#[cfg(test)]
-    eprintln!(
-        "Created record: qname={:?}, cigar={:?}, is_rev={}, md={}",
-        std::str::from_utf8(record.qname())?,
-        record.cigar(),
-        is_rev,
-        md
-    );*/
     Ok(record)
+}
+
+pub(crate) fn create_recordbuf(
+    qname: &[u8],
+    cig_str: &str,
+    seq: &[u8],
+    qual: &[u8],
+    md: &str,
+    is_rev: bool,
+) -> Result<RecordBuf> {
+    let record = create_record(qname, cig_str, seq, qual, md, is_rev)?;
+    let record_buf = RecordBuf::try_from_alignment_record(record)?;
+    Ok(record_buf)
 }
 
 #[test]
@@ -162,12 +164,10 @@ fn deletion_cig_5m3d5m_md_5daaa5() -> Result<()> {
 
 #[test]
 fn test_length_invariants() -> Result<()> {
-    // "50M10I40M"
     let rec = create_record(b"read1", "50M10I40M", &[], &[30; 100], "90", false)?;
     let iter = UnifiedOpIterator::new(&rec).unwrap();
 
     let total_len: u32 = iter.map(|r| r.unwrap().len()).sum();
-    // Sum of Match/Mis/Ins/Del should match the logical alignment footprint
     assert_eq!(total_len, 100);
     Ok(())
 }

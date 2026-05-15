@@ -2,9 +2,9 @@ use crate::alignment::MdOp;
 use crate::alignment::MdOpIterator;
 use smallvec::smallvec;
 
-fn process_md_forward(md_string: &str) -> Vec<MdOp> {
+fn process_md_forward(md: &[u8]) -> Vec<MdOp> {
     let md_iter = MdOpIterator {
-        chars: md_string.chars(),
+        bytes: Some(md.iter()),
         peeked: None,
     };
     md_iter.map(|r| r.unwrap()).collect()
@@ -12,7 +12,7 @@ fn process_md_forward(md_string: &str) -> Vec<MdOp> {
 
 #[test]
 fn test_forward_mdop_10a5() {
-    let md_ops = process_md_forward("10A5");
+    let md_ops = process_md_forward(b"10A5");
     assert_eq!(
         md_ops,
         vec![MdOp::Match(10), MdOp::Mismatch(b'A'), MdOp::Match(5),]
@@ -21,7 +21,7 @@ fn test_forward_mdop_10a5() {
 
 #[test]
 fn test_forward_mdop_tga() {
-    let md_ops = process_md_forward("TGA");
+    let md_ops = process_md_forward(b"TGA");
     assert_eq!(
         md_ops,
         vec![
@@ -34,7 +34,7 @@ fn test_forward_mdop_tga() {
 
 #[test]
 fn test_forward_mdop_adt20g() {
-    let md_ops = process_md_forward("A^T20G");
+    let md_ops = process_md_forward(b"A^T20G");
     assert_eq!(
         md_ops,
         vec![
@@ -48,7 +48,7 @@ fn test_forward_mdop_adt20g() {
 
 #[test]
 fn test_forward_mdop_5datc3() {
-    let md_ops = process_md_forward("5^ATC3");
+    let md_ops = process_md_forward(b"5^ATC3");
     assert_eq!(
         md_ops,
         vec![
@@ -61,7 +61,7 @@ fn test_forward_mdop_5datc3() {
 
 #[test]
 fn test_forward_mdop_1dn5() {
-    let md_ops = process_md_forward("1^N5");
+    let md_ops = process_md_forward(b"1^N5");
     assert_eq!(
         md_ops,
         vec![
@@ -74,7 +74,7 @@ fn test_forward_mdop_1dn5() {
 
 #[test]
 fn test_forward_mdop_999g1() {
-    let md_ops = process_md_forward("999G1");
+    let md_ops = process_md_forward(b"999G1");
     assert_eq!(
         md_ops,
         vec![MdOp::Match(999), MdOp::Mismatch(b'G'), MdOp::Match(1),]
@@ -84,5 +84,5 @@ fn test_forward_mdop_999g1() {
 #[test]
 #[should_panic]
 fn test_forward_mdop_invalid_char() {
-    let _md_ops = process_md_forward("10A5X");
+    let _md_ops = process_md_forward(b"10A5X");
 }

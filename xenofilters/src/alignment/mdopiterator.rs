@@ -1,43 +1,47 @@
 use crate::alignment::MdOpIteratorError;
-use rust_htslib::bam::record::{Aux, Record};
-use rust_htslib::errors::Error as HtslibError;
+use noodles::bam::record::Record;
+use noodles::sam::alignment::record::data::field::Value;
 use smallvec::SmallVec;
-use std::str::Chars;
+use std::slice::Iter;
 
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MdOp {
-    Match(u32),
+pub(crate) enum MdOp {
+    Match(usize),
     Mismatch(u8),
     Deletion(SmallVec<[u8; 4]>), // slightly larger stack buffer
 }
 
 #[cfg_attr(test, derive(Debug))]
-pub struct MdOpIterator<'a> {
-    chars: Chars<'a>,
-    peeked: Option<char>,
+pub(crate) struct MdOpIterator<'a> {
+    bytes: Option<Iter<'a, u8>>,
+    peeked: Option<u8>,
 }
 
 impl<'a> MdOpIterator<'a> {
-    pub fn new(rec: &'a Record) -> Result<Self, MdOpIteratorError> {
-        let chars = match rec.aux(b"MD") {
-            Ok(Aux::String(md)) => md.chars(),
-            Ok(_) => return Err(MdOpIteratorError::BadMdTag),
-            Err(HtslibError::BamAuxTagNotFound) => "".chars(),
-            Err(e) => return Err(MdOpIteratorError::Aux(e)),
+    pub(crate) fn new(rec: &'a Record) -> Result<Self, MdOpIteratorError> {
+        let bytes = match rec.data().get(b"MD") {
+            Some(Ok(Value::String(md))) => {
+                let r: &[u8] = md.as_ref();
+                Some(r.iter())
+            },
+            Some(Ok(_)) => return Err(MdOpIteratorError::BadMdTag),
+            Some(Err(e)) => return Err(MdOpIteratorError::MdError(e)),
+            None => None,
         };
-        Ok(Self { chars, peeked: None })
+        Ok(Self { bytes, peeked: None })
     }
 
-    pub fn empty() -> Self {
-        Self { chars: "".chars(), peeked: None }
+    pub(crate) fn empty() -> Self {
+        Self { bytes: None, peeked: None }
     }
 
-    /// Very fast path used in hot `partial_cmp`
-    pub fn is_single_operation(&self) -> bool {
-        for c in self.chars.clone() {
-            if !c.is_ascii_digit() {
-                return false;
+    pub(crate) fn is_single_operation(&self) -> bool {
+        if let Some (bytes) = &self.bytes {
+            for b in bytes.clone() {
+                if !b.is_ascii_digit() {
+                    return false;
+                }
             }
         }
         true
@@ -48,32 +52,37 @@ impl<'a> Iterator for MdOpIterator<'a> {
     type Item = Result<MdOp, MdOpIteratorError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let c = self.peeked.take().or_else(|| self.chars.next())?;
+        let b = self.peeked.take().or_else(|| self.bytes.as_mut()?.next().copied())?;
+            //or_else(|| self.bytes.next())?;
 
-        match c {
-            'A' | 'C' | 'G' | 'T' | 'N' => Some(Ok(MdOp::Mismatch(c as u8))),
+        match b {
+            b'A' | b'C' | b'G' | b'T' | b'N' => Some(Ok(MdOp::Mismatch(b))),
 
-            '^' => {
+            b'^' => {
                 let mut deleted = SmallVec::new();
-                for ch in self.chars.by_ref() {
-                    if matches!(ch, 'A' | 'C' | 'G' | 'T' | 'N') {
-                        deleted.push(ch as u8);
-                    } else {
-                        self.peeked = Some(ch);
-                        break;
+                if let Some(bytes) = self.bytes.as_mut() {
+                    for byte in bytes.by_ref() {
+                        if matches!(byte, b'A' | b'C' | b'G' | b'T' | b'N') {
+                            deleted.push(*byte);
+                        } else {
+                            self.peeked = Some(*byte);
+                            break;
+                        }
                     }
                 }
                 Some(Ok(MdOp::Deletion(deleted)))
             }
 
             n if n.is_ascii_digit() => {
-                let mut num = (n as u32) - b'0' as u32;
-                for ch in self.chars.by_ref() {
-                    if ch.is_ascii_digit() {
-                        num = num * 10 + (ch as u32 - b'0' as u32);
-                    } else {
-                        self.peeked = Some(ch);
-                        break;
+                let mut num = (n - b'0') as usize;
+                if let Some(bytes) = self.bytes.as_mut() {
+                    for byte in bytes.by_ref() {
+                        if byte.is_ascii_digit() {
+                            num = num * 10 + (byte - b'0') as usize;
+                        } else {
+                            self.peeked = Some(*byte);
+                            break;
+                        }
                     }
                 }
                 Some(Ok(MdOp::Match(num)))

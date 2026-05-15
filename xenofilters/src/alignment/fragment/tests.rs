@@ -3,7 +3,7 @@ use crate::Penalty;
 use crate::alignment::fragment::Fragment;
 use crate::tests::create_record;
 use anyhow::Result;
-use rust_htslib::bam::record::Record;
+use noodles::bam::record::Record;
 use smallvec::{SmallVec, smallvec};
 
 pub(crate) fn setup_penalties() -> Penalty {

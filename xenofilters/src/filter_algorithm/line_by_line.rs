@@ -6,4 +6,4 @@ pub(super) mod ordering;
 mod tests;
 
 // Re-export the main type and the most important items
-pub use core::LineByLine;
+pub(crate) use core::LineByLine;

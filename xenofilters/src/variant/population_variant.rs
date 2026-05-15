@@ -1,11 +1,10 @@
 use crate::variant::Variant;
-use anyhow::{Result, anyhow};
-use rust_htslib::bcf::record::Record;
+use anyhow::{Result, anyhow, ensure};
+use noodles::bcf::record::Record;
+use noodles::vcf::{Header, variant::record::info::field::Value};
 
-/// FIXME a variant could have multiple ALT alleles, but for simplicity we only consider one here.
-/// We can extend this later if needed.
-pub struct PopulationVariant {
-    pos: i64,
+pub(crate) struct PopulationVariant {
+    pos: usize,
     ref_a: Vec<u8>,
     alt_a: Vec<u8>,
     /// Allele frequency, e.g., 0.01 (1%)
@@ -13,11 +12,12 @@ pub struct PopulationVariant {
 }
 
 impl Variant for PopulationVariant {
-    fn pos(&self) -> i64 {
+    fn pos(&self) -> usize {
         self.pos
     }
     fn ref_allele(&self) -> &[u8] {
         &self.ref_a
+
     }
     fn alt_allele(&self) -> &[u8] {
         &self.alt_a
@@ -28,24 +28,24 @@ impl Variant for PopulationVariant {
 }
 
 /// Example parser for Population VCF (checks INFO tag "AF")
-pub fn parse_population_record(record: &mut Record) -> Result<Vec<PopulationVariant>> {
+pub(crate) fn parse_population_record(record: &mut Record, header: &Header) -> Result<Vec<PopulationVariant>> {
+
+    let pos = record.variant_start().transpose()?.map(|p| p.get()).unwrap_or(0);
+    // FIXME a variant could have multiple ALT alleles, but for simplicity we only consider one here.
+    // We can extend this later if needed.
+    let alleles = record.alternate_bases();
+    let alleles = alleles.as_ref();
+    ensure!(!alleles.contains(&b','), "Multiple ALT alleles not supported for population variants");
+
+
+    // FIXME: try retrieving from samples first.
     // 1. Get AF from INFO
-    let af_values = record
-        .info(b"AF")
-        .float()?
-        .ok_or_else(|| anyhow!("Missing AF tag"))?;
+    let allele_frequency = match record.info().get(header, "AF").transpose()?.flatten() {
+        Some(Value::Float(af)) => af as f64,
+        _ => return Err(anyhow!("Missing AF tag or AF tag is not a float")),
+    };
+    let alt_a = alleles.to_vec();
+    let ref_a = record.reference_bases().as_ref().to_vec();
 
-    let alleles = record.alleles();
-    let ref_a = alleles[0].to_vec();
-    let mut variants = Vec::new();
-
-    for (i, alt_a) in alleles[1..].iter().enumerate() {
-        variants.push(PopulationVariant {
-            pos: record.pos(),
-            ref_a: ref_a.clone(),
-            alt_a: alt_a.to_vec(),
-            allele_frequency: af_values[i] as f64,
-        });
-    }
-    Ok(variants)
+    Ok(vec![PopulationVariant { pos, ref_a, alt_a, allele_frequency }])
 }

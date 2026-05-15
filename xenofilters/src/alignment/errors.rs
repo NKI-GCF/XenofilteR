@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum AlignmentError {
+pub(crate) enum AlignmentError {
     #[error(
         "MD/CIGAR inconsistency: A CIGAR deletion ('D') was not matched by a corresponding MD deletion ('^')."
     )]
@@ -14,14 +14,14 @@ pub enum AlignmentError {
     UnImplemented,
 
     #[error(transparent)]
-    Aux(#[from] rust_htslib::errors::Error),
+    Anyhow(#[from] anyhow::Error),
 
     #[error(transparent)]
-    Anyhow(#[from] anyhow::Error),
+    MdError(#[from] std::io::Error),
 }
 
 #[derive(Debug, Error)]
-pub enum PrepareError {
+pub(crate) enum PrepareError {
     #[error(transparent)]
     Alignment(#[from] AlignmentError),
 
@@ -30,13 +30,13 @@ pub enum PrepareError {
 }
 
 #[derive(Debug, Error)]
-pub enum MdOpIteratorError {
+pub(crate) enum MdOpIteratorError {
     #[error("Wrong MD tag type found")]
     BadMdTag,
 
-    #[error("MD parsing error: invalid character '{0}'")]
-    MdParse(char),
+    #[error("MD parsing error: invalid byte '{0}'")]
+    MdParse(u8),
 
     #[error(transparent)]
-    Aux(#[from] rust_htslib::errors::Error),
+    MdError(#[from] std::io::Error),
 }

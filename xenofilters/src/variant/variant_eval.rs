@@ -18,7 +18,7 @@ impl<'a> VariantEval<'a> {
     pub(crate) fn delta(&self) -> f64 {
         self.alt_score - self.incurred
     }
-    pub(crate) fn end(&self) -> i64 {
+    pub(crate) fn end(&self) -> usize {
         self.ref_end().max(self.alt_end())
     }
     pub(crate) fn vnt(&self) -> &'a dyn Variant {
@@ -27,14 +27,14 @@ impl<'a> VariantEval<'a> {
     pub(crate) fn set_variant(&mut self, vnt: &'a dyn Variant) {
         self.vnt = Some(vnt);
     }
-    pub(crate) fn start(&self) -> i64 {
+    pub(crate) fn start(&self) -> usize {
         self.vnt().pos()
     }
-    pub(crate) fn ref_end(&self) -> i64 {
-        self.vnt().pos() + self.vnt().ref_allele().len() as i64
+    pub(crate) fn ref_end(&self) -> usize {
+        self.vnt().pos() + self.vnt().ref_allele().len()
     }
-    pub(crate) fn alt_end(&self) -> i64 {
-        self.vnt().pos() + self.vnt().alt_allele().len() as i64
+    pub(crate) fn alt_end(&self) -> usize {
+        self.vnt().pos() + self.vnt().alt_allele().len()
     }
     pub(crate) fn update(&mut self, add: f64, alt_score: f64) {
         self.incurred += add;

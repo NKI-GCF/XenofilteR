@@ -1,59 +1,89 @@
-use crate::bam_format::{out_from_file, out_stdout, path_unicode_ok};
+use crate::bam_format::{out_from_file, path_unicode_ok};
 use crate::variant::{
-    VariantStoreTrait, VariantStore, PopulationVariant, SampleVariant, parse_population_record, parse_sample_record, vcf_reader
+    VariantStoreTrait, VariantStore, PopulationVariant, SampleVariant, parse_population_record, parse_sample_record
 };
 use crate::{Config, StripReadSuffix};
 use anyhow::{Result, anyhow, ensure};
-use rust_htslib::bam::{self, Read, record::Record};
+use noodles::bam::{io::{Reader as BamReader, Writer as BamWriter}, record::Record};
+use std::io::Read as ioRead;
+use noodles::bgzf::io::{Reader as BgzfReader, Writer as BgzfWriter};
+use std::fs::File;
+use noodles::sam::header::Header;
+use noodles::sam::alignment::{Record as AlnRecord, io::Write};
 
-pub trait AlignmentStream {
+pub(crate) trait AlignmentStream {
     fn next_qname(&self) -> &[u8];
     fn un_next(&mut self, rec: Record) -> Result<()>;
     fn next_rec(&mut self) -> Result<Option<Record>>;
-    fn write_record(&mut self, rec: Record, is_best: Option<bool>) -> Result<()>;
+    fn write_record(&mut self, rec: &dyn AlnRecord, is_best: Option<bool>) -> Result<()>;
     fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<()>;
     fn variant_store(&self) -> Option<&dyn VariantStoreTrait>;
+    fn header(&self) -> &Header;
 }
 
-pub struct AlnStream {
-    ambiguous: Option<bam::Writer>,
-    pub bam: Option<bam::Reader>,
-    filt: Option<bam::Writer>,
+pub(crate) struct AlnStream {
+    ambiguous: Option<BamWriter<BgzfWriter<File>>>,
+    pub(crate) bam: Option<BamReader<BgzfReader<File>>>,
+    filt: Option<BamWriter<BgzfWriter<File>>>,
     next: Option<Record>,
-    output: Option<bam::Writer>,
+    output: Option<BamWriter<BgzfWriter<File>>>,
     sample_variants: Option<VariantStore<SampleVariant>>,
     population_variants: Option<VariantStore<PopulationVariant>>,
+    header: Header,
 }
 
 impl AlnStream {
-    pub fn new(opt: &mut Config, i: usize) -> Result<Self> {
+    pub(crate) fn new(opt: &mut Config, i: usize) -> Result<Self> {
         let bam_str = opt.alignment[i].as_str();
-        let mut bam = bam::Reader::from_path(bam_str)?;
+        let file = File::open(bam_str)?;
+        let mut bam = BamReader::new(file);
+        let header = bam.read_header()?;
 
-        let mut test_record = Record::new();
-        bam.read(&mut test_record)
-            .transpose()?
-            .ok_or_else(|| anyhow!("{bam_str} has no records"))?;
+        // XXX: workaround for sort order.
+        let mut header_reader = bam.header_reader();
+        header_reader.read_magic_number()?;
+        let mut raw_sam_header_reader = header_reader.raw_sam_header_reader()?;
 
-        let qname = test_record.qname();
+        let mut buf = Vec::new();
+        raw_sam_header_reader.read_to_end(&mut buf)?;
+
+        for parts in buf
+            .split(|&b| b == b'\n')
+            .map(|s| s.split(|&b| b == b'\t').collect::<Vec<_>>())
+        {
+            ensure!(
+                parts.len() < 3
+                    || parts[0] != b"@HD"
+                    || (parts[2] != b"SO:coordinate" && parts[2] != b"GO:reference"),
+                "Coordinate sorted input, would require hashmap lookup."
+            );
+        }
+
+        let test_record = match bam.records().next() {
+            Some(Ok(rec)) => rec,
+            Some(Err(e)) => return Err(anyhow!(e)),
+            None => return Err(anyhow!("{bam_str} has no records")),
+        };
+
+        let name = test_record.name().ok_or_else(|| anyhow!("Record has no name"))?;
         opt.strip_read_suffix = match opt.strip_read_suffix {
             StripReadSuffix::True => {
                 ensure!(
-                    qname.ends_with(b"/1") || qname.ends_with(b"/2"),
+                    name.ends_with(b"/1") || name.ends_with(b"/2"),
                     "Input read names do not have /1 or /2 suffixes, but strip_read_suffix is true."
                 );
                 StripReadSuffix::True
             }
             StripReadSuffix::False => {
                 ensure!(
-                    !qname.ends_with(b"/1") && !qname.ends_with(b"/2"),
+                    !name.ends_with(b"/1") && !name.ends_with(b"/2"),
                     "Input read names have /1 or /2 suffixes, but strip_read_suffix is false."
                 );
                 StripReadSuffix::False
             }
             StripReadSuffix::Auto => {
                 // Auto-detect based on first read
-                if qname.ends_with(b"/1") || qname.ends_with(b"/2") {
+                if name.ends_with(b"/1") || name.ends_with(b"/2") {
                     StripReadSuffix::True
                 } else {
                     StripReadSuffix::False
@@ -62,10 +92,10 @@ impl AlnStream {
             StripReadSuffix::Variable => StripReadSuffix::Variable,
         };
         opt.is_paired = if i == 0 && opt.is_paired.is_none() {
-            Some(test_record.is_paired())
+            Some(test_record.flags().is_segmented())
         } else {
             ensure!(
-                opt.is_paired == Some(test_record.is_paired()),
+                opt.is_paired == Some(test_record.flags().is_segmented()),
                 "All input BAMs must be either paired-end or single-end."
             );
             opt.is_paired
@@ -74,12 +104,12 @@ impl AlnStream {
         let sample_variants = opt
             .sample_variants
             .get(i)
-            .map(|p| vcf_reader(p, parse_sample_record))
+            .map(|p| VariantStore::new(p, parse_sample_record))
             .transpose()?;
         let population_variants = opt
             .population_variants
             .get(i)
-            .map(|p| vcf_reader(p, parse_population_record))
+            .map(|p| VariantStore::new(p, parse_population_record))
             .transpose()?;
 
         // check output paths are unicode here, so we hopefully only create files once all are ok.
@@ -93,7 +123,7 @@ impl AlnStream {
             .map(path_unicode_ok)
             .transpose()?;
 
-        let stream = AlnStream {
+        Ok(AlnStream {
             ambiguous: None,
             bam: Some(bam),
             filt: None,
@@ -101,33 +131,14 @@ impl AlnStream {
             output: None,
             sample_variants,
             population_variants,
-        };
-        let bam = stream.bam.as_ref().expect("no in");
-
-        let parts: Vec<Vec<&[u8]>> = bam
-            .header()
-            .as_bytes()
-            .split(|&b| b == b'\n')
-            .map(|s| s.split(|&b| b == b'\t').collect())
-            .collect();
-
-        // Should be first line in header, but in some version does not comply to specs.
-        for p in &parts {
-            ensure!(
-                p.len() < 3
-                    || p[0] != b"@HD"
-                    || (p[2] != b"SO:coordinate" && p[2] != b"GO:reference"),
-                "Coordinate sorted input, would require hashmap lookup."
-            );
-        }
-
-        Ok(stream)
+            header
+        })
     }
 }
 
 impl AlignmentStream for AlnStream {
     fn next_qname(&self) -> &[u8] {
-        self.next.as_ref().map_or(b"", |r| r.qname())
+        self.next.as_ref().and_then(|r| r.name()).map_or(b"", |n| n.as_ref())
     }
 
     fn un_next(&mut self, rec: Record) -> Result<()> {
@@ -143,55 +154,41 @@ impl AlignmentStream for AlnStream {
             .take()
             .map(Ok)
             .or_else(|| {
-                let mut record = Record::new();
-                match self.bam.as_mut().and_then(|b| b.read(&mut record)) {
-                    Some(Err(e)) => Some(Err(anyhow!(e))),
-                    Some(Ok(())) => Some(Ok(record)),
-                    None => None,
-                }
+                self.bam.as_mut().and_then(|b| b.records().next()).map(|o| o.map_err(|e| anyhow!(e)))
             })
             .transpose()
     }
 
-    fn write_record(&mut self, rec: Record, is_best: Option<bool>) -> Result<()> {
+    fn write_record(&mut self, rec: &dyn AlnRecord, is_best: Option<bool>) -> Result<()> {
         let output = match is_best {
             Some(true) => self.output.as_mut(),
             Some(false) => self.filt.as_mut(),
             None => self.ambiguous.as_mut(),
         };
-        output.map(|output| output.write(&rec)).transpose()?;
+        if let Some(o) = output {
+            o.write_alignment_record(&self.header, rec)?;
+        }
         Ok(())
     }
     fn init_writers(&mut self, opt: &Config, i: usize) -> Result<()> {
-        #[cfg(test)]
-        let allow_stdout = false;
-        #[cfg(not(test))]
-        let allow_stdout = true;
         let add_pg_line = !opt.no_program_line;
 
-        let bam = self.bam.as_ref().ok_or_else(|| anyhow!("No BAM reader"))?;
         self.output = opt
             .output
             .get(i)
-            .map(|f| out_from_file(f, bam.header(), add_pg_line))
+            .map(|f| out_from_file(f, &self.header, add_pg_line))
             .transpose()?;
 
-        if i == 0 && self.output.is_none() && allow_stdout {
-            self.output = Some(out_stdout(
-                bam.header(),
-                opt.stdout_format.into(),
-                add_pg_line,
-            )?);
-        }
         self.filt = opt
             .filtered_output
             .get(i)
-            .map(|f| out_from_file(f, bam.header(), add_pg_line))
+            .map(|f| out_from_file(f, &self.header, add_pg_line))
             .transpose()?;
+
         self.ambiguous = opt
             .ambiguous_output
             .get(i)
-            .map(|f| out_from_file(f, bam.header(), add_pg_line))
+            .map(|f| out_from_file(f, &self.header, add_pg_line))
             .transpose()?;
         Ok(())
     }
@@ -201,9 +198,12 @@ impl AlignmentStream for AlnStream {
             .map(|s| s as &dyn VariantStoreTrait)
             .or_else(|| self.population_variants.as_ref().map(|p| p as &dyn VariantStoreTrait))
     }
+    fn header(&self) -> &Header {
+        &self.header
+    }
 }
 
 // Minimal Mock to satisfy the AlnStream trait/interface
 
 #[cfg(test)]
-pub mod tests;
+pub(crate) mod tests;

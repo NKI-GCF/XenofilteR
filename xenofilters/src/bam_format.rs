@@ -1,107 +1,64 @@
+use anyhow::{Result, anyhow};
 use clap::ValueEnum;
-use rust_htslib::bam::{self, Format, Header, HeaderView, header::HeaderRecord};
-use rust_htslib::errors::Error;
-use std::path::{Path, PathBuf};
+use noodles::bam::io::Writer as BamWriter;
+use noodles::sam::{Header, header::record::value::{Map, map::program::tag}};
+use noodles::bgzf::io::{Writer as BgzfWriter, writer::{CompressionLevel, Builder as BgzfBuilder}};
+use std::{fs::File, path::Path};
+
 
 #[derive(Copy, Clone, Debug, ValueEnum, Default, PartialEq)]
-pub enum BamFormat {
+pub(crate) enum BamFormat {
     #[default]
     Bam,
     Sam,
     Cram,
 }
 
-impl From<BamFormat> for Format {
-    fn from(f: BamFormat) -> Self {
-        match f {
-            BamFormat::Bam => Format::Bam,
-            BamFormat::Sam => Format::Sam,
-            BamFormat::Cram => Format::Cram,
-        }
-    }
-}
-
-pub fn path_unicode_ok<'a, P: 'a + AsRef<Path>>(path: P) -> Result<(), Error> {
-    path.as_ref().to_str().ok_or(Error::NonUnicodePath)?;
+pub(crate) fn path_unicode_ok<'a, P: 'a + AsRef<Path>>(path: P) -> Result<()> {
+    path.as_ref().to_str()
+        .ok_or_else(|| anyhow!("Path {} is not valid UTF-8", path.as_ref().display()))?;
     Ok(())
 }
 
-fn format_from_extension(path: &Path) -> Format {
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("bam");
-    match ext.to_lowercase().as_str() {
-        "sam" => Format::Sam,
-        "cram" => Format::Cram,
-        _ => Format::Bam,
-    }
-}
+pub(crate) fn add_pg_line(header: &mut Header) -> Result<()>{
+    let id = "xenofilter";
 
-pub(crate) fn add_pg_line(header: &mut Header) {
-    let mut pg = HeaderRecord::new(b"PG");
-    let s = String::from("xenofilter");
-    pg.push_tag(b"ID", &s);
-    pg.push_tag(b"PN", &s);
-    pg.push_tag(b"VN", &env!("CARGO_PKG_VERSION").to_string());
-    pg.push_tag(b"CL", &std::env::args().collect::<Vec<_>>().join(" "));
+    let program = Map::builder()
+        .insert(tag::NAME, "xenofilter")
+        .insert(tag::VERSION, env!("CARGO_PKG_VERSION"))
+        .insert(tag::COMMAND_LINE, std::env::args().collect::<Vec<_>>().join(" "))
+        .build()
+        .expect("Failed to build PG record");
 
-    header.push_record(&pg);
+    // Insert it into the header's program map
+    header.programs_mut().add(id, program)?;
+    Ok(())
 }
 
 pub(crate) fn out_from_file(
-    f: &PathBuf,
-    hdr_view: &HeaderView,
+    f: &Path,
+    header: &Header,
     add_pg: bool,
-) -> Result<bam::Writer, Error> {
-    let mut header = bam::Header::from_template(hdr_view);
+) -> Result<BamWriter<BgzfWriter<File>>> {
+    let file = File::create(f)?;
+    let mut modified_header = header.clone();
     if add_pg {
-        add_pg_line(&mut header);
+        add_pg_line(&mut modified_header)?;
     }
-    let fmt = format_from_extension(f);
-    bam::Writer::from_path(f, &header, fmt)
-}
 
-pub(crate) fn out_stdout(
-    hdr_view: &HeaderView,
-    fmt: Format,
-    add_pg: bool,
-) -> Result<bam::Writer, Error> {
-    let mut header = bam::Header::from_template(hdr_view);
-    if add_pg {
-        add_pg_line(&mut header);
-    }
-    let mut ob: bam::Writer = bam::Writer::from_stdout(&header, fmt)?;
-    if let Format::Bam = fmt {
-        ob.set_compression_level(rust_htslib::bam::CompressionLevel::Fastest)?
-    }
-    Ok(ob)
+    let encoder = BgzfBuilder::default()
+        .set_compression_level(CompressionLevel::FAST)
+        .build_from_writer(file);
+    let mut writer = BamWriter::from(encoder);
+    writer.write_header(&modified_header)?;
+
+    Ok(writer)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_format_from_extension() {
-        match format_from_extension(Path::new("file.bam")) {
-            Format::Bam => (),
-            _ => panic!("Expected Bam format"),
-        }
-        match format_from_extension(Path::new("file.sam")) {
-            Format::Sam => (),
-            _ => panic!("Expected Sam format"),
-        }
-        match format_from_extension(Path::new("file.cram")) {
-            Format::Cram => (),
-            _ => panic!("Expected Cram format"),
-        }
-        match format_from_extension(Path::new("file.unknown")) {
-            Format::Bam => (),
-            _ => panic!("Expected Bam format for unknown extension"),
-        }
-        match format_from_extension(Path::new("file")) {
-            Format::Bam => (),
-            _ => panic!("Expected Bam format for file with no extension"),
-        }
-    }
     #[test]
     fn test_path_unicode_ok() {
         assert!(path_unicode_ok("file.bam").is_ok());
@@ -110,7 +67,7 @@ mod tests {
     }
     #[test]
     fn test_add_pg_line() {
-        let mut header = Header::new();
+        let mut header = Header::default();
         add_pg_line(&mut header);
         let pg_lines: Vec<_> = header.to_hashmap().get("PG").cloned().unwrap_or_default();
         assert_eq!(pg_lines.len(), 1);

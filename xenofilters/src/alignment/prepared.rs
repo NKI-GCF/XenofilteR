@@ -1,15 +1,16 @@
 use super::PrepareError;
 use crate::alignment::UnifiedOpIterator;
-use rust_htslib::bam::record::{Aux, Record};
+use noodles::bam::record::Record;
+use noodles::sam::alignment::record::data::field::Value;
 
-pub fn stringify_record(rec: &Record) -> String {
-    let qname = String::from_utf8_lossy(rec.qname());
-    let cigar = rec.cigar().to_string();
-    let mut s = format!("{qname}\t{cigar}");
-    if let Ok(Aux::String(md)) = rec.aux(b"MD") {
+pub(crate) fn stringify_record(rec: &Record) -> String {
+    let qname = rec.name();
+    let cigar = rec.cigar();
+    let mut s = format!("{qname:?}\t{cigar:?}");
+    if let Some(Ok(Value::String(md))) = rec.data().get(b"MD") {
         s.push_str(&format!("\tMD:Z:{md}"));
     }
-    s.push_str(&format!("\treverse:{}", rec.is_reverse()));
+    s.push_str(&format!("\treverse:{}", rec.flags().is_reverse_complemented()));
     //s.push_str(&format!("\tseq:{}", rec.seq().as_bytes().iter().map(|&b| b as char).collect::<String>()));
     //s.push_str(&format!("\tqual:{}", rec.qual().iter().map(|&q| (q + 33) as char).collect::<String>()));
 
@@ -17,25 +18,25 @@ pub fn stringify_record(rec: &Record) -> String {
 }
 
 #[cfg_attr(test, derive(Debug))]
-pub struct PreparedAlignmentPair<'a> {
+pub(crate) struct PreparedAlignmentPair<'a> {
     iter1: UnifiedOpIterator<'a>, // host
     iter2: UnifiedOpIterator<'a>, // graft
 }
 
 impl<'a> PreparedAlignmentPair<'a> {
-    pub fn host_graft_are_perfect_match(&'a mut self) -> (bool, bool) {
+    pub(crate) fn host_graft_are_perfect_match(&mut self) -> (bool, bool) {
         (self.iter1.is_single_match(), self.iter2.is_single_match())
     }
 }
 
-pub struct PreparedAlignmentPairIter<'a> {
+pub(crate) struct PreparedAlignmentPairIter<'a> {
     records1: std::slice::Iter<'a, Record>,
     records2: std::slice::Iter<'a, Record>,
 }
 
 impl<'a> PreparedAlignmentPairIter<'a> {
     #[must_use]
-    pub fn new(alns1: &'a [Record], alns2: &'a [Record]) -> Self {
+    pub(crate) fn new(alns1: &'a [Record], alns2: &'a [Record]) -> Self {
         Self {
             records1: alns1.iter(),
             records2: alns2.iter(),
@@ -52,14 +53,14 @@ impl<'a> Iterator for PreparedAlignmentPairIter<'a> {
         loop {
             if read_host.is_none() {
                 read_host = match self.records1.next() {
-                    Some(r) if r.is_secondary() => continue,
+                    Some(r) if r.flags().is_secondary() => continue,
                     None => return None,
                     r => r,
                 };
             }
             if read_graft.is_none() {
                 read_graft = match self.records2.next() {
-                    Some(r) if r.is_secondary() => continue,
+                    Some(r) if r.flags().is_secondary() => continue,
                     None => return None,
                     r => r,
                 };
@@ -70,14 +71,14 @@ impl<'a> Iterator for PreparedAlignmentPairIter<'a> {
         // for supplementary alignments, seq_len may differ due to hard clipping
         let read_graft = read_graft.take().unwrap();
 
-        let iter1 = match read_host.is_unmapped() {
+        let iter1 = match read_host.flags().is_unmapped() {
             true => UnifiedOpIterator::empty(),
             false => match UnifiedOpIterator::new(read_host) {
                 Ok(iter) => iter,
                 Err(e) => return Some(Err(e)),
             },
         };
-        let iter2 = match read_graft.is_unmapped() {
+        let iter2 = match read_graft.flags().is_unmapped() {
             true => UnifiedOpIterator::empty(),
             false => match UnifiedOpIterator::new(read_graft) {
                 Ok(iter) => iter,
@@ -89,4 +90,4 @@ impl<'a> Iterator for PreparedAlignmentPairIter<'a> {
 }
 
 #[cfg(test)]
-pub mod tests;
+pub(crate) mod tests;

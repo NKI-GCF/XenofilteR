@@ -1,7 +1,7 @@
 extern crate anyhow;
 extern crate clap;
 extern crate core;
-extern crate rust_htslib;
+extern crate noodles;
 extern crate smallvec;
 
 mod alignment;
@@ -36,7 +36,7 @@ pub(crate) enum StripReadSuffix {
 #[command(author, version, about, long_about=None)]
 pub(crate) struct Config {
     /// Assign fragments matching alignment to these respective files. Writes first alignment to stdout when omitted
-    #[arg(short, long, num_args = 0..ARG_MAX)]
+    #[arg(short, long, num_args = 1..ARG_MAX)]
     pub(crate) output: Vec<PathBuf>,
 
     /// Discard fragments distancing more in alignment to these files. Default: do not discard

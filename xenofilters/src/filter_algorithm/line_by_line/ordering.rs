@@ -2,9 +2,10 @@ use super::core::{AlnBuffer, LineByLine};
 use crate::alignment::{Fragment, stringify_record};
 use crate::fragment_state::FragmentState;
 use anyhow::{Result, anyhow};
-use rust_htslib::bam::record::{Aux, Record};
+use noodles::bam::record::Record;
 use std::cmp::Ordering;
 use smallvec::SmallVec;
+use noodles::sam::alignment::RecordBuf;
 
 pub(crate) enum Decision {
     First,
@@ -14,21 +15,13 @@ pub(crate) enum Decision {
     VariantRescued(u8),
 }
 
-fn alignment_range(rec: &Record) -> Option<(i32, i64, i64)> {
-    if rec.is_unmapped() {
-        None
-    } else {
-        Some((rec.tid(), rec.pos(), rec.cigar().end_pos()))
-    }
-}
-
 impl LineByLine {
     fn handle_greater_than(&mut self, best: &mut AlnBuffer) -> Result<()> {
         let mut last = best.pop().unwrap();
         let nr = last.get_nr();
         last.records
             .drain(..)
-            .try_for_each(|r| self.write_record(nr, r, Some(false)))
+            .try_for_each(|r| self.write_record(nr, &r, Some(false)))
     }
     fn handle_less_than(&mut self, best: &mut AlnBuffer) -> Result<()> {
         let all_before_last = best.len() - 1;
@@ -36,7 +29,7 @@ impl LineByLine {
             let nr = b.get_nr();
             b.records
                 .drain(..)
-                .try_for_each(|r| self.write_record(nr, r, Some(false)))
+                .try_for_each(|r| self.write_record(nr, &r, Some(false)))
         })
     }
     fn score_candidate(
@@ -46,25 +39,32 @@ impl LineByLine {
     ) -> Result<f64> {
         let mut dvnt_per_rec = SmallVec::with_capacity(state.records.len());
         let mut segment = SmallVec::new();
+        let aln = self.aln.get(aln_idx).ok_or_else(|| anyhow!("No alignment for index {aln_idx}"))?;
 
-        for idx in state.order_mates() {
+        for idx in state.order_mates()? {
             let rec = &state.records[idx];
-            if let Some((tid, start, end)) = alignment_range(rec) {
-                let delta_vars = self.aln.get(aln_idx)
-                    .and_then(|a| a.variant_store())
+            let flags = rec.flags();
+            if flags.is_unmapped() {
+                dvnt_per_rec.push(SmallVec::new());
+            } else {
+                let tid = rec.reference_sequence_id().transpose()?
+                    .ok_or_else(|| anyhow!("Mapped record has no reference sequence ID"))?;
+                let start = rec.alignment_start().transpose()?
+                    .ok_or_else(|| anyhow!("Mapped record has no alignment start"))?
+                    .get();
+                let end = start + rec.cigar().len();
+                let delta_vars = aln.variant_store()
                     .map(|s| s.overlapping_multi(tid, start, end))
                     .unwrap_or_default();
                 dvnt_per_rec.push(delta_vars);
-            } else {
-                dvnt_per_rec.push(SmallVec::new());
             }
-            if !rec.is_secondary() {
+            if !flags.is_secondary() {
                 segment.push(rec);
-            } else if !rec.is_first_in_template() {
+            } else if flags.is_last_segment() {
                 break;
             }
         }
-        Fragment::new(&self.penalties, segment).score(dvnt_per_rec).map_err(|e| {
+        Fragment::new(&self.penalties, segment)?.score(dvnt_per_rec).map_err(|e| {
             anyhow!(
                 "Error scoring fragment for alignment {aln_idx}: {}\n{}",
                 e,
@@ -127,17 +127,23 @@ impl LineByLine {
 
         best.drain(..).try_for_each(|mut b| {
             let nr = b.get_nr();
-            b.records.drain(..).try_for_each(|mut r| {
+            b.records.drain(..).try_for_each(|r| {
+                if best_state.is_none() && (self.is_unmapped_skipped)(&r)? {
+                    self.branch_counters[24 + nr] += 1;
+                    return Ok(());
+                }
+                let header = self.aln.get(nr).map(|a| a.header()).ok_or_else(|| anyhow!("No alignment for index {nr}"))?;
+                let mut record_buf = RecordBuf::try_from_alignment_record(header, &r)?;
                 match decision {
                     Some(Decision::ConfDelta(decision)) => {
-                        self.add_aux_tags(&mut r, b"XF", Aux::U8(decision))?
+                        self.add_aux_tags(&mut record_buf, b"XF", decision)?
                     }
                     Some(Decision::VariantRescued(decision)) => {
-                        self.add_aux_tags(&mut r, b"XR", Aux::U8(decision))?
+                        self.add_aux_tags(&mut record_buf, b"XR", decision)?
                     }
                     _ => { /* no tag to add */ }
                 }
-                self.write_record(nr, r, best_state)
+                self.write_record(nr, &record_buf, best_state)
             })
         })
     }
@@ -147,8 +153,9 @@ impl LineByLine {
         rec: Record,
         best: &mut AlnBuffer,
     ) -> Result<bool> {
-        if !(self.is_secondary_skipped)(&rec) {
-            if let Some(new_readname) = (self.is_new_qname)(best, rec.qname()) {
+        if !(self.is_secondary_skipped)(&rec)? {
+            let name = rec.name().ok_or_else(|| anyhow!("Record has no read name"))?;
+            if let Some(new_readname) = (self.is_new_qname)(best, name.as_ref()) {
                 if new_readname {
                     #[cfg(test)]
                     if self.aln.is_empty() {

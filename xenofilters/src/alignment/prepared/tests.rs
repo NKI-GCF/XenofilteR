@@ -3,13 +3,40 @@ use crate::alignment::{
 };
 use crate::tests::create_record;
 use anyhow::Result;
-use rust_htslib::bam::record::Record;
+use noodles::bam::record::Record;
+use noodles::sam::{record::Cigar, alignment::record::cigar::op::{Op, Kind}};
 
 fn print_req(i: usize, rec: &Record) {
     eprintln!("{i}:{}", stringify_record(rec));
 }
 
-pub fn read_len_from_cigar(cigar: &str) -> usize {
+pub(crate) fn create_cigar(cigar: &str) -> Result<Cigar> {
+    let mut ops = Vec::new();
+    let mut num = 0;
+    for c in cigar.chars() {
+        if c.is_ascii_digit() {
+            num = num * 10 + (c as u8 - b'0') as usize;
+        } else {
+            let kind = match c {
+                'M' => Kind::Match,
+                'I' => Kind::Insertion,
+                'D' => Kind::Deletion,
+                'N' => Kind::Skip,
+                'S' => Kind::SoftClip,
+                'H' => Kind::HardClip,
+                'P' => Kind::Pad,
+                '=' => Kind::SequenceMatch,
+                'X' => Kind::SequenceMismatch,
+                _ => return Err(anyhow::anyhow!("Invalid CIGAR character: {c}")),
+            };
+            ops.push(Op::new(kind, num as u32));
+            num = 0;
+        }
+    }
+    Cigar::from(ops)
+}
+
+pub(crate) fn read_len_from_cigar(cigar: &str) -> usize {
     cigar
         .chars()
         .fold((0, 0), |(len, acc), c| {
@@ -23,7 +50,7 @@ pub fn read_len_from_cigar(cigar: &str) -> usize {
         .0
 }
 
-pub fn make_prepared_pair(
+pub(crate) fn make_prepared_pair(
     cigar1: &str,
     md1: &str,
     cigar2: &str,

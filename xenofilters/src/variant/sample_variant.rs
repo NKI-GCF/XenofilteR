@@ -1,12 +1,14 @@
 use crate::variant::Variant;
-use anyhow::Result;
-use rust_htslib::bcf::record::Record;
+use anyhow::{Result, anyhow, ensure};
+use noodles::bcf::record::Record;
+use noodles::vcf::variant::record::samples::{Sample, series::Value};
+use noodles::vcf::Header;
 
 // FIXME, a variant could have multiple ALT alleles, and the GT could be 0/2, so we should ideally
 // have one SampleVariant per ALT allele, and check if each ALT allele is present in the GT. For
 // simplicity, this example assumes only one ALT allele and GT is either 0/1 or 1/1 for the ALT.
-pub struct SampleVariant {
-    pos: i64,
+pub(crate) struct SampleVariant {
+    pos: usize,
     ref_a: Vec<u8>,
     alt_a: Vec<u8>,
     /// Genotype Quality (GQ) from the FORMAT field
@@ -16,7 +18,7 @@ pub struct SampleVariant {
 }
 
 impl Variant for SampleVariant {
-    fn pos(&self) -> i64 {
+    fn pos(&self) -> usize {
         self.pos
     }
     fn ref_allele(&self) -> &[u8] {
@@ -36,32 +38,35 @@ impl Variant for SampleVariant {
 }
 
 /// Example parser for Sample-Specific VCF (checks FORMAT tags "GT" and "GQ")
-pub fn parse_sample_record(record: &mut Record) -> Result<Vec<SampleVariant>> {
+pub(crate) fn parse_sample_record(record: &mut Record, header: &Header) -> Result<Vec<SampleVariant>> {
     // Genotype representation as a vector of GenotypeAllele.
     // 1. Get GT and GQ from FORMAT
-    let gq = record
-        .format(b"GQ")
-        .integer()?
-        .first()
-        .and_then(|v| v.first().map(|i| *i as f32))
-        .unwrap_or(0.0);
-    let gt = record
-        .format(b"GT")
-        .integer()?
-        .first()
-        .and_then(|v| v.first());
+    let samples = record.samples()?;
+    let mut it = samples.iter();
+    let sample = it.next().ok_or_else(|| anyhow!("No sample data in record"))?;
+    ensure!(it.next().is_none(), "Multiple samples not supported");
+    let gq = match sample.get(header, "GQ").transpose()? {
+        Some(Some(Value::Integer(gq))) => gq,
+        _ => return Err(anyhow!("Missing GQ tag or not an integer")),
+    };
 
-    let alleles = record.alleles();
-    let ref_a = alleles[0].to_vec();
+    let gt = match sample.get(header, "GT").transpose()? {
+        Some(Some(Value::Integer(gt))) => gt,
+        _ => return Err(anyhow!("Missing GT tag or not an integer")),
+    };
+
+    let alleles = record.alternate_bases();
+    let alleles = alleles.as_ref().split(|&b| b == b',');
+    let ref_a = record.reference_bases().as_ref().to_vec();
     let mut variants = Vec::new();
 
-    for (i, alt_a) in alleles[1..].iter().enumerate() {
+    for (i, alt_a) in alleles.enumerate() {
         let alt_index = (i + 1) as i32;
         // Check if this allele (alt_index) is present in the GT
-        let is_called = gt.is_some_and(|&g| g == alt_index);
+        let is_called = gt == alt_index;
 
         variants.push(SampleVariant {
-            pos: record.pos(),
+            pos: record.variant_start().transpose()?.map(|p| p.get()).unwrap_or(0),
             ref_a: ref_a.clone(),
             alt_a: alt_a.to_vec(),
             genotype_quality: gq as f64,

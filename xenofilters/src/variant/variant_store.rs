@@ -1,14 +1,19 @@
-use smallvec::SmallVec;
 use crate::variant::{Variant, VariantEval};
+use anyhow::{Result, anyhow};
+use noodles::bcf::{record::Record, io::reader::Builder};
+use std::path::Path;
+use smallvec::SmallVec;
+use std::collections::HashMap;
+use noodles::vcf::Header;
 
 pub(crate) trait VariantStoreTrait {
-    fn overlapping_multi<'s>(&'s self, rid: i32, start: i64, end: i64) -> SmallVec<[VariantEval<'s>; 0]>;
+    fn overlapping_multi<'s>(&'s self, rid: usize, start: usize, end: usize) -> SmallVec<[VariantEval<'s>; 0]>;
 }
 
 impl<V: Variant> VariantStoreTrait for VariantStore<V> {
-    fn overlapping_multi<'s>(&'s self, rid: i32, start: i64, end: i64) -> SmallVec<[VariantEval<'s>; 0]> {
+    fn overlapping_multi<'s>(&'s self, id: usize, start: usize, end: usize) -> SmallVec<[VariantEval<'s>; 0]> {
         let mut hits = SmallVec::new();
-        for  v in self.overlapping(rid, start, end) {
+        for  v in self.overlapping(id, start, end) {
             let mut eval = VariantEval::new();
             eval.set_variant(v as &dyn Variant);
             hits.push(eval);
@@ -20,14 +25,62 @@ impl<V: Variant> VariantStoreTrait for VariantStore<V> {
 /// `Vec<V>` per chrom, sorted by `pos`.
 #[derive(Debug)]
 pub(crate) struct VariantStore<V: Variant> {
-    pub(crate) per_chr: Vec<Vec<V>>,
+    pub(crate) per_chr: HashMap<usize, Vec<V>>,
     /// Maximum reference span of any variant
-    pub(crate) max_variant_len: i64,
+    pub(crate) max_variant_len: usize,
 }
 
 impl<V: Variant> VariantStore<V> {
-    pub(crate) fn overlapping(&self, rid: i32, read_start: i64, read_end: i64) -> SmallVec<[&V; 0]> {
-        let Some(chr_vars) = self.per_chr.get(rid as usize) else {
+    pub(crate) fn new(
+        f: &Path,
+        parser: impl Fn(&mut Record, &Header) -> Result<Vec<V>>,
+    ) -> Result<VariantStore<V>> {
+        let mut bcf_reader = Builder::default().build_from_path(f)
+            .map_err(|e| anyhow!("Failed to open VCF/BCF {}: {}", f.display(), e))?;
+
+        let mut per_chr = HashMap::new();
+        let mut max_variant_len: usize = 1; // at least 1
+        let mut is_sorted = true;
+        let header = bcf_reader.read_header()?;
+
+        for record_result in bcf_reader.records() {
+            let mut record = record_result?;
+            let id = record.reference_sequence_id()?;
+            let variants = parser(&mut record, &header)?;
+
+            let mut last_pos = None;
+
+            for v in variants {
+                let pos = v.pos();
+                if is_sorted {
+                    if let Some(last) = last_pos
+                        && pos < last {
+                            eprintln!("Variants in {} are not sorted by position.", f.display());
+                            is_sorted = false;
+                        }
+                    last_pos = Some(pos);
+                }
+                let span = v.end() - pos;
+                if span > max_variant_len {
+                    max_variant_len = span;
+                }
+                per_chr.entry(id.clone()).or_insert_with(Vec::new).push(v);
+            }
+        }
+        if !is_sorted {
+            // Sort each chromosome once, for binary search.
+            for chr in per_chr.values_mut() {
+                chr.sort_by_key(|v| v.pos());
+            }
+        }
+
+        Ok(VariantStore {
+            per_chr,
+            max_variant_len,
+        })
+    }
+    pub(crate) fn overlapping(&self, id: usize, read_start: usize, read_end: usize) -> SmallVec<[&V; 0]> {
+        let Some(chr_vars) = self.per_chr.get(&id) else {
             return SmallVec::new();
         };
 

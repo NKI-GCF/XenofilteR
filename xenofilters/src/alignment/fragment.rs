@@ -1,6 +1,6 @@
 use crate::{MAX_Q, Penalty};
 use anyhow::{Result, anyhow};
-use rust_htslib::bam::record::Record;
+use noodles::bam::record::Record;
 use smallvec::SmallVec;
 use crate::variant::{DeltaPerRec, VariantEval, VntPerRec};
 use crate::alignment::{AlignmentError, UnifiedOpIterator, UnifiedOp};
@@ -35,16 +35,16 @@ pub(crate) struct Fragment<'r> {
     pen: &'r Penalty,
     seg: SmallVec<[&'r Record; 2]>,
     seg_i: usize,
-    refpos: i64,
+    refpos: usize,
     nt_i: usize,
     prev: Vec<Cell>,
     curr: Vec<Cell>,
 }
 
 impl<'r> Fragment<'r> {
-    pub(crate) fn new(pen: &'r Penalty, seg: SmallVec<[&'r Record; 2]>) -> Self {
-        let refpos = seg[0].pos();
-        Self {
+    pub(crate) fn new(pen: &'r Penalty, seg: SmallVec<[&'r Record; 2]>) -> Result<Self, AlignmentError> {
+        let refpos = seg[0].alignment_start().transpose()?.map(|p| p.get()).unwrap_or(0);
+        Ok(Self {
             pen,
             seg,
             seg_i: 0,
@@ -52,7 +52,7 @@ impl<'r> Fragment<'r> {
             nt_i: 0,
             prev: Vec::new(),
             curr: Vec::new(),
-        }
+        })
     }
     pub(crate) fn score<'v>(&mut self, mut vnt_per_rec: VntPerRec<'v>) -> Result<f64, AlignmentError>
     {
@@ -60,7 +60,7 @@ impl<'r> Fragment<'r> {
 
         for i in 1..self.seg.len() {
             self.seg_i = i;
-            self.refpos = self.seg[i].pos();
+            self.refpos = self.seg[i].alignment_start().transpose()?.map(|p| p.get()).unwrap_or(0);
             self.nt_i = 0;
             score += self.score_with_variant(&mut vnt_per_rec[i])?;
         }
@@ -105,14 +105,14 @@ impl<'r> Fragment<'r> {
 
         // Score variant bases that reach into segments before the current one.
         for prior_seg_i in 0..self.seg_i {
-            if self.seg[prior_seg_i].is_last_in_template() != self.seg[self.seg_i].is_last_in_template() {
+            if self.seg[prior_seg_i].flags().is_last_segment() != self.seg[self.seg_i].flags().is_last_segment() {
                 continue; // skip read 1 read(s) when processing read 2
             }
-            let seg_ref_start = self.seg[prior_seg_i].pos();
-            let seg_ref_end = seg_ref_start + self.seg[prior_seg_i].cigar().len() as i64;
+            let seg_ref_start = self.seg[prior_seg_i].alignment_start().transpose()?.map(|p| p.get()).unwrap_or(0);
+            let seg_ref_end = seg_ref_start + self.seg[prior_seg_i].cigar().len();
 
             // prior (or following) segment bases contribute to alt scoring only, no incurrence.
-            self.score_variants_in_window(vnt, prior_seg_i, seg_ref_start, seg_ref_end, 0.0);
+            self.score_variants_in_window(vnt, prior_seg_i, seg_ref_start, seg_ref_end, 0.0)?;
         }
 
         let op_iter = UnifiedOpIterator::new(self.seg[self.seg_i])
@@ -125,20 +125,20 @@ impl<'r> Fragment<'r> {
             match op {
                 UnifiedOp::Match(len) => {
                     for _ in 0..len {
-                        ref_score += self.pen.log_likelihood_match[self.q(self.seg_i, self.nt_i)];
+                        ref_score += self.pen.log_likelihood_match[self.q(self.seg_i, self.nt_i)?];
                         self.nt_i += 1;
                         self.refpos += 1;
                     }
                 },
                 UnifiedOp::Mis(len) => {
                     for _ in 0..len {
-                        ref_score += self.pen.log_likelihood_mismatch[self.q(self.seg_i, self.nt_i)];
+                        ref_score += self.pen.log_likelihood_mismatch[self.q(self.seg_i, self.nt_i)?];
                         self.nt_i += 1;
                         self.refpos += 1;
                     }
                 }
                 UnifiedOp::Del(len) => {
-                    self.refpos += len as i64;
+                    self.refpos += len as usize;
                     ref_score += self.pen.gap_open + (len as f64) * self.pen.gap_extend;
                 }
                 UnifiedOp::Ins(len) => {
@@ -146,26 +146,26 @@ impl<'r> Fragment<'r> {
                     ref_score += self.pen.gap_open + (len as f64) * self.pen.gap_extend;
                 },
                 UnifiedOp::Relocate { penalty_score, pos } => {
-                    self.refpos = pos;
+                    self.refpos = pos as usize;
                     ref_score += penalty_score;
                 }
                 UnifiedOp::RefSkip(len) => {
-                    self.refpos += len as i64;
+                    self.refpos += len as usize;
                 }
             }
 
-            self.score_variants_in_window(vnt, self.seg_i, ref_start, self.refpos, ref_score);
+            self.score_variants_in_window(vnt, self.seg_i, ref_start, self.refpos, ref_score)?;
             score += ref_score;
         }
 
         for next_seg_i in (self.seg_i + 1)..self.seg.len() {
-            if self.seg[next_seg_i].is_last_in_template() != self.seg[self.seg_i].is_last_in_template() {
+            if self.seg[next_seg_i].flags().is_last_segment() != self.seg[self.seg_i].flags().is_last_segment() {
                 break; // skip segments from read 2 when processing read 1
             }
-            let seg_ref_start = self.seg[next_seg_i].pos();
-            let seg_ref_end = seg_ref_start + self.seg[next_seg_i].seq().len() as i64;
+            let seg_ref_start = self.seg[next_seg_i].alignment_start().transpose()?.map(|p| p.get()).unwrap_or(0);
+            let seg_ref_end = seg_ref_start + self.seg[next_seg_i].sequence().len();
 
-            self.score_variants_in_window(vnt, next_seg_i, seg_ref_start, seg_ref_end, 0.0);
+            self.score_variants_in_window(vnt, next_seg_i, seg_ref_start, seg_ref_end, 0.0)?;
         }
 
         Ok(score)
@@ -174,14 +174,14 @@ impl<'r> Fragment<'r> {
         &mut self,
         vnt: &mut DeltaPerRec<'_>,
         seg_i: usize,
-        start: i64,
-        end: i64,
+        start: usize,
+        end: usize,
         ref_score: f64,  // unweighted, for non-variant positions
-    ) {
+    ) -> Result<()> {
         let mut i = 0;
         while i < vnt.len() && vnt[i].start() < end {
             if let Some((weighted_ref_score, alt_score)) =
-                self.score_variant_in_seg(&vnt[i], seg_i, start, end)
+                self.score_variant_in_seg(&vnt[i], seg_i, start, end)?
             {
                 // Use weighted_ref_score instead of ref_score for variant positions
                 vnt[i].update(weighted_ref_score, alt_score);
@@ -195,16 +195,42 @@ impl<'r> Fragment<'r> {
             }
             i += 1;
         }
+        Ok(())
     }
+    fn requires_revcmp(&self, seg_i: usize) -> bool {
+        if seg_i == self.seg_i {
+            false
+        } else {
+            let current_seg_ori = self.seg[self.seg_i].flags().is_reverse_complemented();
+            let other_seg_ori = self.seg[seg_i].flags().is_reverse_complemented();
+            return current_seg_ori != other_seg_ori
+        }
+    }
+    fn reori_base(&self, seg_i: usize, nt_i: &mut usize) -> u8 {
+        let sequence = self.seg[seg_i].sequence();
+        if self.requires_revcmp(seg_i) {
+            *nt_i = sequence.len() - 1 - *nt_i;
+            sequence.get(*nt_i).map(|b| match b {
+                b'A' => b'T',
+                b'C' => b'G',
+                b'G' => b'C',
+                b'T' => b'A',
+                _ => b'N',
+            })
+        } else {
+            sequence.get(*nt_i)
+        }.unwrap_or(b'N')
+    }
+
     /// Score a variant's alt allele against read bases from a specific segment.
     /// `ref_start` and `ref_end` define the reference window to score within this segment.
     fn score_variant_in_seg(
         &mut self,
         vnt_eval: &VariantEval,
         seg_i: usize,
-        ref_start: i64,
-        ref_end: i64,
-    ) -> Option<(f64, f64)> {  // (weighted_ref_score, alt_score)
+        ref_start: usize,
+        ref_end: usize,
+    ) -> Result<Option<(f64, f64)>> {  // (weighted_ref_score, alt_score)
         let vnt_start = vnt_eval.start();
 
         // Clamp the ref window to the variant's ref span
@@ -217,15 +243,16 @@ impl<'r> Fragment<'r> {
         let vnt = vnt_eval.vnt();
         let alt = vnt.alt_allele();
         let alt_slice = &alt[ref_consumed.min(alt.len())..(ref_consumed + ref_len).min(alt.len())];
-        if alt_slice.is_empty() && ref_len == 0 { return None; }
+        if alt_slice.is_empty() && ref_len == 0 { return Ok(None); }
 
         let p_variant = vnt.p_variant();
 
         // Weighted ref score over the overlapping bases
         let mut weighted_ref_score = 0.0;
         for j in 0..(eff_ref_end - eff_ref_start) as usize {
-            let nt_i = (eff_ref_start - self.seg[seg_i].pos()) as usize + j;
-            let q = self.q(seg_i, nt_i);
+            let pos = self.seg[seg_i].alignment_start().transpose()?.map_or(0, |p| p.get());
+            let nt_i = (eff_ref_start - pos) as usize + j;
+            let q = self.q(seg_i, nt_i)?;
             let lm  = self.pen.log_likelihood_match[q];
             let lmm = self.pen.log_likelihood_mismatch[q];
             // ref path: read matches ref, so weight by (1 - p_variant)
@@ -244,8 +271,8 @@ impl<'r> Fragment<'r> {
             self.prev[j].reinit(self.pen.gap_open, self.pen.gap_extend, -(j as i32));
         }
 
-        let seg_ref_start = self.seg[seg_i].pos();
-        let nt_i_base = (ref_start - seg_ref_start) as usize;
+        let seg_ref_start = self.seg[seg_i].alignment_start().transpose()?.map_or(0, |p| p.get());
+        let nt_i_base = ref_start - seg_ref_start;
 
         for i in 1..=n {
             let alt_base = alt[i - 1];
@@ -253,20 +280,8 @@ impl<'r> Fragment<'r> {
 
             for j in 1..=m {
                 let mut nt_i = nt_i_base + j - 1;
-                let read_base = if seg_i != self.seg_i && self.seg[seg_i].is_reverse() != self.seg[self.seg_i].is_reverse() {
-                    let encoded = self.seg[seg_i].seq().encoded;
-                    nt_i = encoded.len() - 1 - nt_i;
-                    match encoded[nt_i] {
-                        b'A' => b'T',
-                        b'C' => b'G',
-                        b'G' => b'C',
-                        b'T' => b'A',
-                        _ => b'N',
-                    }
-                } else {
-                    self.seg[seg_i].seq().encoded[nt_i]
-                };
-                let q = self.q(seg_i, nt_i);
+                let read_base = self.reori_base(seg_i, &mut nt_i);
+                let q = self.q(seg_i, nt_i)?;
 
                 let lm = self.pen.log_likelihood_match[q];
                 let lmm = self.pen.log_likelihood_mismatch[q];
@@ -296,10 +311,14 @@ impl<'r> Fragment<'r> {
 
         let alt_score = self.prev[m].m.max(self.prev[m].i).max(self.prev[m].d);
 
-        Some((weighted_ref_score, alt_score))
+        Ok(Some((weighted_ref_score, alt_score)))
     }
-    fn q(&self, seg_i: usize, nt_i: usize) -> usize {
-        (self.seg[seg_i].qual()[nt_i] as usize).min(MAX_Q - 1)
+    fn q(&self, seg_i: usize, nt_i: usize) -> Result<usize> {
+        let qual = self.seg[seg_i].quality_scores();
+        match qual.iter().nth(nt_i) {
+            Some(q) => Ok((q as usize).min(MAX_Q - 1)),
+            None => Err(anyhow!("Quality score index {} out of bounds for segment {}", nt_i, seg_i)),
+        }
     }
 }
 
