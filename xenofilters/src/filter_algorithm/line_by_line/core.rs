@@ -122,8 +122,12 @@ impl LineByLine {
             }
             let mut decision = None;
             if best.len() > 1 {
-                let last = best.last().unwrap();
-                let ord = best[0].partial_cmp(last);
+                let mut ord = best[0].partial_cmp(best.last().unwrap());
+                if ord.is_none() {
+                    best[0].init_md_cig()?;
+                    best.last_mut().map(|last| last.init_md_cig()).transpose()?;
+                    ord = best[0].partial_cmp(best.last().unwrap());
+                }
 
                 #[cfg(test)]
                 assert_eq!(best[0].records[0].name(), last.records[0].name());
@@ -132,7 +136,7 @@ impl LineByLine {
                     "{}: {} vs {} => {:?}",
                     std::str::from_utf8(best[0].records[0].name().as_ref().unwrap()).unwrap_or("<?>"),
                     best[0].get_nr(),
-                    last.get_nr(),
+                    best.last().unwrap().get_nr(),
                     ord
                 );
                 decision = self.handle_ordering(&mut best, ord)?;

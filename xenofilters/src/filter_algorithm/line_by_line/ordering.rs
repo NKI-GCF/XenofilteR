@@ -167,12 +167,12 @@ impl LineByLine {
                 }
                 for state in best.iter_mut().rev() {
                     if state.get_nr() == i {
-                        state.records.push(rec);
+                        state.add_record(rec)?;
                         return Ok(false);
                     }
                 }
             }
-            best.push(FragmentState::from_record(rec, i));
+            best.push(FragmentState::from_record(rec, i)?);
         } // else skip secondary
 
         Ok(false)

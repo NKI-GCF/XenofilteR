@@ -4,20 +4,84 @@ use std::cmp::Ordering;
 use crate::aln_stream::AlignmentStream;
 use noodles::sam::alignment::record::data::field::{Tag, Value};
 use noodles::sam::alignment::record::cigar::Op;
+use noodles::sam::alignment::record::Flags;
+use anyhow::{Result, anyhow};
+
+#[derive(PartialEq, Debug)]
+struct MdCig {
+    md: SmallVec<[u8; 16]>,
+    cig: SmallVec<[Op; 2]>,
+}
+
+impl MdCig {
+    fn is_perfect(&self) -> bool {
+        self.cig.len() == 1 && !self.md.iter().all(|&b| b.is_ascii_digit())
+    }
+    fn new<R: Record>(r: &R) -> Result<Self> {
+        let mut md = SmallVec::new();
+        match r.data().get(&Tag::MISMATCHED_POSITIONS) {
+            Some(Ok(Value::String(bstr))) => {
+                let m: &[u8] = bstr.as_ref();
+                md.extend_from_slice(m);
+            },
+            Some(Err(e)) => return Err(e.into()),
+            Some(_) => return Err(anyhow!("Mapped record has non-string MD field")),
+            None => return Err(anyhow!("Mapped record missing MD field")),
+        }
+        let mut cig_ops = SmallVec::new();
+        for c in r.cigar().iter() {
+            cig_ops.push(c.unwrap());
+        }
+        Ok(MdCig { md, cig: cig_ops })
+    }
+}
+
+impl PartialOrd for MdCig {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match (self.is_perfect(), other.is_perfect()) {
+            (true, true) => Some(Ordering::Equal), // perfect match for both => tie-break with next pair
+            (true, false) => Some(Ordering::Greater), // self better
+            (false, true) => Some(Ordering::Less),    // other better
+            (false, false) => None, // Slow path: both imperfect => per-base evaluation
+        }
+    }
+}
 
 #[derive(PartialEq, Debug)]
 pub(crate) struct FragmentState<R> {
-    pub(crate) records: SmallVec<[R; 2]>,
-    pub(crate) species_nr: usize,
+    flags: SmallVec<[Flags; 2]>,
+    ops: SmallVec<[MdCig; 2]>,
+    pub(super) records: SmallVec<[R; 2]>,
+    species_nr: usize,
 }
 
 impl<R: Record> FragmentState<R> {
     #[must_use]
-    pub(crate) fn from_record(r: R, species_nr: usize) -> Self {
-        FragmentState {
+    pub(crate) fn from_record(r: R, species_nr: usize) -> Result<Self> {
+        Ok(FragmentState {
+            flags: smallvec![r.flags()?],
+            ops: smallvec![],
             records: smallvec![r],
             species_nr,
+        })
+    }
+    pub(crate) fn add_record(&mut self, r: R) -> Result<()> {
+        self.flags.push(r.flags()?);
+        self.records.push(r);
+        Ok(())
+    }
+    pub(crate) fn init_md_cig(&mut self) -> Result<()> {
+        if self.ops.len() > 0 {
+            return Ok(());
         }
+        for f in 0..self.flags.len() {
+            let flags = self.flags[f];
+            if flags.is_secondary() || flags.is_unmapped() {
+                continue;
+            }
+            self.ops.push(MdCig::new(&self.records[f])?);
+        }
+        Ok(())
     }
     #[must_use]
     pub(crate) fn first_qname(&self) -> &[u8] {
@@ -41,7 +105,7 @@ impl<R: Record> FragmentState<R> {
                 Some(Ok(tid)) => tid,
                 _ => panic!("Mapped record has no reference sequence ID"),
             };
-            let f = r.flags().expect("Bug: unchecked flags in order_mates");
+            let f = self.flags[i];
             let pos = if f.is_reverse_complemented() {
                 start + r.cigar().len()
             } else {
@@ -54,9 +118,8 @@ impl<R: Record> FragmentState<R> {
         indices.iter().map(|t| t.3).collect()
     }
     #[inline]
-    fn quick_unmapped_cmp(&self, a: &R, b: &R) -> Option<Ordering> {
-        let a = a.flags().expect("Bug: unchecked host flags");
-        let b = b.flags().expect("Bug: unchecked graft flags");
+    fn quick_unmapped_cmp(&self, b: &Flags) -> Option<Ordering> {
+        let a = self.flags[0];
         if a.is_unmapped() && (!a.is_segmented() || a.is_mate_unmapped()) {
             if b.is_unmapped() && (!b.is_segmented() || b.is_mate_unmapped()) {
                 Some(Ordering::Equal)
@@ -73,52 +136,11 @@ impl<R: Record> FragmentState<R> {
 
 impl<R: Record + PartialEq> PartialOrd for FragmentState<R> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        // Fast path: unmapped handling
-        if let Some(ord) = self.quick_unmapped_cmp(&self.records[0], &other.records[0]) {
-            return Some(ord);
+        if self.ops.len() == 0 || other.ops.len() == 0 {
+            // Fast path: unmapped handling
+            return self.quick_unmapped_cmp(&other.flags[0]);
         }
-        let mut cig_op: [SmallVec<[Op; 2]>; 2] = [SmallVec::new(), SmallVec::new()];
-        let mut md: [SmallVec<[SmallVec<[u8; 4]>; 2]>; 2] = [SmallVec::new(), SmallVec::new()];
-        for r in &self.records {
-            let flags = r.flags().expect("Bug: unchecked Host flags");
-            if flags.is_secondary() || flags.is_unmapped() {
-                continue;
-            }
-            match r.data().get(&Tag::MISMATCHED_POSITIONS) {
-                Some(Ok(Value::String(bstr))) => {
-                    let m: &[u8] = bstr.as_ref();
-                    md[0].push(m.into())
-                },
-                _ => panic!("Host record missing MD field"),
-            }
-            for c in r.cigar().iter() {
-                cig_op[0].push(c.unwrap());
-            }
-        }
-        for r in &other.records {
-            let flags = r.flags().expect("Bug: unchecked Graft flags");
-            if flags.is_secondary() || flags.is_unmapped() {
-                continue;
-            }
-            match r.data().get(&Tag::MISMATCHED_POSITIONS) {
-                Some(Ok(Value::String(bstr))) => {
-                    let m: &[u8] = bstr.as_ref();
-                    md[1].push(m.into())
-                },
-                _ => panic!("Graft record missing MD field"),
-            }
-            for c in r.cigar().iter() {
-                cig_op[1].push(c.unwrap());
-            }
-        }
-        let host_perfect = cig_op.len() == 1 && !md[0].iter().all(|m| m.iter().all(|&b| b.is_ascii_digit()));
-        let graft_perfect = cig_op.len() == 1 && !md[1].iter().all(|m| m.iter().all(|&b| b.is_ascii_digit()));
-        match (host_perfect, graft_perfect) {
-            (true, true) => Some(Ordering::Equal), // perfect match for both => tie-break with next pair
-            (true, false) => Some(Ordering::Greater), // host better
-            (false, true) => Some(Ordering::Less),    // graft better
-            (false, false) => None, // Slow path: both imperfect => per-base evaluation
-        }
+        return self.ops[0].partial_cmp(&other.ops[0]);
     }
 }
 
