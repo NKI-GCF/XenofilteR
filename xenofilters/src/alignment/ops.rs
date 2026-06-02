@@ -1,6 +1,5 @@
 use crate::alignment::AlignmentError;
 use noodles::sam::alignment::record::cigar::{op::Kind, Op};
-use std::io;
 use smallvec::SmallVec;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,16 +40,18 @@ impl TryFrom<(Kind, usize)> for UnifiedOp {
 }
 
 pub(crate) struct UnifiedOpIterator<'a> {
-    cigar: Box<dyn Iterator<Item = Result<Op, io::Error>> + 'a>,
+    cigar: &'a [Op],
+    cig_at: usize,
     md: &'a [u8],
     md_at: usize,
     match_remain: isize,
 }
 
 impl<'a> UnifiedOpIterator<'a> {
-    pub(crate) fn new(cigar: Box<dyn Iterator<Item = Result<Op, io::Error>> + 'a>, md: &'a [u8]) -> Self {
+    pub(crate) fn new(cigar: &'a [Op], md: &'a [u8]) -> Self {
         Self {
             cigar,
+            cig_at: 0,
             md,
             md_at: 0,
             match_remain: 0,
@@ -112,10 +113,11 @@ impl<'a> Iterator for UnifiedOpIterator<'a> {
         if self.match_remain < 0 {
             return Some(self.cig_match(-self.match_remain as usize));
         }
-        while let Some(res) = self.cigar.next().map(|r| r.map(|c| (c.kind(), c))) {
-            let res = match res {
-                Ok((Kind::HardClip | Kind::Pad, _)) => continue,
-                Ok((Kind::Match| Kind::SequenceMatch | Kind::SequenceMismatch, c)) => {
+        while let Some(c) = self.cigar.get(self.cig_at).map(|c| (c.kind(), c)) {
+            self.cig_at += 1;
+            let res = match c {
+                (Kind::HardClip | Kind::Pad, _) => continue,
+                (Kind::Match| Kind::SequenceMatch | Kind::SequenceMismatch, c) => {
                     let cig_len = c.len();
                     if self.match_remain <= 0 {
                         self.cig_match(cig_len)
@@ -125,20 +127,19 @@ impl<'a> Iterator for UnifiedOpIterator<'a> {
                         Ok(UnifiedOp::Match(if self.match_remain > 0 { cig_len } else { md_len }))
                     }
                 },
-                Ok((Kind::SoftClip, c)) => Ok(UnifiedOp::Mis(c.len())),
-                Ok((Kind::Deletion, c)) if self.match_remain <= 0 => {
+                (Kind::SoftClip, c) => Ok(UnifiedOp::Mis(c.len())),
+                (Kind::Deletion, c) if self.match_remain <= 0 => {
                     match self.md_next() {
                         Some(MdOp::Deletion(del_seq)) if del_seq.len() == c.len() => {
                             Ok(UnifiedOp::Del(c.len()))
                         }
-                        other => Err(AlignmentError::MdCigMis(Some(c), other)),
+                        other => Err(AlignmentError::MdCigMis(Some(*c), other)),
                     }
                 },
-                Ok((Kind::Deletion, c)) => {
-                    Err(AlignmentError::MdCigMis(Some(c), Some(MdOp::Match(self.match_remain as usize))))
+                (Kind::Deletion, c) => {
+                    Err(AlignmentError::MdCigMis(Some(*c), Some(MdOp::Match(self.match_remain as usize))))
                 },
-                Ok((kind, c)) => UnifiedOp::try_from((kind, c.len())),
-                Err(e) => Err(e.into()),
+                (kind, c) => UnifiedOp::try_from((kind, c.len())),
             };
             return Some(res);
         }
@@ -156,7 +157,7 @@ impl<'a> std::fmt::Debug for UnifiedOpIterator<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UnifiedOpIterator")
             .field("cig_match_remain", &self.cig_match_remain)
-            .field("cigar", &"Option<Box<dyn Iterator>>") // Placeholder
+            .field("cigar", &self.cigar)
             .finish()
     }
 }

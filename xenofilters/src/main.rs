@@ -19,6 +19,7 @@ use bam_format::BamFormat;
 use clap::{Parser, ValueEnum};
 use filter_algorithm::line_by_line::LineByLine;
 use smallvec::{SmallVec, smallvec};
+pub(crate) use fragment_state::MdCigFlags;
 
 const ARG_MAX: usize = 4;
 const MAX_Q: usize = 93;

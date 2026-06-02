@@ -4,8 +4,7 @@ use noodles::bam::record::Record;
 use smallvec::SmallVec;
 use crate::variant::{DeltaPerRec, VariantEval, VntPerRec};
 use crate::alignment::{AlignmentError, UnifiedOpIterator, UnifiedOp};
-use crate::alignment::PrepareError;
-use noodles::sam::alignment::record::data::field::{Tag, Value};
+use crate::MdCigFlags;
 
 #[derive(Clone, Copy)]
 struct Cell {
@@ -36,6 +35,7 @@ impl Default for Cell {
 pub(crate) struct Fragment<'r> {
     pen: &'r Penalty,
     seg: SmallVec<[&'r Record; 2]>,
+    md_cig_flags: SmallVec<[&'r MdCigFlags; 2]>,
     seg_i: usize,
     refpos: usize,
     nt_i: usize,
@@ -44,11 +44,12 @@ pub(crate) struct Fragment<'r> {
 }
 
 impl<'r> Fragment<'r> {
-    pub(crate) fn new(pen: &'r Penalty, seg: SmallVec<[&'r Record; 2]>) -> Result<Self, AlignmentError> {
+    pub(crate) fn new(pen: &'r Penalty, seg: SmallVec<[&'r Record; 2]>, md_cig_flags: SmallVec<[&'r MdCigFlags; 2]>) -> Result<Self, AlignmentError> {
         let refpos = seg[0].alignment_start().transpose()?.map(|p| p.get()).unwrap_or(0);
         Ok(Self {
             pen,
             seg,
+            md_cig_flags,
             seg_i: 0,
             refpos,
             nt_i: 0,
@@ -107,7 +108,7 @@ impl<'r> Fragment<'r> {
 
         // Score variant bases that reach into segments before the current one.
         for prior_seg_i in 0..self.seg_i {
-            if self.seg[prior_seg_i].flags().is_last_segment() != self.seg[self.seg_i].flags().is_last_segment() {
+            if self.md_cig_flags[prior_seg_i].flags.is_last_segment() != self.md_cig_flags[self.seg_i].flags.is_last_segment() {
                 continue; // skip read 1 read(s) when processing read 2
             }
             let seg_ref_start = self.seg[prior_seg_i].alignment_start().transpose()?.map(|p| p.get()).unwrap_or(0);
@@ -117,15 +118,9 @@ impl<'r> Fragment<'r> {
             self.score_variants_in_window(vnt, prior_seg_i, seg_ref_start, seg_ref_end, 0.0)?;
         }
 
-        let rec = self.seg[self.seg_i];
-        let cigar = rec.cigar();
-        let md = match rec.data().get(&Tag::MISMATCHED_POSITIONS) {
-            Some(Ok(Value::String(md))) => md as &[u8],
-            Some(Ok(_)) => return Err(PrepareError::BadMdTag.into()),
-            Some(Err(e)) => return Err(PrepareError::MdError(e).into()),
-            None => &[],
-        };
-        let op_iter = UnifiedOpIterator::new(Box::new(cigar.iter()), md);
+        let cigar = self.md_cig_flags[self.seg_i].cig.as_ref();
+        let md = self.md_cig_flags[self.seg_i].md.as_ref();
+        let op_iter = UnifiedOpIterator::new(cigar, md);
 
         for op_res in op_iter {
             let op = op_res?;
@@ -168,7 +163,7 @@ impl<'r> Fragment<'r> {
         }
 
         for next_seg_i in (self.seg_i + 1)..self.seg.len() {
-            if self.seg[next_seg_i].flags().is_last_segment() != self.seg[self.seg_i].flags().is_last_segment() {
+            if self.md_cig_flags[next_seg_i].flags.is_last_segment() != self.md_cig_flags[self.seg_i].flags.is_last_segment() {
                 break; // skip segments from read 2 when processing read 1
             }
             let seg_ref_start = self.seg[next_seg_i].alignment_start().transpose()?.map(|p| p.get()).unwrap_or(0);
@@ -210,8 +205,8 @@ impl<'r> Fragment<'r> {
         if seg_i == self.seg_i {
             false
         } else {
-            let current_seg_ori = self.seg[self.seg_i].flags().is_reverse_complemented();
-            let other_seg_ori = self.seg[seg_i].flags().is_reverse_complemented();
+            let current_seg_ori = self.md_cig_flags[self.seg_i].flags.is_reverse_complemented();
+            let other_seg_ori = self.md_cig_flags[seg_i].flags.is_reverse_complemented();
             current_seg_ori != other_seg_ori
         }
     }

@@ -3,7 +3,7 @@ mod mdopiterator;
 mod ops;
 mod fragment;
 
-pub(crate) use errors::{AlignmentError, PrepareError};
+pub(crate) use errors::AlignmentError;
 pub(crate) use ops::{UnifiedOp, UnifiedOpIterator};
 pub(crate) use fragment::Fragment;
 
@@ -39,9 +39,6 @@ pub(crate) fn stringify_record<R: Record>(rec: &R) -> String {
 
     s
 }
-
-#[cfg(test)]
-pub(crate) use prepared::PreparedAlignmentPair;
 
 #[cfg(test)]
 pub(crate) mod tests {

@@ -7,36 +7,38 @@ use noodles::sam::alignment::record::cigar::Op;
 use noodles::sam::alignment::record::Flags;
 use anyhow::{Result, anyhow};
 
-#[derive(PartialEq, Debug)]
-struct MdCig {
-    md: SmallVec<[u8; 16]>,
-    cig: SmallVec<[Op; 2]>,
+#[derive(PartialEq, Debug, Default)]
+pub(super) struct MdCigFlags {
+    pub(super) flags: Flags,
+    pub(super) md: SmallVec<[u8; 16]>,
+    pub(super) cig: SmallVec<[Op; 4]>,
 }
 
-impl MdCig {
+impl MdCigFlags {
     fn is_perfect(&self) -> bool {
         self.cig.len() == 1 && !self.md.iter().all(|&b| b.is_ascii_digit())
     }
-    fn new<R: Record>(r: &R) -> Result<Self> {
-        let mut md = SmallVec::new();
+    fn new(flags: Flags) -> Self {
+        Self { flags, ..Default::default() }
+    }
+    fn complete<R: Record>(&mut self, r: &R) -> Result<()> {
         match r.data().get(&Tag::MISMATCHED_POSITIONS) {
             Some(Ok(Value::String(bstr))) => {
                 let m: &[u8] = bstr.as_ref();
-                md.extend_from_slice(m);
+                self.md.extend_from_slice(m);
             },
             Some(Err(e)) => return Err(e.into()),
             Some(_) => return Err(anyhow!("Mapped record has non-string MD field")),
             None => return Err(anyhow!("Mapped record missing MD field")),
         }
-        let mut cig_ops = SmallVec::new();
         for c in r.cigar().iter() {
-            cig_ops.push(c.unwrap());
+            self.cig.push(c?);
         }
-        Ok(MdCig { md, cig: cig_ops })
+        Ok(())
     }
 }
 
-impl PartialOrd for MdCig {
+impl PartialOrd for MdCigFlags {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         match (self.is_perfect(), other.is_perfect()) {
             (true, true) => Some(Ordering::Equal), // perfect match for both => tie-break with next pair
@@ -49,37 +51,34 @@ impl PartialOrd for MdCig {
 
 #[derive(PartialEq, Debug)]
 pub(crate) struct FragmentState<R> {
-    flags: SmallVec<[Flags; 2]>,
-    ops: SmallVec<[MdCig; 2]>,
+    pub(super) ops: SmallVec<[MdCigFlags; 2]>,
     pub(super) records: SmallVec<[R; 2]>,
     species_nr: usize,
 }
 
 impl<R: Record> FragmentState<R> {
-    #[must_use]
     pub(crate) fn from_record(r: R, species_nr: usize) -> Result<Self> {
         Ok(FragmentState {
-            flags: smallvec![r.flags()?],
-            ops: smallvec![],
+            ops: smallvec![MdCigFlags::new(r.flags()?)],
             records: smallvec![r],
             species_nr,
         })
     }
     pub(crate) fn add_record(&mut self, r: R) -> Result<()> {
-        self.flags.push(r.flags()?);
+        self.ops.push(MdCigFlags::new(r.flags()?));
         self.records.push(r);
         Ok(())
     }
     pub(crate) fn init_md_cig(&mut self) -> Result<()> {
-        if self.ops.len() > 0 {
+        if !self.ops.is_empty() {
             return Ok(());
         }
-        for f in 0..self.flags.len() {
-            let flags = self.flags[f];
-            if flags.is_secondary() || flags.is_unmapped() {
-                continue;
+        for f in 0..self.ops.len() {
+            let record = &self.records[f];
+            let flags = record.flags()?;
+            if !flags.is_secondary() && !flags.is_unmapped() {
+                self.ops[f].complete(record)?;
             }
-            self.ops.push(MdCig::new(&self.records[f])?);
         }
         Ok(())
     }
@@ -105,7 +104,7 @@ impl<R: Record> FragmentState<R> {
                 Some(Ok(tid)) => tid,
                 _ => panic!("Mapped record has no reference sequence ID"),
             };
-            let f = self.flags[i];
+            let f = self.ops[i].flags;
             let pos = if f.is_reverse_complemented() {
                 start + r.cigar().len()
             } else {
@@ -119,7 +118,7 @@ impl<R: Record> FragmentState<R> {
     }
     #[inline]
     fn quick_unmapped_cmp(&self, b: &Flags) -> Option<Ordering> {
-        let a = self.flags[0];
+        let a = self.ops[0].flags;
         if a.is_unmapped() && (!a.is_segmented() || a.is_mate_unmapped()) {
             if b.is_unmapped() && (!b.is_segmented() || b.is_mate_unmapped()) {
                 Some(Ordering::Equal)
@@ -136,11 +135,11 @@ impl<R: Record> FragmentState<R> {
 
 impl<R: Record + PartialEq> PartialOrd for FragmentState<R> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        if self.ops.len() == 0 || other.ops.len() == 0 {
+        if self.ops.is_empty() || other.ops.is_empty() {
             // Fast path: unmapped handling
-            return self.quick_unmapped_cmp(&other.flags[0]);
+            return self.quick_unmapped_cmp(&other.ops[0].flags);
         }
-        return self.ops[0].partial_cmp(&other.ops[0]);
+        self.ops[0].partial_cmp(&other.ops[0])
     }
 }
 

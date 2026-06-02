@@ -39,11 +39,12 @@ impl LineByLine {
     ) -> Result<f64> {
         let mut dvnt_per_rec = SmallVec::with_capacity(state.records.len());
         let mut segment = SmallVec::new();
+        let mut md_cig_flags = SmallVec::with_capacity(state.records.len());
         let aln = self.aln.get(aln_idx).ok_or_else(|| anyhow!("No alignment for index {aln_idx}"))?;
 
         for idx in state.order_mates(&self.aln) {
             let rec = &state.records[idx];
-            let flags = rec.flags();
+            let flags = state.ops[idx].flags;
             if flags.is_unmapped() {
                 dvnt_per_rec.push(SmallVec::new());
             } else {
@@ -60,11 +61,12 @@ impl LineByLine {
             }
             if !flags.is_secondary() {
                 segment.push(rec);
+                md_cig_flags.push(&state.ops[idx]);
             } else if flags.is_last_segment() {
                 break;
             }
         }
-        Fragment::new(&self.penalties, segment)?.score(dvnt_per_rec).map_err(|e| {
+        Fragment::new(&self.penalties, segment, md_cig_flags)?.score(dvnt_per_rec).map_err(|e| {
             anyhow!(
                 "Error scoring fragment for alignment {aln_idx}: {}\n{}",
                 e,
