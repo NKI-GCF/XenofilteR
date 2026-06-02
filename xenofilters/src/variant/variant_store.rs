@@ -64,7 +64,7 @@ impl<V: Variant> VariantStore<V> {
                 if span > max_variant_len {
                     max_variant_len = span;
                 }
-                per_chr.entry(id.clone()).or_insert_with(Vec::new).push(v);
+                per_chr.entry(id).or_insert_with(Vec::new).push(v);
             }
         }
         if !is_sorted {

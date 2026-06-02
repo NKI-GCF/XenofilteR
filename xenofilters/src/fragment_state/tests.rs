@@ -75,7 +75,7 @@ fn test_fragment_state_order_mates_multiple_records() -> Result<()> {
     let rec2 = create_record(b"read1", "100M", &[], &qual, "100", true)?;
     let mut state = FragmentState::from_record(rec1, 0);
     state.records.push(rec2);
-    let order = state.order_mates()?;
+    let order = state.order_mates();
     let expected : SmallVec<[usize; 2]> = smallvec![0, 1];
     assert_eq!(order, expected); // Forward read should come before reverse read
     Ok(())
@@ -85,7 +85,7 @@ fn test_fragment_state_order_mates_multiple_records() -> Result<()> {
 fn test_fragment_state_partial_ord_with_unmapped() -> Result<()> {
     let qual = vec![37; 100];
     let seq = vec![b'A'; 100];
-    let mut rec1 = create_recordbuf(b"read1", "", &seq, &qual, "", false)?;
+    let mut rec1 = create_record(b"read1", "", &seq, &qual, "", false)?;
     let rec2 = create_record(b"read2", "100M", &seq, &qual, "", false)?;
     rec1.flags_mut().toggle(Flags::from_bits(0x4).unwrap()); // Set unmapped flag
     let state1 = FragmentState::from_record(rec1, 0);
@@ -98,8 +98,8 @@ fn test_fragment_state_partial_ord_with_unmapped() -> Result<()> {
 fn test_fragment_state_partial_ord_both_unmapped() -> Result<()> {
     let qual = vec![37; 100];
     let seq = vec![b'A'; 100];
-    let mut rec1 = create_recordbuf(b"read1", "", &seq, &qual, "", false)?;
-    let mut rec2 = create_recordbuf(b"read2", "", &seq, &qual, "", false)?;
+    let mut rec1 = create_record(b"read1", "", &seq, &qual, "", false)?;
+    let mut rec2 = create_record(b"read2", "", &seq, &qual, "", false)?;
     rec1.flags_mut().toggle(Flags::from_bits(0x4).unwrap()); // Set unmapped flag
     rec2.flags_mut().toggle(Flags::from_bits(0x4).unwrap()); // Set unmapped flag
     let state1 = FragmentState::from_record(rec1, 0);

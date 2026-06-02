@@ -1,14 +1,11 @@
 use thiserror::Error;
+use noodles::sam::alignment::record::cigar::Op;
+use crate::alignment::ops::MdOp;
 
 #[derive(Debug, Error)]
 pub(crate) enum AlignmentError {
-    #[error(
-        "MD/CIGAR inconsistency: A CIGAR deletion ('D') was not matched by a corresponding MD deletion ('^')."
-    )]
-    MissingMdDeletion,
-
-    #[error("MD/CIGAR inconsistency: Excess mismatches in MD tag after processing CIGAR.")]
-    MdCigarMismatch,
+    #[error("Op inconsistency: cigar: ({0:?}) and md: ({1:?})")]
+    MdCigMis(Option<Op>, Option<MdOp>),
 
     #[error("Operation not implemented")]
     UnImplemented,
@@ -25,18 +22,12 @@ pub(crate) enum PrepareError {
     #[error(transparent)]
     Alignment(#[from] AlignmentError),
 
-    #[error(transparent)]
-    MdOpIterator(#[from] MdOpIteratorError),
-}
-
-#[derive(Debug, Error)]
-pub(crate) enum MdOpIteratorError {
     #[error("Wrong MD tag type found")]
     BadMdTag,
 
-    #[error("MD parsing error: invalid byte '{0}'")]
-    MdParse(u8),
-
     #[error(transparent)]
     MdError(#[from] std::io::Error),
+
+    #[error(transparent)]
+    Anyhow(#[from] anyhow::Error),
 }

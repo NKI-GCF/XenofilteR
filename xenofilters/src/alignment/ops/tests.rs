@@ -2,9 +2,11 @@ use crate::alignment::AlignmentError;
 use crate::alignment::{UnifiedOp, UnifiedOpIterator};
 use crate::tests::{read_len_from_cigar, create_cigar};
 use anyhow::Result;
-use noodles::bam::record::Record;
-use noodles::sam::alignment::RecordBuf;
+use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::alignment::record::cigar::op::Kind;
+use noodles::sam::alignment::record::data::field::Value;
+use noodles::sam::Header;
+use noodles::sam::alignment::record_buf::{Sequence, QualityScores};
 
 impl UnifiedOp {
     #[must_use]
@@ -22,19 +24,8 @@ impl UnifiedOp {
 }
 
 impl UnifiedOpIterator<'_> {
-    pub(crate) fn seq_len(&self) -> u32 {
-        self.cigar.iter()
-            .as_slice()
-            .iter()
-            .map(|op| match op.kind() {
-                Kind::Match
-                | Kind::SequenceMatch
-                | Kind::SequenceMismatch
-                | Kind::Insertion
-                | Kind::SoftClip => op.len(),
-                Kind::Deletion | Kind::Skip | Kind::HardClip | Kind::Pad => 0,
-            })
-            .sum()
+    pub(crate) fn seq_len(&self) -> usize {
+        self.cigar_len.unwrap()
     }
 }
 
@@ -45,54 +36,37 @@ pub(crate) fn create_record(
     qual: &[u8],
     md: &str,
     is_rev: bool,
-) -> Result<Record> {
-    let mut record = Record::new();
+) -> Result<RecordBuf> {
+    let mut record = RecordBuf::default();
     let is_unmapped = cig_str.is_empty();
 
-    let cigar = create_cigar(cig_str)?;
+    *record.name_mut() = Some(qname.into());
     let read_len = if is_unmapped {
+        record.set_flags(4);
         0
     } else {
+        if is_rev {
+            record.set_flags(16);
+        } else {
+            record.set_flags(0);
+        }
+        record.push_aux(b"MD", Aux::String(md))?;
         read_len_from_cigar(cig_str)
     };
-    let final_seq = if seq.is_empty() {
-        vec![b'A'; read_len]
+    *record.cigar_mut() = create_cigar(cig_str)?;
+    *record.sequence_mut() = if seq.is_empty() {
+        Sequence::from(&[b'A'; 100][..read_len])
     } else {
-        seq.to_vec()
+        Sequence::from(seq)
     };
 
-    let final_qual = if qual.is_empty() {
-        vec![30u8; read_len]
+    *record.quality_scores_mut() = if qual.is_empty() {
+        QualityScores::from(&[30u8; read_len][..read_len])
     } else {
-        qual.to_vec()
+        QualityScores::from(qual)
     };
-
-    record.set(qname, Some(&cigar), &final_seq, &final_qual);
-
-    if is_unmapped {
-        record.set_unmapped();
-    } else {
-        record.push_aux(b"MD", Aux::String(md))?;
-    }
-
-    if is_rev {
-        record.set_reverse();
-    }
 
     Ok(record)
-}
-
-pub(crate) fn create_recordbuf(
-    qname: &[u8],
-    cig_str: &str,
-    seq: &[u8],
-    qual: &[u8],
-    md: &str,
-    is_rev: bool,
-) -> Result<RecordBuf> {
-    let record = create_record(qname, cig_str, seq, qual, md, is_rev)?;
-    let record_buf = RecordBuf::try_from_alignment_record(record)?;
-    Ok(record_buf)
 }
 
 #[test]

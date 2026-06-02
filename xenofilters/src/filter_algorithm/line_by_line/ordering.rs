@@ -34,14 +34,14 @@ impl LineByLine {
     }
     fn score_candidate(
         &self,
-        state: &FragmentState,
+        state: &FragmentState<Record>,
         aln_idx: usize,
     ) -> Result<f64> {
         let mut dvnt_per_rec = SmallVec::with_capacity(state.records.len());
         let mut segment = SmallVec::new();
         let aln = self.aln.get(aln_idx).ok_or_else(|| anyhow!("No alignment for index {aln_idx}"))?;
 
-        for idx in state.order_mates()? {
+        for idx in state.order_mates(&self.aln) {
             let rec = &state.records[idx];
             let flags = rec.flags();
             if flags.is_unmapped() {
@@ -86,10 +86,10 @@ impl LineByLine {
         match ord {
             Some(Ordering::Greater) => self
                 .handle_greater_than(best)
-                .map(|_| self.add_decision_tag.then_some(Decision::First)),
+                .map(|()| self.add_decision_tag.then_some(Decision::First)),
             Some(Ordering::Less) => self
                 .handle_less_than(best)
-                .map(|_| self.add_decision_tag.then_some(Decision::Last)),
+                .map(|()| self.add_decision_tag.then_some(Decision::Last)),
             Some(Ordering::Equal) => Ok(self.add_decision_tag.then_some(Decision::Ambiguous)),
             None => {
                 // None of the alignments were fully unmapped or perfect matches,

@@ -1,7 +1,7 @@
 use crate::tests::{BamFormat, create_record};
 use crate::{AlignmentStream, AlnStream, Config, StripReadSuffix};
 use anyhow::Result;
-use noodles::bam::record::Record as BamRecord;
+use noodles::sam::alignment::record_buf::RecordBuf as BamRecord;
 use crate::variant::VariantStoreTrait;
 use noodles::sam::header::Header;
 use noodles::sam::alignment::Record as RecordTrait;

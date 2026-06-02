@@ -137,16 +137,16 @@ fn test_branch_counters_and_skipping() -> Result<()> {
 
     let mut lbl = LineByLine::new(config.clone(), smallvec![])?;
 
-    let mut unmapped_fwd = create_recordbuf(b"u", "*", &[], &[], "10", false)?;
+    let mut unmapped_fwd = create_record(b"u", "*", &[], &[], "10", false)?;
     unmapped_fwd.flags_mut().toggle(Flags::from_bits(0x45).unwrap()); // unmapped, paired, first in
 
     let mut unmapped_rev = unmapped_fwd.clone();
     unmapped_rev.flags_mut().toggle(Flags::from_bits(0x10).unwrap()); // reverse
 
-    let mut secondary = create_recordbuf(b"s", "*", &[], &[], "10", false)?;
+    let mut secondary = create_record(b"s", "*", &[], &[], "10", false)?;
     secondary.flags_mut().toggle(Flags::from_bits(0x100).unwrap()); // secondary
 
-    let mut unmapped_single = create_recordbuf(b"u2", "*", &[], &[], "10", false)?;
+    let mut unmapped_single = create_record(b"u2", "*", &[], &[], "10", false)?;
     unmapped_single.flags_mut().toggle(Flags::from_bits(0x4).unwrap()); // unmapped, single-end
 
     // Should return early (skipped)

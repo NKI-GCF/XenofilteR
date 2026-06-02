@@ -4,6 +4,8 @@ use noodles::bam::record::Record;
 use smallvec::SmallVec;
 use crate::variant::{DeltaPerRec, VariantEval, VntPerRec};
 use crate::alignment::{AlignmentError, UnifiedOpIterator, UnifiedOp};
+use crate::alignment::PrepareError;
+use noodles::sam::alignment::record::data::field::{Tag, Value};
 
 #[derive(Clone, Copy)]
 struct Cell {
@@ -115,8 +117,15 @@ impl<'r> Fragment<'r> {
             self.score_variants_in_window(vnt, prior_seg_i, seg_ref_start, seg_ref_end, 0.0)?;
         }
 
-        let op_iter = UnifiedOpIterator::new(self.seg[self.seg_i])
-            .map_err(|e| anyhow!("Failed to create UnifiedOpIterator: {}", e))?;
+        let rec = self.seg[self.seg_i];
+        let cigar = rec.cigar();
+        let md = match rec.data().get(&Tag::MISMATCHED_POSITIONS) {
+            Some(Ok(Value::String(md))) => md as &[u8],
+            Some(Ok(_)) => return Err(PrepareError::BadMdTag.into()),
+            Some(Err(e)) => return Err(PrepareError::MdError(e).into()),
+            None => &[],
+        };
+        let op_iter = UnifiedOpIterator::new(Box::new(cigar.iter()), md);
 
         for op_res in op_iter {
             let op = op_res?;
@@ -138,19 +147,19 @@ impl<'r> Fragment<'r> {
                     }
                 }
                 UnifiedOp::Del(len) => {
-                    self.refpos += len as usize;
+                    self.refpos += len;
                     ref_score += self.pen.gap_open + (len as f64) * self.pen.gap_extend;
                 }
                 UnifiedOp::Ins(len) => {
-                    self.nt_i += len as usize;
+                    self.nt_i += len;
                     ref_score += self.pen.gap_open + (len as f64) * self.pen.gap_extend;
                 },
                 UnifiedOp::Relocate { penalty_score, pos } => {
-                    self.refpos = pos as usize;
+                    self.refpos = pos;
                     ref_score += penalty_score;
                 }
                 UnifiedOp::RefSkip(len) => {
-                    self.refpos += len as usize;
+                    self.refpos += len;
                 }
             }
 
@@ -203,7 +212,7 @@ impl<'r> Fragment<'r> {
         } else {
             let current_seg_ori = self.seg[self.seg_i].flags().is_reverse_complemented();
             let other_seg_ori = self.seg[seg_i].flags().is_reverse_complemented();
-            return current_seg_ori != other_seg_ori
+            current_seg_ori != other_seg_ori
         }
     }
     fn reori_base(&self, seg_i: usize, nt_i: &mut usize) -> u8 {
@@ -236,10 +245,10 @@ impl<'r> Fragment<'r> {
         // Clamp the ref window to the variant's ref span
         let eff_ref_start = ref_start.max(vnt_start);
         let eff_ref_end = ref_end.min(vnt_eval.ref_end());
-        let ref_len = (eff_ref_end - eff_ref_start) as usize;
+        let ref_len = eff_ref_end - eff_ref_start;
 
         // Derive the alt slice from the ref offset (valid for MNPs; see caveat below)
-        let ref_consumed = (eff_ref_start - vnt_eval.start()) as usize;
+        let ref_consumed = eff_ref_start - vnt_eval.start();
         let vnt = vnt_eval.vnt();
         let alt = vnt.alt_allele();
         let alt_slice = &alt[ref_consumed.min(alt.len())..(ref_consumed + ref_len).min(alt.len())];
@@ -249,9 +258,9 @@ impl<'r> Fragment<'r> {
 
         // Weighted ref score over the overlapping bases
         let mut weighted_ref_score = 0.0;
-        for j in 0..(eff_ref_end - eff_ref_start) as usize {
+        for j in 0..(eff_ref_end - eff_ref_start) {
             let pos = self.seg[seg_i].alignment_start().transpose()?.map_or(0, |p| p.get());
-            let nt_i = (eff_ref_start - pos) as usize + j;
+            let nt_i = (eff_ref_start - pos) + j;
             let q = self.q(seg_i, nt_i)?;
             let lm  = self.pen.log_likelihood_match[q];
             let lmm = self.pen.log_likelihood_mismatch[q];

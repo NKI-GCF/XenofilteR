@@ -4,9 +4,10 @@ use crate::{Config, Penalty, StripReadSuffix};
 use anyhow::{Result, ensure};
 use noodles::sam::alignment::Record;
 use smallvec::{SmallVec, smallvec};
+use noodles::bam::record::Record as BamRecord;
 
 pub(crate) type RecordEvalFn = fn(&dyn Record) -> Result<bool>;
-pub(crate) type AlnBuffer = SmallVec<[FragmentState; 2]>;
+pub(crate) type AlnBuffer = SmallVec<[FragmentState<BamRecord>; 2]>;
 
 fn always_false(_: &dyn Record) -> Result<bool> {
     Ok(false)
