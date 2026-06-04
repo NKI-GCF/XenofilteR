@@ -1,5 +1,6 @@
 use crate::variant::Variant;
 
+#[derive(Clone, Copy)]
 pub(crate) struct VariantEval<'a> {
     vnt: Option<&'a dyn Variant>,
     // FIXME: a variant could have multiple alleles, so these should become smallvecs:

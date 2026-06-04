@@ -109,18 +109,24 @@ impl LineByLine {
             }
             let mut decision = None;
             if best.len() > 1 {
-                let mut ord = best[0].partial_cmp(best.last().unwrap());
+                let last_idx = best.len() - 1;
+                let mut ord = best[0].partial_cmp(&best[last_idx]);
                 #[cfg(test)]
-                debug_print_best(&best, best.last().unwrap(), ord);
+                debug_print_best(&best, &best[last_idx], ord);
 
                 if ord.is_none() {
-                    best[0].init_md_cig()?;
-                    best.last_mut().map(|last| last.init_md_cig()).transpose()?;
-                    ord = best[0].partial_cmp(best.last().unwrap());
-                }
+                    let refs_first = best[0].md_cig_refs()?;
+                    let refs_last  = best[last_idx].md_cig_refs()?;
 
-                #[cfg(test)]
-                debug_print_best(&best, best.last().unwrap(), ord);
+                    // Compare first read of each fragment (index 0).
+                    if let (Some(Some(a)), Some(Some(b))) =
+                        (refs_first.first(), refs_last.first())
+                    {
+                        ord = a.partial_cmp_ref(b);
+                        #[cfg(test)]
+                        debug_print_best(&best, &best[last_idx], ord);
+                    }
+                }
 
                 decision = self.handle_ordering(&mut best, ord)?;
                 assert!(!best.is_empty());

@@ -1,5 +1,5 @@
 use crate::alignment::AlignmentError;
-use noodles::sam::alignment::record::cigar::op::Kind;
+use noodles::sam::alignment::record::cigar::op::{Op, Kind};
 use crate::MdCigFlags;
 
 #[derive(Debug, Clone, Copy)]
@@ -16,8 +16,8 @@ pub(crate) enum BaseOp {
 }
 
 pub(crate) struct ScoreOpIter<'a> {
-    md_cig: &'a MdCigFlags,
-    cig_at: usize,
+    md: &'a [u8],
+    cigar: Box<dyn Iterator<Item = Result<Op, std::io::Error>> + 'a>,
     md_at: usize,
     md_match_remain: usize,
     /// Remaining length in the current CIGAR M-op we haven't emitted yet.
@@ -26,7 +26,9 @@ pub(crate) struct ScoreOpIter<'a> {
 
 impl<'a> ScoreOpIter<'a> {
     pub(crate) fn new(md_cig: &'a MdCigFlags) -> Self {
-        Self { md_cig, cig_at: 0, md_at: 0, md_match_remain: 0, cig_m_remain: 0 }
+        let md = md_cig.get_md();
+        let cigar = md_cig.get_cigar().iter();
+        Self { md, cigar, md_at: 0, md_match_remain: 0, cig_m_remain: 0 }
     }
 }
 
@@ -36,8 +38,7 @@ impl<'a> Iterator for ScoreOpIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         // Drain remaining bases of the current M/X/= CIGAR op.
         if self.cig_m_remain == 0 {
-            let op = self.md_cig.get_cig(self.cig_at)?;
-            self.cig_at += 1;
+            let op = self.cigar.next().and_then(|c| c.ok())?;
             match op.kind() {
                 Kind::HardClip | Kind::Pad => self.next(),
                 Kind::SoftClip => Some(Ok(BaseOp::Mis)), // 1 soft-clipped base
@@ -59,13 +60,13 @@ impl<'a> Iterator for ScoreOpIter<'a> {
 impl<'a> ScoreOpIter<'a> {
     fn next_md_base(&mut self) -> Result<BaseOp, AlignmentError> {
         if self.md_match_remain != 0 {
-            let md = self.md_cig.get_md(self.md_at);
+            let md = self.md.get(self.md_at);
             self.md_at += 1;
             match md {
                 Some(b'A' | b'C' | b'G' | b'T' | b'N') => Ok(BaseOp::Mis),
                 Some(n) if n.is_ascii_digit() => {
                     let mut num = (n - b'0') as usize;
-                    while let Some(&d) = self.md_cig.get_md(self.md_at) {
+                    while let Some(&d) = self.md.get(self.md_at) {
                         if !d.is_ascii_digit() { break; }
                         num = num * 10 + (d - b'0') as usize;
                         self.md_at += 1;
@@ -83,11 +84,11 @@ impl<'a> ScoreOpIter<'a> {
     }
 
     fn skip_md_deletion(&mut self, mut cig_remain: usize) -> Result<(), AlignmentError> {
-        match self.md_cig.get_md(self.md_at) {
+        match self.md.get(self.md_at) {
             Some(b'^') => {
                 self.md_at += 1;
                 cig_remain += self.md_at;
-                while let Some(&b) = self.md_cig.get_md(self.md_at) {
+                while let Some(b) = self.md.get(self.md_at) {
                     if !matches!(b, b'A' | b'C' | b'G' | b'T' | b'N') { break; }
                     self.md_at += 1;
                 }

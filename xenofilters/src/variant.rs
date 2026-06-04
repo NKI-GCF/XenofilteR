@@ -6,11 +6,7 @@ mod variant_eval;
 pub(super) use population_variant::{PopulationVariant, parse_population_record};
 pub(super) use sample_variant::{SampleVariant, parse_sample_record};
 pub(super) use variant_store::{VariantStore, VariantStoreTrait};
-use smallvec::SmallVec;
 pub(crate) use variant_eval::VariantEval;
-
-pub(crate) type DeltaPerRec<'a> = SmallVec<[VariantEval<'a>; 0]>;
-pub(crate) type VntPerRec<'a> = SmallVec<[DeltaPerRec<'a>; 2]>;
 
 /// Trait for any object that can be scored against an alignment.
 pub(crate) trait Variant: Sync + Send {

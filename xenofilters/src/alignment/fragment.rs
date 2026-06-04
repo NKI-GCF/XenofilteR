@@ -2,49 +2,22 @@ use crate::{MAX_Q, Penalty};
 use anyhow::{Result, anyhow};
 use noodles::bam::record::Record;
 use smallvec::SmallVec;
-use crate::variant::{DeltaPerRec, VariantEval, VntPerRec};
+use crate::variant::VariantEval;
 use crate::alignment::{AlignmentError, ScoreOpIter, BaseOp};
 use crate::MdCigFlags;
-
-#[derive(Clone, Copy)]
-struct Cell {
-    m: f64, // Match/Mismatch
-    i: f64, // Insertion (gap in Alt)
-    d: f64, // Deletion (gap in Read)
-}
-
-impl Cell {
-    fn reinit(&mut self, gap_open: f64, gap_extend: f64, i: i32) {
-        self.m = f64::NEG_INFINITY;
-        self.i = f64::NEG_INFINITY;
-        self.d = f64::NEG_INFINITY;
-        match i {
-            0 => self.m = 0.0,
-            i if i < 0 => self.i = gap_open + (i.abs() as f64) * gap_extend,
-            i => self.d = gap_open + (i as f64) * gap_extend,
-        }
-    }
-}
-
-impl Default for Cell {
-    fn default() -> Self {
-        Self { m: -f64::INFINITY, i: -f64::INFINITY, d: -f64::INFINITY }
-    }
-}
+use crate::filter_algorithm::line_by_line::NeedlemanWunsch;
 
 pub(crate) struct Fragment<'r> {
     pen: &'r Penalty,
     seg: SmallVec<[&'r Record; 2]>,
-    md_cig_flags: SmallVec<[&'r MdCigFlags; 2]>,
+    md_cig_flags: SmallVec<[MdCigFlags<'r>; 2]>,
     seg_i: usize,
     refpos: usize,
     nt_i: usize,
-    prev: Vec<Cell>,
-    curr: Vec<Cell>,
 }
 
 impl<'r> Fragment<'r> {
-    pub(crate) fn new(pen: &'r Penalty, seg: SmallVec<[&'r Record; 2]>, md_cig_flags: SmallVec<[&'r MdCigFlags; 2]>) -> Result<Self, AlignmentError> {
+    pub(crate) fn new(pen: &'r Penalty, seg: SmallVec<[&'r Record; 2]>, md_cig_flags: SmallVec<[MdCigFlags<'r>; 2]>) -> Result<Self, AlignmentError> {
         let refpos = seg[0].alignment_start().transpose()?.map(|p| p.get()).unwrap_or(0);
         Ok(Self {
             pen,
@@ -53,23 +26,21 @@ impl<'r> Fragment<'r> {
             seg_i: 0,
             refpos,
             nt_i: 0,
-            prev: Vec::new(),
-            curr: Vec::new(),
         })
     }
-    pub(crate) fn score<'v>(&mut self, mut vnt_per_rec: VntPerRec<'v>) -> Result<f64, AlignmentError>
+    pub(crate) fn score<'v>(&mut self, mut nw: NeedlemanWunsch<'v>) -> Result<f64, AlignmentError>
     {
-        let mut score = self.score_with_variant(&mut vnt_per_rec[0])?;
+        let mut score = self.score_with_variant(&mut nw, 0)?;
 
         for i in 1..self.seg.len() {
             self.seg_i = i;
             self.refpos = self.seg[i].alignment_start().transpose()?.map(|p| p.get()).unwrap_or(0);
             self.nt_i = 0;
-            score += self.score_with_variant(&mut vnt_per_rec[i])?;
+            score += self.score_with_variant(&mut nw, i)?;
         }
-        Ok(score + self.maximize_delta(vnt_per_rec))
+        Ok(score + self.maximize_delta(nw.dvnt_per_rec))
     }
-    fn maximize_delta<'v>(&self, delta: VntPerRec<'v>) -> f64 {
+    fn maximize_delta<'v>(&self, delta: SmallVec<[SmallVec<[VariantEval<'v>; 0]>; 8]>) -> f64 {
         let mut variants: SmallVec<[&VariantEval; 4]> = delta
             .iter()
             .flatten()
@@ -103,7 +74,7 @@ impl<'r> Fragment<'r> {
         *dp.last().unwrap_or(&0.0)
     }
 
-    fn score_with_variant(&mut self, vnt: &mut DeltaPerRec<'_>) -> Result<f64> {
+    fn score_with_variant(&mut self, nw: &mut NeedlemanWunsch<'_>, i: usize) -> Result<f64> {
         let mut score = 0.0;
 
         // Score variant bases that reach into segments before the current one.
@@ -115,10 +86,10 @@ impl<'r> Fragment<'r> {
             let seg_ref_end = seg_ref_start + self.seg[prior_seg_i].cigar().len();
 
             // prior (or following) segment bases contribute to alt scoring only, no incurrence.
-            self.score_variants_in_window(vnt, prior_seg_i, seg_ref_start, seg_ref_end, 0.0)?;
+            self.score_variants_in_window(nw, i, prior_seg_i, seg_ref_start, seg_ref_end, 0.0)?;
         }
 
-        let mut iter = ScoreOpIter::new(self.md_cig_flags[self.seg_i]).peekable();
+        let mut iter = ScoreOpIter::new(&self.md_cig_flags[self.seg_i]).peekable();
 
         while let Some(op_res) = iter.next() {
             let op = op_res?;
@@ -164,7 +135,7 @@ impl<'r> Fragment<'r> {
                 }
             }
 
-            self.score_variants_in_window(vnt, self.seg_i, ref_start, self.refpos, ref_score)?;
+            self.score_variants_in_window(nw, i, self.seg_i, ref_start, self.refpos, ref_score)?;
             score += ref_score;
         }
 
@@ -175,33 +146,34 @@ impl<'r> Fragment<'r> {
             let seg_ref_start = self.seg[next_seg_i].alignment_start().transpose()?.map(|p| p.get()).unwrap_or(0);
             let seg_ref_end = seg_ref_start + self.seg[next_seg_i].sequence().len();
 
-            self.score_variants_in_window(vnt, next_seg_i, seg_ref_start, seg_ref_end, 0.0)?;
+            self.score_variants_in_window(nw, i, next_seg_i, seg_ref_start, seg_ref_end, 0.0)?;
         }
 
         Ok(score)
     }
     fn score_variants_in_window(
-        &mut self,
-        vnt: &mut DeltaPerRec<'_>,
+        &self,
+        nw: &mut NeedlemanWunsch<'_>,
+        dvnt_i: usize,
         seg_i: usize,
         start: usize,
         end: usize,
         ref_score: f64,  // unweighted, for non-variant positions
     ) -> Result<()> {
         let mut i = 0;
-        while i < vnt.len() && vnt[i].start() < end {
+        while i < nw.dvnt_per_rec[dvnt_i].len() && nw.dvnt_per_rec[dvnt_i][i].start() < end {
             if let Some((weighted_ref_score, alt_score)) =
-                self.score_variant_in_seg(&vnt[i], seg_i, start, end)?
+                self.score_variant_in_seg(nw, dvnt_i, i, seg_i, start, end)?
             {
                 // Use weighted_ref_score instead of ref_score for variant positions
-                vnt[i].update(weighted_ref_score, alt_score);
-                let fully_processed = vnt[i].ref_end() <= end && vnt[i].alt_end() <= end;
+                nw.dvnt_per_rec[dvnt_i][i].update(weighted_ref_score, alt_score);
+                let fully_processed = nw.dvnt_per_rec[dvnt_i][i].ref_end() <= end && nw.dvnt_per_rec[dvnt_i][i].alt_end() <= end;
                 if fully_processed {
-                    vnt.remove(i);
+                    nw.dvnt_per_rec[dvnt_i].remove(i);
                     continue;
                 }
             } else {
-                vnt[i].update(ref_score, 0.0);
+                nw.dvnt_per_rec[dvnt_i][i].update(ref_score, 0.0);
             }
             i += 1;
         }
@@ -235,12 +207,15 @@ impl<'r> Fragment<'r> {
     /// Score a variant's alt allele against read bases from a specific segment.
     /// `ref_start` and `ref_end` define the reference window to score within this segment.
     fn score_variant_in_seg(
-        &mut self,
-        vnt_eval: &VariantEval,
+        &self,
+        nw: &mut NeedlemanWunsch<'_>,
+        dvnt_i: usize,
+        dvnt_j: usize,
         seg_i: usize,
         ref_start: usize,
         ref_end: usize,
     ) -> Result<Option<(f64, f64)>> {  // (weighted_ref_score, alt_score)
+        let vnt_eval = &nw.dvnt_per_rec[dvnt_i][dvnt_j];
         let vnt_start = vnt_eval.start();
 
         // Clamp the ref window to the variant's ref span
@@ -272,13 +247,12 @@ impl<'r> Fragment<'r> {
         let n = alt.len();
         let m = n.max(ref_len);
 
-        self.prev.resize(m + 1, Cell::default());
-        self.curr.resize(m + 1, Cell::default());
+        nw.resize(m + 1);
 
         // Initialise first row: gaps in the read (deletions relative to alt)
-        self.prev[0].reinit(self.pen.gap_open, self.pen.gap_extend, 0);
-        for j in 1..=m {
-            self.prev[j].reinit(self.pen.gap_open, self.pen.gap_extend, -(j as i32));
+        nw.prev[0].reinit(self.pen.gap_open, self.pen.gap_extend, 0);
+        for (j, p) in nw.prev.iter_mut().enumerate().take(m + 1).skip(1) {
+            p.reinit(self.pen.gap_open, self.pen.gap_extend, -(j as i32));
         }
 
         let seg_ref_start = self.seg[seg_i].alignment_start().transpose()?.map_or(0, |p| p.get());
@@ -286,7 +260,7 @@ impl<'r> Fragment<'r> {
 
         for i in 1..=n {
             let alt_base = alt[i - 1];
-            self.curr[0].reinit(self.pen.gap_open, self.pen.gap_extend, i as i32);
+            nw.curr[0].reinit(self.pen.gap_open, self.pen.gap_extend, i as i32);
 
             for j in 1..=m {
                 let mut nt_i = nt_i_base + j - 1;
@@ -304,22 +278,22 @@ impl<'r> Fragment<'r> {
                     (1.0 - p_variant) * lm + p_variant * lmm
                 };
 
-                self.curr[j].m = per_base_score
-                    + self.prev[j - 1].m
-                        .max(self.prev[j - 1].i)
-                        .max(self.prev[j - 1].d);
+                nw.curr[j].m = per_base_score
+                    + nw.prev[j - 1].m
+                        .max(nw.prev[j - 1].i)
+                        .max(nw.prev[j - 1].d);
 
-                self.curr[j].i = (self.curr[j - 1].m + self.pen.gap_open + self.pen.gap_extend)
-                    .max(self.curr[j - 1].i + self.pen.gap_extend);
+                nw.curr[j].i = (nw.curr[j - 1].m + self.pen.gap_open + self.pen.gap_extend)
+                    .max(nw.curr[j - 1].i + self.pen.gap_extend);
 
-                self.curr[j].d = (self.prev[j].m + self.pen.gap_open + self.pen.gap_extend)
-                    .max(self.prev[j].d + self.pen.gap_extend);
+                nw.curr[j].d = (nw.prev[j].m + self.pen.gap_open + self.pen.gap_extend)
+                    .max(nw.prev[j].d + self.pen.gap_extend);
             }
 
-            std::mem::swap(&mut self.prev, &mut self.curr);
+            nw.swap();
         }
 
-        let alt_score = self.prev[m].m.max(self.prev[m].i).max(self.prev[m].d);
+        let alt_score = nw.prev[m].m.max(nw.prev[m].i).max(nw.prev[m].d);
 
         Ok(Some((weighted_ref_score, alt_score)))
     }
