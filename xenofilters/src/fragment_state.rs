@@ -9,23 +9,38 @@ use anyhow::{Result, anyhow};
 
 #[derive(PartialEq, Debug, Default)]
 pub(super) struct MdCigFlags {
-    pub(super) flags: Flags,
-    pub(super) md: SmallVec<[u8; 16]>,
-    pub(super) cig: SmallVec<[Op; 4]>,
+    flags: Flags,
+    md: SmallVec<[u8; 16]>,
+    cig: SmallVec<[Op; 4]>,
 }
 
 impl MdCigFlags {
+    pub(super) fn is_unmapped(&self) -> bool {
+        self.flags.is_unmapped()
+    }
+    pub(super) fn is_reverse_complemented(&self) -> bool {
+        self.flags.is_reverse_complemented()
+    }
+    pub(super) fn is_last_segment(&self) -> bool {
+        self.flags.is_last_segment()
+    }
+    pub(super) fn is_secondary(&self) -> bool {
+        self.flags.is_secondary()
+    }
+    pub(super) fn get_md(&self, i: usize) -> Option<&u8> {
+        self.md.get(i)
+    }
+    pub(super) fn get_cig(&self, i: usize) -> Option<&Op> {
+        self.cig.get(i)
+    }
     fn is_perfect(&self) -> bool {
         self.cig.len() == 1 && !self.md.iter().all(|&b| b.is_ascii_digit())
     }
     fn new(flags: Flags) -> Self {
         Self { flags, ..Default::default() }
     }
-    fn is_unmapped(&self) -> bool {
+    fn is_all_unmapped(&self) -> bool {
         self.flags.is_unmapped() && (!self.flags.is_segmented() || self.flags.is_mate_unmapped())
-    }
-    fn is_unmapped_or_secondary(&self) -> bool {
-        self.flags.is_unmapped() || self.flags.is_secondary()
     }
     fn complete<R: Record>(&mut self, r: &R) -> Result<()> {
         match r.data().get(&Tag::MISMATCHED_POSITIONS) {
@@ -47,7 +62,7 @@ impl MdCigFlags {
 impl PartialOrd for MdCigFlags {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         let test = if self.md.is_empty() || other.md.is_empty() {
-            (self.is_unmapped(), other.is_unmapped())
+            (self.is_all_unmapped(), other.is_all_unmapped())
         } else {
             (self.is_perfect(), other.is_perfect())
         };
@@ -83,8 +98,9 @@ impl<R: Record> FragmentState<R> {
     pub(crate) fn init_md_cig(&mut self) -> Result<()> {
         if self.ops.is_empty() {
             for f in 0..self.ops.len() {
-                if !self.ops[f].is_unmapped_or_secondary() {
-                    self.ops[f].complete(&self.records[f])?;
+                let ops = &mut self.ops[f];
+                if !(ops.is_unmapped() || ops.is_secondary()) {
+                    ops.complete(&self.records[f])?;
                 }
             }
         }
@@ -112,13 +128,13 @@ impl<R: Record> FragmentState<R> {
                 Some(Ok(tid)) => tid,
                 _ => panic!("Mapped record has no reference sequence ID"),
             };
-            let f = self.ops[i].flags;
-            let pos = if f.is_reverse_complemented() {
+            let ops = &self.ops[i];
+            let pos = if ops.is_reverse_complemented() {
                 start + r.cigar().len()
             } else {
                 start
             };
-           let ord = u8::from(f.is_last_segment()) * 2 + u8::from(f.is_secondary());
+           let ord = u8::from(ops.is_last_segment()) * 2 + u8::from(ops.is_secondary());
             indices.push((ord, tid, pos, i));
         }
         indices.sort();

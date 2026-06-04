@@ -4,7 +4,7 @@ mod ops;
 mod fragment;
 
 pub(crate) use errors::AlignmentError;
-pub(crate) use ops::{UnifiedOp, UnifiedOpIterator};
+pub(crate) use ops::{BaseOp, ScoreOpIter};
 pub(crate) use fragment::Fragment;
 
 use noodles::sam::alignment::Record;

@@ -44,8 +44,8 @@ impl LineByLine {
 
         for idx in state.order_mates(&self.aln) {
             let rec = &state.records[idx];
-            let flags = state.ops[idx].flags;
-            if flags.is_unmapped() {
+            let ops = &state.ops[idx];
+            if ops.is_unmapped() {
                 dvnt_per_rec.push(SmallVec::new());
             } else {
                 let tid = rec.reference_sequence_id().transpose()?
@@ -59,10 +59,10 @@ impl LineByLine {
                     .unwrap_or_default();
                 dvnt_per_rec.push(delta_vars);
             }
-            if !flags.is_secondary() {
+            if !ops.is_secondary() {
                 segment.push(rec);
                 md_cig_flags.push(&state.ops[idx]);
-            } else if flags.is_last_segment() {
+            } else if ops.is_last_segment() {
                 break;
             }
         }

@@ -3,7 +3,7 @@ use anyhow::{Result, anyhow};
 use noodles::bam::record::Record;
 use smallvec::SmallVec;
 use crate::variant::{DeltaPerRec, VariantEval, VntPerRec};
-use crate::alignment::{AlignmentError, UnifiedOpIterator, UnifiedOp};
+use crate::alignment::{AlignmentError, ScoreOpIter, BaseOp};
 use crate::MdCigFlags;
 
 #[derive(Clone, Copy)]
@@ -108,7 +108,7 @@ impl<'r> Fragment<'r> {
 
         // Score variant bases that reach into segments before the current one.
         for prior_seg_i in 0..self.seg_i {
-            if self.md_cig_flags[prior_seg_i].flags.is_last_segment() != self.md_cig_flags[self.seg_i].flags.is_last_segment() {
+            if self.md_cig_flags[prior_seg_i].is_last_segment() != self.md_cig_flags[self.seg_i].is_last_segment() {
                 continue; // skip read 1 read(s) when processing read 2
             }
             let seg_ref_start = self.seg[prior_seg_i].alignment_start().transpose()?.map(|p| p.get()).unwrap_or(0);
@@ -118,42 +118,48 @@ impl<'r> Fragment<'r> {
             self.score_variants_in_window(vnt, prior_seg_i, seg_ref_start, seg_ref_end, 0.0)?;
         }
 
-        let cigar = self.md_cig_flags[self.seg_i].cig.as_ref();
-        let md = self.md_cig_flags[self.seg_i].md.as_ref();
-        let op_iter = UnifiedOpIterator::new(cigar, md);
+        let mut iter = ScoreOpIter::new(self.md_cig_flags[self.seg_i]).peekable();
 
-        for op_res in op_iter {
+        while let Some(op_res) = iter.next() {
             let op = op_res?;
             let ref_start = self.refpos;
             let mut ref_score = 0.0;
             match op {
-                UnifiedOp::Match(len) => {
-                    for _ in 0..len {
+                BaseOp::Match => {
+                    ref_score += self.pen.log_likelihood_match[self.q(self.seg_i, self.nt_i)?];
+                    self.nt_i += 1;
+                    self.refpos += 1;
+                    while matches!(iter.peek(), Some(Ok(BaseOp::Match))) {
+                        iter.next();
                         ref_score += self.pen.log_likelihood_match[self.q(self.seg_i, self.nt_i)?];
                         self.nt_i += 1;
                         self.refpos += 1;
                     }
                 },
-                UnifiedOp::Mis(len) => {
-                    for _ in 0..len {
+                BaseOp::Mis => {
+                    ref_score += self.pen.log_likelihood_mismatch[self.q(self.seg_i, self.nt_i)?];
+                    self.nt_i += 1;
+                    self.refpos += 1;
+                    while matches!(iter.peek(), Some(Ok(BaseOp::Mis))) {
+                        iter.next();
                         ref_score += self.pen.log_likelihood_mismatch[self.q(self.seg_i, self.nt_i)?];
                         self.nt_i += 1;
                         self.refpos += 1;
                     }
                 }
-                UnifiedOp::Del(len) => {
+                BaseOp::Del(len) => {
                     self.refpos += len;
                     ref_score += self.pen.gap_open + (len as f64) * self.pen.gap_extend;
                 }
-                UnifiedOp::Ins(len) => {
+                BaseOp::Ins(len) => {
                     self.nt_i += len;
                     ref_score += self.pen.gap_open + (len as f64) * self.pen.gap_extend;
                 },
-                UnifiedOp::Relocate { penalty_score, pos } => {
+                BaseOp::Relocate { penalty_score, pos } => {
                     self.refpos = pos;
                     ref_score += penalty_score;
                 }
-                UnifiedOp::RefSkip(len) => {
+                BaseOp::RefSkip(len) => {
                     self.refpos += len;
                 }
             }
@@ -163,7 +169,7 @@ impl<'r> Fragment<'r> {
         }
 
         for next_seg_i in (self.seg_i + 1)..self.seg.len() {
-            if self.md_cig_flags[next_seg_i].flags.is_last_segment() != self.md_cig_flags[self.seg_i].flags.is_last_segment() {
+            if self.md_cig_flags[next_seg_i].is_last_segment() != self.md_cig_flags[self.seg_i].is_last_segment() {
                 break; // skip segments from read 2 when processing read 1
             }
             let seg_ref_start = self.seg[next_seg_i].alignment_start().transpose()?.map(|p| p.get()).unwrap_or(0);
@@ -205,8 +211,8 @@ impl<'r> Fragment<'r> {
         if seg_i == self.seg_i {
             false
         } else {
-            let current_seg_ori = self.md_cig_flags[self.seg_i].flags.is_reverse_complemented();
-            let other_seg_ori = self.md_cig_flags[seg_i].flags.is_reverse_complemented();
+            let current_seg_ori = self.md_cig_flags[self.seg_i].is_reverse_complemented();
+            let other_seg_ori = self.md_cig_flags[seg_i].is_reverse_complemented();
             current_seg_ori != other_seg_ori
         }
     }
