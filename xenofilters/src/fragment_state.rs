@@ -21,6 +21,9 @@ impl MdCigFlags {
     fn new(flags: Flags) -> Self {
         Self { flags, ..Default::default() }
     }
+    fn is_unmapped(&self) -> bool {
+        self.flags.is_unmapped() && (!self.flags.is_segmented() || self.flags.is_mate_unmapped())
+    }
     fn complete<R: Record>(&mut self, r: &R) -> Result<()> {
         match r.data().get(&Tag::MISMATCHED_POSITIONS) {
             Some(Ok(Value::String(bstr))) => {
@@ -40,11 +43,16 @@ impl MdCigFlags {
 
 impl PartialOrd for MdCigFlags {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        match (self.is_perfect(), other.is_perfect()) {
-            (true, true) => Some(Ordering::Equal), // perfect match for both => tie-break with next pair
-            (true, false) => Some(Ordering::Greater), // self better
-            (false, true) => Some(Ordering::Less),    // other better
-            (false, false) => None, // Slow path: both imperfect => per-base evaluation
+        let test = if self.md.is_empty() || other.md.is_empty() {
+            (self.is_unmapped(), other.is_unmapped())
+        } else {
+            (self.is_perfect(), other.is_perfect())
+        };
+        match test {
+            (true, true) => Some(Ordering::Equal), // both unmapped => tie-break with next pair
+            (true, false) => Some(Ordering::Less), // self worse
+            (false, true) => Some(Ordering::Greater),    // other worse
+            (false, false) => None, // Slow path, first cig/md after init, then per base evaluation.
         }
     }
 }
@@ -75,7 +83,7 @@ impl<R: Record> FragmentState<R> {
         }
         for f in 0..self.ops.len() {
             let record = &self.records[f];
-            let flags = record.flags()?;
+            let flags = self.ops[f].flags;
             if !flags.is_secondary() && !flags.is_unmapped() {
                 self.ops[f].complete(record)?;
             }
@@ -116,29 +124,10 @@ impl<R: Record> FragmentState<R> {
         indices.sort();
         indices.iter().map(|t| t.3).collect()
     }
-    #[inline]
-    fn quick_unmapped_cmp(&self, b: &Flags) -> Option<Ordering> {
-        let a = self.ops[0].flags;
-        if a.is_unmapped() && (!a.is_segmented() || a.is_mate_unmapped()) {
-            if b.is_unmapped() && (!b.is_segmented() || b.is_mate_unmapped()) {
-                Some(Ordering::Equal)
-            } else {
-                Some(Ordering::Less)
-            }
-        } else if b.is_unmapped() && (!b.is_segmented() || b.is_mate_unmapped()) {
-            Some(Ordering::Greater)
-        } else {
-            None
-        }
-    }
 }
 
 impl<R: Record + PartialEq> PartialOrd for FragmentState<R> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        if self.ops.is_empty() || other.ops.is_empty() {
-            // Fast path: unmapped handling
-            return self.quick_unmapped_cmp(&other.ops[0].flags);
-        }
         self.ops[0].partial_cmp(&other.ops[0])
     }
 }
