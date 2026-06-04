@@ -24,6 +24,9 @@ impl MdCigFlags {
     fn is_unmapped(&self) -> bool {
         self.flags.is_unmapped() && (!self.flags.is_segmented() || self.flags.is_mate_unmapped())
     }
+    fn is_unmapped_or_secondary(&self) -> bool {
+        self.flags.is_unmapped() || self.flags.is_secondary()
+    }
     fn complete<R: Record>(&mut self, r: &R) -> Result<()> {
         match r.data().get(&Tag::MISMATCHED_POSITIONS) {
             Some(Ok(Value::String(bstr))) => {
@@ -78,14 +81,11 @@ impl<R: Record> FragmentState<R> {
         Ok(())
     }
     pub(crate) fn init_md_cig(&mut self) -> Result<()> {
-        if !self.ops.is_empty() {
-            return Ok(());
-        }
-        for f in 0..self.ops.len() {
-            let record = &self.records[f];
-            let flags = self.ops[f].flags;
-            if !flags.is_secondary() && !flags.is_unmapped() {
-                self.ops[f].complete(record)?;
+        if self.ops.is_empty() {
+            for f in 0..self.ops.len() {
+                if !self.ops[f].is_unmapped_or_secondary() {
+                    self.ops[f].complete(&self.records[f])?;
+                }
             }
         }
         Ok(())

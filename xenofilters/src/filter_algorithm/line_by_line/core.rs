@@ -74,23 +74,10 @@ impl LineByLine {
                 })
             },
             StripReadSuffix::Auto => {
-                #[cfg(test)]
-                {
-                    |best: &AlnBuffer, qname2: &[u8]| {
-                        if let Some(first_qname) = best.first().map(|b| b.first_qname()) {
-                            if first_qname.ends_with(b"/1") || first_qname.ends_with(b"/2") {
-                                return best.first().map(|b| b.first_qname()).map(|qname1| {
-                                    qname1[..qname1.len() - 2] != qname2[..qname2.len() - 2]
-                                });
-                            }
-                        }
-                        best.first()
-                            .map(|b| b.first_qname())
-                            .map(|qname1| qname1 != qname2)
-                    }
-                }
                 #[cfg(not(test))]
-                unreachable!("Auto mode should be handled during AlnStream initialization")
+                unreachable!("Auto mode should be handled during AlnStream initialization");
+                #[cfg(test)]
+                debug_new_qname_fn()
             }
         };
         for i in 0..aln.len() {
@@ -123,6 +110,9 @@ impl LineByLine {
             let mut decision = None;
             if best.len() > 1 {
                 let mut ord = best[0].partial_cmp(best.last().unwrap());
+                #[cfg(test)]
+                debug_print_best(&best, best.last().unwrap(), ord);
+
                 if ord.is_none() {
                     best[0].init_md_cig()?;
                     best.last_mut().map(|last| last.init_md_cig()).transpose()?;
@@ -130,15 +120,8 @@ impl LineByLine {
                 }
 
                 #[cfg(test)]
-                assert_eq!(best[0].records[0].name(), last.records[0].name());
-                #[cfg(test)]
-                eprintln!(
-                    "{}: {} vs {} => {:?}",
-                    std::str::from_utf8(best[0].records[0].name().as_ref().unwrap()).unwrap_or("<?>"),
-                    best[0].get_nr(),
-                    best.last().unwrap().get_nr(),
-                    ord
-                );
+                debug_print_best(&best, best.last().unwrap(), ord);
+
                 decision = self.handle_ordering(&mut best, ord)?;
                 assert!(!best.is_empty());
             }
@@ -162,3 +145,32 @@ impl LineByLine {
         Ok(())
     }
 }
+
+#[cfg(test)]
+fn debug_print_best(best: &AlnBuffer, last: &AlnBuffer, ord: Option<std::cmp::Ordering>) {
+    assert_eq!(best[0].records[0].name(), last.records[0].name());
+    eprintln!(
+        "{}: {} vs {} => {:?}",
+        std::str::from_utf8(best[0].records[0].name().as_ref().unwrap()).unwrap_or("<?>"),
+        best[0].get_nr(),
+        best.last().unwrap().get_nr(),
+        ord
+    );
+}
+
+#[cfg(test)]
+fn debug_new_qname_fn() -> fn(&AlnBuffer, &[u8]) -> Option<bool> {
+    |best: &AlnBuffer, qname2: &[u8]| {
+        if let Some(first_qname) = best.first().map(|b| b.first_qname()) {
+            if first_qname.ends_with(b"/1") || first_qname.ends_with(b"/2") {
+                return best.first().map(|b| b.first_qname()).map(|qname1| {
+                    qname1[..qname1.len() - 2] != qname2[..qname2.len() - 2]
+                });
+            }
+        }
+        best.first()
+            .map(|b| b.first_qname())
+            .map(|qname1| qname1 != qname2)
+    }
+}
+
