@@ -1,8 +1,8 @@
 use super::core::LineByLine;
-use crate::alignment::{Fragment, stringify_record};
+use crate::alignment::{Fragment, stringify_record, QualityAt};
 use crate::alignment::FragmentState;
 use anyhow::{Result, anyhow};
-use noodles::bam::record::Record;
+use noodles::sam::alignment::Record;
 use smallvec::SmallVec;
 use crate::alignment::MdCigFlags;
 use crate::variant::Eval;
@@ -55,14 +55,14 @@ impl<'v> NeedlemanWunsch<'v> {
     }
 }
 
-impl LineByLine {
+impl<R: Record + PartialEq + QualityAt> LineByLine<R> {
     pub(super) fn score_candidate(
         &self,
-        state: &FragmentState<Record>,
+        state: &FragmentState<R>,
         aln_idx: usize,
     ) -> Result<f64> {
         let mut nw = NeedlemanWunsch::new(state.get_records().len());
-        let mut segment = SmallVec::new();
+        let mut segment: SmallVec<[&R; 8]> = SmallVec::new();
         let mut md_cig_flags = SmallVec::with_capacity(state.get_records().len());
         let aln = self.aln.get(aln_idx).ok_or_else(|| anyhow!("No alignment for index {aln_idx}"))?;
 
@@ -72,7 +72,8 @@ let flags = state.flags(idx).ok_or_else(|| anyhow!("No flags for record index {i
             if flags.is_unmapped() {
                 nw.dvnt_per_rec.push(SmallVec::new());
             } else {
-                let tid = rec.reference_sequence_id().transpose()?
+                let header = aln.header();
+                let tid = rec.reference_sequence_id(header).transpose()?
                     .ok_or_else(|| anyhow!("Mapped record has no reference sequence ID"))?;
                 let start = rec.alignment_start().transpose()?
                     .ok_or_else(|| anyhow!("Mapped record has no alignment start"))?

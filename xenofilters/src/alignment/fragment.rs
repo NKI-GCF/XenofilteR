@@ -1,15 +1,15 @@
 use crate::penalty::{MAX_Q, Penalty};
 use anyhow::{Result, anyhow};
-use noodles::bam::record::Record;
+use noodles::sam::alignment::Record;
 use smallvec::{SmallVec, smallvec};
 use crate::variant::Eval;
 use crate::alignment::{AlignmentError, ScoreOpIter, BaseOp};
 use crate::alignment::MdCigFlags;
 use crate::filter_algorithm::line_by_line::NeedlemanWunsch;
 
-pub(crate) struct Fragment<'r> {
+pub(crate) struct Fragment<'r, R> {
     pen: &'r Penalty,
-    seg: SmallVec<[&'r Record; 2]>,
+    seg: SmallVec<[&'r R; 8]>,
     md_cig_flags: SmallVec<[MdCigFlags<'r>; 2]>,
     seg_start: SmallVec<[usize; 2]>,
     seg_i: usize,
@@ -18,8 +18,8 @@ pub(crate) struct Fragment<'r> {
     dp: SmallVec<[f64; 8]>,
 }
 
-impl<'r> Fragment<'r> {
-    pub(crate) fn new(pen: &'r Penalty, seg: SmallVec<[&'r Record; 2]>, md_cig_flags: SmallVec<[MdCigFlags<'r>; 2]>) -> Result<Self, AlignmentError> {
+impl<'r, R: Record + QualityAt> Fragment<'r, R> {
+    pub(crate) fn new(pen: &'r Penalty, seg: SmallVec<[&'r R; 8]>, md_cig_flags: SmallVec<[MdCigFlags<'r>; 2]>) -> Result<Self, AlignmentError> {
         let seg_start: SmallVec<[usize; 2]> = seg
             .iter()
             .map(|r| r.alignment_start().transpose().map(|o| o.map(|p| p.get()).unwrap_or(0)))
@@ -299,11 +299,32 @@ impl<'r> Fragment<'r> {
 
         Ok(Some((weighted_ref_score, alt_score)))
     }
+}
+
+pub trait QualityAt {
+    fn quality_at(&self, i: usize) -> Option<u8>;
+}
+
+impl QualityAt for noodles::bam::Record {
+    fn quality_at(&self, i: usize) -> Option<u8> {
+        self.quality_scores().as_ref().get(i).copied()
+    }
+}
+
+impl QualityAt for noodles::sam::alignment::RecordBuf {
+    fn quality_at(&self, i: usize) -> Option<u8> {
+        self.quality_scores().as_ref().get(i).copied()
+    }
+}
+
+impl<'r, R> Fragment<'r, R>
+where
+    R: Record + QualityAt,
+{
     fn q(&self, seg_i: usize, nt_i: usize) -> Result<usize> {
-        let qual = self.seg[seg_i].quality_scores();
-        qual.as_ref()  // &[u8]
-            .get(nt_i)
-            .map(|&q| (q as usize).min(MAX_Q - 1))
+        self.seg[seg_i]
+            .quality_at(nt_i)
+            .map(|q| (q as usize).min(MAX_Q - 1))
             .ok_or_else(|| anyhow!("Quality score index {nt_i} out of bounds for segment {seg_i}"))
     }
 }

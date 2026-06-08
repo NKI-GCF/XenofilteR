@@ -6,7 +6,6 @@ use noodles::sam::alignment::record::Cigar;
 use noodles::sam::alignment::record::Flags;
 use anyhow::Result;
 use crate::alignment::MdCigFlags;
-use noodles::bam::record::Record as BamRecord;
 
 #[derive(PartialEq, Debug)]
 pub(crate) struct FragmentState<R> {
@@ -64,7 +63,7 @@ impl<R: Record> FragmentState<R> {
         f.is_unmapped() && (!f.is_segmented() || f.is_mate_unmapped())
     }
 
-    pub(crate) fn order_mates(&self, aln: &SmallVec<[Box<dyn AlignmentStream<BamRecord>>; 2]>) -> SmallVec<[usize; 2]> {
+    pub(crate) fn order_mates(&self, aln: &SmallVec<[Box<dyn AlignmentStream<R>>; 2]>) -> SmallVec<[usize; 2]> {
         let len = self.records.len();
         let mut indices: SmallVec<[(u8, usize, usize, usize); 2]> = SmallVec::with_capacity(len);
         for i in 0..len {

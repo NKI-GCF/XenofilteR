@@ -6,7 +6,7 @@ mod md_cig_flags;
 
 pub(crate) use errors::AlignmentError;
 pub(crate) use ops::{BaseOp, ScoreOpIter};
-pub(crate) use fragment::Fragment;
+pub(crate) use fragment::{Fragment, QualityAt};
 pub(crate) use fragment_state::FragmentState;
 pub(crate) use md_cig_flags::MdCigFlags;
 
@@ -14,7 +14,7 @@ use noodles::sam::alignment::Record;
 use noodles::sam::alignment::record::cigar::op::Kind;
 use noodles::sam::alignment::record::data::field::{Tag, Value};
 
-pub(crate) fn stringify_record<R: Record>(rec: &R) -> String {
+pub(crate) fn stringify_record<R: Record + PartialEq>(rec: &R) -> String {
     let qname = rec.name();
 
     let mut cigar = String::new();

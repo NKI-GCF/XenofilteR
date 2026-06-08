@@ -5,7 +5,7 @@ use noodles::sam::alignment::record_buf::data::field::Value;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::alignment::Record;
 
-impl LineByLine {
+impl<R: Record + PartialEq> LineByLine<R> {
     pub(super) fn add_aux_tags(
         &mut self,
         rec: &mut RecordBuf,

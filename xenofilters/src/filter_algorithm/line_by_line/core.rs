@@ -4,10 +4,9 @@ use crate::{config::{Config, StripReadSuffix}, penalty::Penalty};
 use anyhow::Result;
 use noodles::sam::alignment::Record;
 use smallvec::SmallVec;
-use noodles::bam::record::Record as BamRecord;
 
 pub(crate) type RecordEvalFn = fn(&dyn Record) -> Result<bool>;
-pub(crate) type AlnBuffer = SmallVec<[FragmentState<BamRecord>; 2]>;
+pub(crate) type AlnBuffer<R> = SmallVec<[FragmentState<R>; 2]>;
 
 fn always_false(_: &dyn Record) -> Result<bool> {
     Ok(false)
@@ -22,21 +21,21 @@ fn is_secondary(rec: &dyn Record) -> Result<bool> {
     Ok(rec.flags()?.is_secondary())
 }
 
-pub(crate) struct LineByLine {
-    pub(super) aln: SmallVec<[Box<dyn AlignmentStream<BamRecord>>; 2]>,
+pub(crate) struct LineByLine<R> {
+    pub(super) aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
     pub(super) branch_counters: [u64; 32],
     pub(super) is_secondary_skipped: RecordEvalFn,
     pub(super) is_unmapped_skipped: RecordEvalFn,
-    pub(super) is_new_qname: fn(&AlnBuffer, &[u8]) -> Option<bool>,
+    pub(super) is_new_qname: fn(&AlnBuffer<R>, &[u8]) -> Option<bool>,
     pub(super) add_decision_tag: bool,
     pub(super) penalties: Penalty,
     pub(super) ambiguous_log_threshold: f64,
 }
 
-impl LineByLine {
+impl<R: Record + PartialEq> LineByLine<R> {
     pub(crate) fn new(
         config: Config,
-        mut aln: SmallVec<[Box<dyn AlignmentStream<BamRecord>>; 2]>,
+        mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
     ) -> Result<Self> {
 
         let is_unmapped_skipped = match config.discard_unmapped {
@@ -54,17 +53,17 @@ impl LineByLine {
         };
 
         let is_new_qname = match config.strip_read_suffix {
-            StripReadSuffix::True => |best: &AlnBuffer, qname2: &[u8]| {
+            StripReadSuffix::True => |best: &AlnBuffer<R>, qname2: &[u8]| {
                 best.first()
                     .map(|b| b.first_qname())
                     .map(|qname1| qname1[..qname1.len() - 2] != qname2[..qname2.len() - 2])
             },
-            StripReadSuffix::False => |best: &AlnBuffer, qname2: &[u8]| {
+            StripReadSuffix::False => |best: &AlnBuffer<R>, qname2: &[u8]| {
                 best.first()
                     .map(|b| b.first_qname())
                     .map(|qname1| qname1 != qname2)
             },
-            StripReadSuffix::Variable => |best: &AlnBuffer, qname2: &[u8]| {
+            StripReadSuffix::Variable => |best: &AlnBuffer<R>, qname2: &[u8]| {
                 best.first().map(|b| b.first_qname()).map(|qname1| {
                     if qname1.ends_with(b"/1") || qname1.ends_with(b"/2") {
                         qname1[..qname1.len() - 2] != qname2[..qname2.len() - 2]

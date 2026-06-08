@@ -1,5 +1,5 @@
-use crate::fragment_state::FragmentState;
-use crate::tests::{create_record, create_recordbuf};
+use crate::alignment::fragment_state::FragmentState;
+use crate::tests::create_record;
 use anyhow::Result;
 use std::cmp::Ordering;
 use smallvec::{SmallVec, smallvec};

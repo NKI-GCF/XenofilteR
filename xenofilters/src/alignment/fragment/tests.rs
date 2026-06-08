@@ -1,5 +1,5 @@
-use crate::Config;
-use crate::Penalty;
+use crate::config::Config;
+use crate::penalty::Penalty;
 use crate::alignment::fragment::Fragment;
 use crate::tests::create_record;
 use anyhow::Result;

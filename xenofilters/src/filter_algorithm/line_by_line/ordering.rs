@@ -1,8 +1,8 @@
 use super::core::{AlnBuffer, LineByLine};
 use crate::alignment::FragmentState;
 use anyhow::{Result, anyhow, ensure};
-use noodles::bam::record::Record;
-use noodles::sam::alignment::RecordBuf;
+use crate::alignment::QualityAt;
+use noodles::sam::alignment::{RecordBuf, Record};
 use std::cmp::{Ord, Ordering};
 use smallvec::smallvec;
 
@@ -14,9 +14,9 @@ pub(super) enum Decision {
     VariantRescued(u8),
 }
 
-impl LineByLine {
+impl<R: Record + PartialEq + QualityAt> LineByLine<R> {
     pub(crate) fn process(&mut self) -> Result<()> {
-        let mut best: AlnBuffer = smallvec![];
+        let mut best: AlnBuffer<R> = smallvec![];
 
         let mut i = 0;
         while i != self.aln.len() {
@@ -71,8 +71,8 @@ impl LineByLine {
     fn handle_record_is_fragment_finished(
         &mut self,
         i: usize,
-        rec: Record,
-        best: &mut AlnBuffer,
+        rec: R,
+        best: &mut AlnBuffer<R>,
     ) -> Result<bool> {
         if !(self.is_secondary_skipped)(&rec)? {
             let name = rec.name().ok_or_else(|| anyhow!("Record has no read name"))?;
@@ -98,13 +98,13 @@ impl LineByLine {
 
         Ok(false)
     }
-    fn handle_greater_than(&mut self, best: &mut AlnBuffer) -> Result<()> {
+    fn handle_greater_than(&mut self, best: &mut AlnBuffer<R>) -> Result<()> {
         let mut last = best.pop().unwrap();
         let nr = last.get_nr();
         last.drain_records()
             .try_for_each(|r| self.write_record(nr, &r, Some(false)))
     }
-    fn handle_less_than(&mut self, best: &mut AlnBuffer) -> Result<()> {
+    fn handle_less_than(&mut self, best: &mut AlnBuffer<R>) -> Result<()> {
         let all_before_last = best.len() - 1;
         best.drain(0..all_before_last).try_for_each(|mut b| {
             let nr = b.get_nr();
@@ -114,7 +114,7 @@ impl LineByLine {
     }
     fn handle_ordering(
         &mut self,
-        best: &mut AlnBuffer,
+        best: &mut AlnBuffer<R>,
         ord: Option<Ordering>,
     ) -> Result<Option<Decision>> {
         match ord {
@@ -156,7 +156,7 @@ impl LineByLine {
     }
     fn handle_best(
         &mut self,
-        best: &mut AlnBuffer,
+        best: &mut AlnBuffer<R>,
         decision: Option<Decision>,
     ) -> Result<()> {
         let best_state = (best.len() == 1).then_some(true);
@@ -184,6 +184,9 @@ impl LineByLine {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 #[cfg(test)]
 fn debug_print_best(best: &AlnBuffer, last: &AlnBuffer, ord: Option<std::cmp::Ordering>) {
