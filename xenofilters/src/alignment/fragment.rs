@@ -4,7 +4,7 @@ use noodles::bam::record::Record;
 use smallvec::SmallVec;
 use crate::variant::VariantEval;
 use crate::alignment::{AlignmentError, ScoreOpIter, BaseOp};
-use crate::MdCigFlags;
+use crate::alignment::MdCigFlags;
 use crate::filter_algorithm::line_by_line::NeedlemanWunsch;
 
 pub(crate) struct Fragment<'r> {

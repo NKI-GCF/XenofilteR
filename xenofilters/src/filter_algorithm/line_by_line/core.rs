@@ -1,5 +1,5 @@
 use crate::aln_stream::AlignmentStream;
-use crate::fragment_state::FragmentState;
+use crate::alignment::FragmentState;
 use crate::{config::{Config, StripReadSuffix}, penalty::Penalty};
 use anyhow::{Result, ensure};
 use noodles::sam::alignment::Record;

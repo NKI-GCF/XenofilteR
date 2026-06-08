@@ -9,7 +9,6 @@ mod aln_stream;
 mod bam;
 mod config;
 mod filter_algorithm;
-mod fragment_state;
 mod penalty;
 mod variant;
 
@@ -18,8 +17,7 @@ use anyhow::{Result, ensure};
 use clap::Parser;
 use filter_algorithm::line_by_line::LineByLine;
 use smallvec::{SmallVec, smallvec};
-pub(crate) use fragment_state::MdCigFlags;
-pub(crate) use config::Config;
+use config::Config;
 
 
 fn main() -> Result<()> {

@@ -7,7 +7,7 @@ use noodles::sam::alignment::record::data::field::{Tag, Value};
 use noodles::sam::alignment::record::Flags;
 use anyhow::{Result, anyhow};
 
-pub(super) struct MdCigFlags<'r> {
+pub(crate) struct MdCigFlags<'r> {
     flags: &'r Flags,
     md: &'r [u8],
     cig: Box<dyn Cigar + 'r>,
@@ -16,7 +16,7 @@ pub(super) struct MdCigFlags<'r> {
 impl<'r> MdCigFlags<'r> {
     /// Build an `MdCigRef` from a stored `MdCigFlags` and its matching record.
     /// Returns `None` when the read is unmapped or secondary (no MD/CIG needed).
-    pub(super) fn try_from_record<R: Record>(
+    pub(crate) fn try_from_record<R: Record>(
         flags: &'r Flags,
         record: &'r R,
     ) -> Result<Option<Self>> {
@@ -61,7 +61,7 @@ impl<'r> MdCigFlags<'r> {
     }
     /// Two-phase ordering: unmapped first, then perfect-match.
     /// Returns `None` when neither condition disambiguates.
-    pub(super) fn partial_cmp_ref(&self, other: &MdCigFlags<'_>) -> Option<Ordering> {
+    pub(crate) fn partial_cmp_ref(&self, other: &MdCigFlags<'_>) -> Option<Ordering> {
         // Phase A: use flags only (md/cig not yet needed)
         let all_unmap = (self.is_all_unmapped(), other.is_all_unmapped());
         if all_unmap != (false, false) {
@@ -106,8 +106,8 @@ impl<'r> PartialEq for MdCigFlags<'r> {
 
 #[derive(PartialEq, Debug)]
 pub(crate) struct FragmentState<R> {
-    pub(super) flags: SmallVec<[Flags; 8]>,
-    pub(super) records: SmallVec<[R; 8]>,
+    flags: SmallVec<[Flags; 8]>,
+    records: SmallVec<[R; 8]>,
     species_nr: usize,
 }
 
@@ -130,6 +130,12 @@ impl<R: Record> FragmentState<R> {
             .zip(self.records.iter())
             .map(|(flags, rec)| MdCigFlags::try_from_record(flags, rec))
             .collect()
+    }
+    pub(crate) fn get_records(&self) -> &[R] {
+        &self.records
+    }
+    pub(crate) fn drain_records(&mut self) -> impl Iterator<Item = R> + '_ {
+        self.records.drain(..)
     }
     #[must_use]
     pub(crate) fn first_qname(&self) -> &[u8] {

@@ -1,11 +1,11 @@
 use super::core::{AlnBuffer, LineByLine};
 use crate::alignment::{Fragment, stringify_record};
-use crate::fragment_state::FragmentState;
+use crate::alignment::FragmentState;
 use anyhow::{Result, anyhow};
 use noodles::bam::record::Record;
 use smallvec::SmallVec;
 use noodles::sam::alignment::RecordBuf;
-use crate::MdCigFlags;
+use crate::alignment::MdCigFlags;
 use std::cmp::{Ord, Ordering};
 use crate::variant::VariantEval;
 
@@ -44,7 +44,7 @@ pub(crate) struct NeedlemanWunsch<'v> {
 }
 
 impl<'v> NeedlemanWunsch<'v> {
-    pub(crate) fn new(capacity: usize) -> Self {
+    pub(super) fn new(capacity: usize) -> Self {
         Self { prev: Vec::new(), curr: Vec::new(), dvnt_per_rec: SmallVec::with_capacity(capacity) }
     }
 
@@ -58,7 +58,7 @@ impl<'v> NeedlemanWunsch<'v> {
     }
 }
 
-pub(crate) enum Decision {
+pub(super) enum Decision {
     First,
     Last,
     Ambiguous,
@@ -70,16 +70,14 @@ impl LineByLine {
     fn handle_greater_than(&mut self, best: &mut AlnBuffer) -> Result<()> {
         let mut last = best.pop().unwrap();
         let nr = last.get_nr();
-        last.records
-            .drain(..)
+        last.drain_records()
             .try_for_each(|r| self.write_record(nr, &r, Some(false)))
     }
     fn handle_less_than(&mut self, best: &mut AlnBuffer) -> Result<()> {
         let all_before_last = best.len() - 1;
         best.drain(0..all_before_last).try_for_each(|mut b| {
             let nr = b.get_nr();
-            b.records
-                .drain(..)
+            b.drain_records()
                 .try_for_each(|r| self.write_record(nr, &r, Some(false)))
         })
     }
@@ -88,13 +86,13 @@ impl LineByLine {
         state: &FragmentState<Record>,
         aln_idx: usize,
     ) -> Result<f64> {
-        let mut nw = NeedlemanWunsch::new(state.records.len());
+        let mut nw = NeedlemanWunsch::new(state.get_records().len());
         let mut segment = SmallVec::new();
-        let mut md_cig_flags = SmallVec::with_capacity(state.records.len());
+        let mut md_cig_flags = SmallVec::with_capacity(state.get_records().len());
         let aln = self.aln.get(aln_idx).ok_or_else(|| anyhow!("No alignment for index {aln_idx}"))?;
 
         for idx in state.order_mates(&self.aln) {
-            let rec = &state.records[idx];
+            let rec = &state.get_records()[idx];
 let flags = state.flags(idx).ok_or_else(|| anyhow!("No flags for record index {idx} in alignment {aln_idx}"))?;
             if flags.is_unmapped() {
                 nw.dvnt_per_rec.push(SmallVec::new());
@@ -124,7 +122,7 @@ let flags = state.flags(idx).ok_or_else(|| anyhow!("No flags for record index {i
                 "Error scoring fragment for alignment {aln_idx}: {}\n{}",
                 e,
                 state
-                    .records
+                    .get_records()
                     .iter()
                     .map(stringify_record)
                     .collect::<Vec<String>>()
@@ -182,7 +180,7 @@ let flags = state.flags(idx).ok_or_else(|| anyhow!("No flags for record index {i
 
         best.drain(..).try_for_each(|mut b| {
             let nr = b.get_nr();
-            b.records.drain(..).try_for_each(|r| {
+            b.drain_records().try_for_each(|r| {
                 if best_state.is_none() && (self.is_unmapped_skipped)(&r)? {
                     self.branch_counters[24 + nr] += 1;
                     return Ok(());

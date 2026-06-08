@@ -1,10 +1,12 @@
 mod errors;
 mod ops;
 mod fragment;
+mod fragment_state;
 
 pub(crate) use errors::AlignmentError;
 pub(crate) use ops::{BaseOp, ScoreOpIter};
 pub(crate) use fragment::Fragment;
+pub(crate) use fragment_state::{FragmentState, MdCigFlags};
 
 use noodles::sam::alignment::Record;
 use noodles::sam::alignment::record::cigar::op::Kind;
