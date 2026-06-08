@@ -5,7 +5,7 @@ use crate::aln_stream::AlignmentStream;
 use noodles::sam::alignment::record::Cigar;
 use noodles::sam::alignment::record::data::field::{Tag, Value};
 use noodles::sam::alignment::record::Flags;
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, ensure};
 
 pub(crate) struct MdCigFlags<'r> {
     flags: &'r Flags,
@@ -15,11 +15,11 @@ pub(crate) struct MdCigFlags<'r> {
 
 impl<'r> MdCigFlags<'r> {
     /// Build an `MdCigRef` from a stored `MdCigFlags` and its matching record.
-    /// Returns `None` when the read is unmapped or secondary (no MD/CIG needed).
     pub(crate) fn try_from_record<R: Record>(
         flags: &'r Flags,
         record: &'r R,
     ) -> Result<Self> {
+        ensure!(!flags.is_unmapped(), "BUG: unmapped record should already have been excluded");
         match record.data().get(&Tag::MISMATCHED_POSITIONS).transpose()?
             .ok_or_else(|| anyhow!("missing MD tag"))? {
             Value::String(bstr) => {

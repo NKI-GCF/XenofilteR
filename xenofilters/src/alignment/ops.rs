@@ -2,7 +2,6 @@ use crate::alignment::AlignmentError;
 use noodles::sam::alignment::record::cigar::op::{Op, Kind};
 use crate::alignment::MdCigFlags;
 
-#[derive(Debug, Clone, Copy)]
 pub(crate) enum BaseOp {
     Match,
     Mis,
