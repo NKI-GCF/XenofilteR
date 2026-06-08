@@ -18,6 +18,7 @@ use clap::Parser;
 use filter_algorithm::line_by_line::LineByLine;
 use smallvec::{SmallVec, smallvec};
 use config::Config;
+use noodles::bam::record::Record as BamRecord;
 
 
 fn main() -> Result<()> {
@@ -25,7 +26,7 @@ fn main() -> Result<()> {
     config.validate_and_init()?;
 
     // first alignment to quick check readnames are in same name order
-    let mut aln: SmallVec<[Box<dyn AlignmentStream>; 2]> = smallvec![];
+    let mut aln: SmallVec<[Box<dyn AlignmentStream<BamRecord>>; 2]> = smallvec![];
     for i in 0..config.alignment.len() {
         aln.push(Box::new(AlnStream::new(&mut config, i)?));
         ensure!(

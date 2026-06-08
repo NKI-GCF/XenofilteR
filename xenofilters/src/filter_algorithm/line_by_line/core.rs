@@ -23,7 +23,7 @@ fn is_secondary(rec: &dyn Record) -> Result<bool> {
 }
 
 pub(crate) struct LineByLine {
-    pub(super) aln: SmallVec<[Box<dyn AlignmentStream>; 2]>,
+    pub(super) aln: SmallVec<[Box<dyn AlignmentStream<BamRecord>>; 2]>,
     pub(super) branch_counters: [u64; 32],
     pub(super) is_secondary_skipped: RecordEvalFn,
     pub(super) is_unmapped_skipped: RecordEvalFn,
@@ -36,7 +36,7 @@ pub(crate) struct LineByLine {
 impl LineByLine {
     pub(crate) fn new(
         config: Config,
-        mut aln: SmallVec<[Box<dyn AlignmentStream>; 2]>,
+        mut aln: SmallVec<[Box<dyn AlignmentStream<BamRecord>>; 2]>,
     ) -> Result<Self> {
 
         let is_unmapped_skipped = match config.discard_unmapped {

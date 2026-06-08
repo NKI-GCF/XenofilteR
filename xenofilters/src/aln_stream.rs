@@ -11,10 +11,10 @@ use std::fs::File;
 use noodles::sam::header::Header;
 use noodles::sam::alignment::{Record as AlnRecord, io::Write};
 
-pub(crate) trait AlignmentStream {
+pub(crate) trait AlignmentStream<R: AlnRecord> {
     fn next_qname(&self) -> &[u8];
-    fn un_next(&mut self, rec: Record) -> Result<()>;
-    fn next_rec(&mut self) -> Result<Option<Record>>;
+    fn un_next(&mut self, rec: R) -> Result<()>;
+    fn next_rec(&mut self) -> Result<Option<R>>;
     fn write_record(&mut self, rec: &dyn AlnRecord, is_best: Option<bool>) -> Result<()>;
     fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<()>;
     fn variant_store(&self) -> Option<&dyn StoreTrait>;
@@ -136,7 +136,7 @@ impl AlnStream {
     }
 }
 
-impl AlignmentStream for AlnStream {
+impl AlignmentStream<Record> for AlnStream {
     fn next_qname(&self) -> &[u8] {
         self.next.as_ref().and_then(|r| r.name()).map_or(b"", |n| n.as_ref())
     }
