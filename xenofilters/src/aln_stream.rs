@@ -2,7 +2,7 @@ use crate::bam::{out_from_file, path_unicode_ok};
 use crate::variant::{
     VariantStoreTrait, VariantStore, PopulationVariant, SampleVariant, parse_population_record, parse_sample_record
 };
-use crate::{Config, StripReadSuffix};
+use crate::config::{Config, StripReadSuffix};
 use anyhow::{Result, anyhow, ensure};
 use noodles::bam::{io::{Reader as BamReader, Writer as BamWriter}, record::Record};
 use std::io::Read as ioRead;

@@ -1,6 +1,6 @@
 use crate::aln_stream::AlignmentStream;
 use crate::fragment_state::FragmentState;
-use crate::{Config, Penalty, StripReadSuffix};
+use crate::{config::{Config, StripReadSuffix}, penalty::Penalty};
 use anyhow::{Result, ensure};
 use noodles::sam::alignment::Record;
 use smallvec::{SmallVec, smallvec};

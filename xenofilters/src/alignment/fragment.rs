@@ -1,4 +1,4 @@
-use crate::{MAX_Q, Penalty};
+use crate::penalty::{MAX_Q, Penalty};
 use anyhow::{Result, anyhow};
 use noodles::bam::record::Record;
 use smallvec::SmallVec;
