@@ -110,9 +110,7 @@ let flags = state.flags(idx).ok_or_else(|| anyhow!("No flags for record index {i
             }
             if !flags.is_secondary() {
                 segment.push(rec);
-                if let Some(mcf) = MdCigFlags::try_from_record(flags, rec)? {
-                    md_cig_flags.push(mcf);
-                }
+                md_cig_flags.push(MdCigFlags::try_from_record(flags, rec)?);
             } else if flags.is_last_segment() {
                 break;
             }

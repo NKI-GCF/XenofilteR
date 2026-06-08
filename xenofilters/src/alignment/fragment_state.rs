@@ -19,28 +19,19 @@ impl<'r> MdCigFlags<'r> {
     pub(crate) fn try_from_record<R: Record>(
         flags: &'r Flags,
         record: &'r R,
-    ) -> Result<Option<Self>> {
-        if flags.is_unmapped() {
-            Ok(None)
-        } else {
-            match record.data().get(&Tag::MISMATCHED_POSITIONS).transpose()?
-                .ok_or_else(|| anyhow!("missing MD tag"))? {
-                Value::String(bstr) => {
-                    // SAFETY: 'r is the lifetime of `record`, and `bstr` is derived from that borrow.
-                    let slice: &[u8] = bstr.as_ref();
-                    let md: &'r [u8] = unsafe { std::slice::from_raw_parts(slice.as_ptr(), slice.len()) };
+    ) -> Result<Self> {
+        match record.data().get(&Tag::MISMATCHED_POSITIONS).transpose()?
+            .ok_or_else(|| anyhow!("missing MD tag"))? {
+            Value::String(bstr) => {
+                // SAFETY: 'r is the lifetime of `record`, and `bstr` is derived from that borrow.
+                let slice: &[u8] = bstr.as_ref();
+                let md: &'r [u8] = unsafe { std::slice::from_raw_parts(slice.as_ptr(), slice.len()) };
 
-                    let cig: Box<dyn Cigar + 'r> = record.cigar();
-                    Ok(Some(MdCigFlags { flags, md, cig }))
-                }
-                _ => Err(anyhow!("unexpected MD tag value type")),
+                let cig: Box<dyn Cigar + 'r> = record.cigar();
+                Ok(MdCigFlags { flags, md, cig })
             }
+            _ => Err(anyhow!("unexpected MD tag value type")),
         }
-    }
-
-    fn is_all_unmapped(&self) -> bool {
-        let f = &self.flags;
-        f.is_unmapped() && (!f.is_segmented() || f.is_mate_unmapped())
     }
 
     fn is_perfect(&self) -> bool {
@@ -59,37 +50,11 @@ impl<'r> MdCigFlags<'r> {
     pub(super) fn get_cigar(&self) -> &(dyn Cigar + 'r) {
         &self.cig
     }
-    /// Two-phase ordering: unmapped first, then perfect-match.
-    /// Returns `None` when neither condition disambiguates.
-    pub(crate) fn partial_cmp_ref(&self, other: &MdCigFlags<'_>) -> Option<Ordering> {
-        // Phase A: use flags only (md/cig not yet needed)
-        let all_unmap = (self.is_all_unmapped(), other.is_all_unmapped());
-        if all_unmap != (false, false) {
-            return Some(match all_unmap {
-                (true,  true)  => Ordering::Equal,
-                (true,  false) => Ordering::Less,
-                (false, true)  => Ordering::Greater,
-                _              => unreachable!(),
-            });
-        }
-        // Phase B: perfect-match requires md + cig
-        match (self.is_perfect(), other.is_perfect()) {
-            (true,  true)  => Some(Ordering::Equal),
-            (true,  false) => Some(Ordering::Less),
-            (false, true)  => Some(Ordering::Greater),
-            (false, false) => None,
-        }
-    }
 }
 
 impl<'r> PartialOrd for MdCigFlags<'r> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        let test = if self.md.is_empty() || other.md.is_empty() {
-            (self.is_all_unmapped(), other.is_all_unmapped())
-        } else {
-            (self.is_perfect(), other.is_perfect())
-        };
-        match test {
+        match (self.is_perfect(), other.is_perfect()) {
             (true, true) => Some(Ordering::Equal), // both unmapped => tie-break with next pair
             (true, false) => Some(Ordering::Less), // self worse
             (false, true) => Some(Ordering::Greater),    // other worse
@@ -124,7 +89,7 @@ impl<R: Record> FragmentState<R> {
         self.records.push(r);
         Ok(())
     }
-    pub(crate) fn md_cig_refs(&self) -> Result<SmallVec<[Option<MdCigFlags<'_>>; 8]>> {
+    pub(crate) fn md_cig_refs(&self) -> Result<SmallVec<[MdCigFlags<'_>; 8]>> {
         self.flags
             .iter()
             .zip(self.records.iter())

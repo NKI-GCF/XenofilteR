@@ -119,10 +119,10 @@ impl LineByLine {
                     let refs_last  = best[last_idx].md_cig_refs()?;
 
                     // Compare first read of each fragment (index 0).
-                    if let (Some(Some(a)), Some(Some(b))) =
+                    if let (Some(a), Some(b)) =
                         (refs_first.first(), refs_last.first())
                     {
-                        ord = a.partial_cmp_ref(b);
+                        ord = a.partial_cmp(b);
                         #[cfg(test)]
                         debug_print_best(&best, &best[last_idx], ord);
                     }
