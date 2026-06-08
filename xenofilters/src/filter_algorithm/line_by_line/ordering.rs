@@ -128,11 +128,13 @@ impl LineByLine {
             None => {
                 // None of the alignments were fully unmapped or perfect matches,
                 // so we need to score them to find the best.
-                let first = &best.first().unwrap();
-                let first_score = self.score_candidate(first, first.get_nr())?;
-
-                let last = &best.last().unwrap();
-                let last_score = self.score_candidate(last, last.get_nr())?;
+                assert!(best.len() >= 2, "score path requires at least two candidates");
+                let (first_score, last_score) = {
+                    let first = best.first().unwrap();
+                    let last  = best.last().unwrap();
+                    (self.score_candidate(first, first.get_nr())?,
+                     self.score_candidate(last,  last.get_nr())?)
+                };
 
                 let mut delta = first_score - last_score;
                 match delta {
