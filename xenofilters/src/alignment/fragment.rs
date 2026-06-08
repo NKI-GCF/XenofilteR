@@ -299,10 +299,10 @@ impl<'r> Fragment<'r> {
     }
     fn q(&self, seg_i: usize, nt_i: usize) -> Result<usize> {
         let qual = self.seg[seg_i].quality_scores();
-        match qual.iter().nth(nt_i) {
-            Some(q) => Ok((q as usize).min(MAX_Q - 1)),
-            None => Err(anyhow!("Quality score index {} out of bounds for segment {}", nt_i, seg_i)),
-        }
+        qual.as_ref()  // &[u8]
+            .get(nt_i)
+            .map(|&q| (q as usize).min(MAX_Q - 1))
+            .ok_or_else(|| anyhow!("Quality score index {nt_i} out of bounds for segment {seg_i}"))
     }
 }
 
