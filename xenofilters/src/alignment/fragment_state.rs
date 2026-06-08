@@ -89,12 +89,18 @@ impl<R: Record> FragmentState<R> {
         self.records.push(r);
         Ok(())
     }
-    pub(crate) fn md_cig_refs(&self) -> Result<SmallVec<[MdCigFlags<'_>; 8]>> {
-        self.flags
-            .iter()
-            .zip(self.records.iter())
-            .map(|(flags, rec)| MdCigFlags::try_from_record(flags, rec))
-            .collect()
+    pub(crate) fn is_all_perfect(&self) -> Result<bool> {
+        for (flags, record) in self.flags.iter().zip(self.records.iter()) {
+            // Secondary alignment = split hit = penalty → not perfect
+            if flags.is_secondary() {
+                return Ok(false);
+            }
+            let mcf = MdCigFlags::try_from_record(flags, record)?;
+            if !mcf.is_perfect() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
     pub(crate) fn get_records(&self) -> &[R] {
         &self.records

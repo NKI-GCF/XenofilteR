@@ -1,62 +1,10 @@
 use super::core::{AlnBuffer, LineByLine};
-use crate::alignment::{Fragment, stringify_record};
 use crate::alignment::FragmentState;
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, ensure};
 use noodles::bam::record::Record;
-use smallvec::SmallVec;
 use noodles::sam::alignment::RecordBuf;
-use crate::alignment::MdCigFlags;
 use std::cmp::{Ord, Ordering};
-use crate::variant::Eval;
-
-
-#[derive(Clone, Copy, PartialOrd, PartialEq)]
-pub(crate) struct Cell {
-    pub(crate) m: f64, // Match/Mismatch
-    pub(crate) i: f64, // Insertion (gap in Alt)
-    pub(crate) d: f64, // Deletion (gap in Read)
-}
-
-impl Cell {
-    pub(crate) fn reinit(&mut self, gap_open: f64, gap_extend: f64, i: i32) {
-        self.m = f64::NEG_INFINITY;
-        self.i = f64::NEG_INFINITY;
-        self.d = f64::NEG_INFINITY;
-        match i {
-            0 => self.m = 0.0,
-            i if i < 0 => self.i = gap_open + (i.abs() as f64) * gap_extend,
-            i => self.d = gap_open + (i as f64) * gap_extend,
-        }
-    }
-}
-
-impl Default for Cell {
-    fn default() -> Self {
-        Self { m: -f64::INFINITY, i: -f64::INFINITY, d: -f64::INFINITY }
-    }
-}
-
-#[derive(Clone)]
-pub(crate) struct NeedlemanWunsch<'v> {
-    pub(crate) prev: Vec<Cell>,
-    pub(crate) curr: Vec<Cell>,
-    pub(crate) dvnt_per_rec: SmallVec<[SmallVec<[Eval<'v>; 0]>; 8]>,
-}
-
-impl<'v> NeedlemanWunsch<'v> {
-    pub(super) fn new(capacity: usize) -> Self {
-        Self { prev: Vec::new(), curr: Vec::new(), dvnt_per_rec: SmallVec::with_capacity(capacity) }
-    }
-
-    pub(crate) fn resize(&mut self, new_len: usize) {
-        self.prev.resize(new_len, Cell::default());
-        self.curr.resize(new_len, Cell::default());
-    }
-
-    pub(crate) fn swap(&mut self) {
-        std::mem::swap(&mut self.prev, &mut self.curr);
-    }
-}
+use smallvec::smallvec;
 
 pub(super) enum Decision {
     First,
@@ -67,6 +15,89 @@ pub(super) enum Decision {
 }
 
 impl LineByLine {
+    pub(crate) fn process(&mut self) -> Result<()> {
+        let mut best: AlnBuffer = smallvec![];
+
+        let mut i = 0;
+        while i != self.aln.len() {
+            while let Some(rec) = self.aln[i].next_rec()? {
+                if self.handle_record_is_fragment_finished(i, rec, &mut best)? {
+                    break;
+                }
+            }
+            let mut decision = None;
+            if best.len() > 1 {
+                let last_idx = best.len() - 1;
+                let mut ord = best[0].partial_cmp(&best[last_idx]);
+                #[cfg(test)]
+                debug_print_best(&best, &best[last_idx], ord);
+
+                if ord.is_none() {
+                    let perfect_first = best[0].is_all_perfect()?;
+                    let perfect_last  = best[last_idx].is_all_perfect()?;
+
+                    ord = match (perfect_first, perfect_last) {
+                        (true,  true)  => Some(Ordering::Equal),
+                        (false, true)  => Some(Ordering::Less),   // first is worse
+                        (true,  false) => Some(Ordering::Greater), // last is worse
+                        (false, false) => None,                    // fall through to per-base
+                    };
+                    #[cfg(test)]
+                    debug_print_best(&best, &best[last_idx], ord);
+                }
+
+                decision = self.handle_ordering(&mut best, ord)?;
+                assert!(!best.is_empty());
+            }
+            i += 1;
+            if i == self.aln.len() {
+                if best.is_empty() {
+                    break;
+                }
+                self.handle_best(&mut best, decision)?;
+                i = 0;
+            }
+        }
+        while i > 0 {
+            i -= 1;
+            self.print_counters(i);
+            ensure!(
+                self.aln[i].next_rec()?.is_none(),
+                "alignment {i} still has reads"
+            );
+        }
+        Ok(())
+    }
+    fn handle_record_is_fragment_finished(
+        &mut self,
+        i: usize,
+        rec: Record,
+        best: &mut AlnBuffer,
+    ) -> Result<bool> {
+        if !(self.is_secondary_skipped)(&rec)? {
+            let name = rec.name().ok_or_else(|| anyhow!("Record has no read name"))?;
+            if let Some(new_readname) = (self.is_new_qname)(best, name.as_ref()) {
+                if new_readname {
+                    #[cfg(test)]
+                    if self.aln.is_empty() {
+                        return Ok(true);
+                    }
+                    // end of round for this alignment
+                    self.aln[i].un_next(rec)?;
+                    return Ok(true);
+                }
+                for state in best.iter_mut().rev() {
+                    if state.get_nr() == i {
+                        state.add_record(rec)?;
+                        return Ok(false);
+                    }
+                }
+            }
+            best.push(FragmentState::from_record(rec, i)?);
+        } // else skip secondary
+
+        Ok(false)
+    }
     fn handle_greater_than(&mut self, best: &mut AlnBuffer) -> Result<()> {
         let mut last = best.pop().unwrap();
         let nr = last.get_nr();
@@ -81,55 +112,7 @@ impl LineByLine {
                 .try_for_each(|r| self.write_record(nr, &r, Some(false)))
         })
     }
-    fn score_candidate(
-        &self,
-        state: &FragmentState<Record>,
-        aln_idx: usize,
-    ) -> Result<f64> {
-        let mut nw = NeedlemanWunsch::new(state.get_records().len());
-        let mut segment = SmallVec::new();
-        let mut md_cig_flags = SmallVec::with_capacity(state.get_records().len());
-        let aln = self.aln.get(aln_idx).ok_or_else(|| anyhow!("No alignment for index {aln_idx}"))?;
-
-        for idx in state.order_mates(&self.aln) {
-            let rec = &state.get_records()[idx];
-let flags = state.flags(idx).ok_or_else(|| anyhow!("No flags for record index {idx} in alignment {aln_idx}"))?;
-            if flags.is_unmapped() {
-                nw.dvnt_per_rec.push(SmallVec::new());
-            } else {
-                let tid = rec.reference_sequence_id().transpose()?
-                    .ok_or_else(|| anyhow!("Mapped record has no reference sequence ID"))?;
-                let start = rec.alignment_start().transpose()?
-                    .ok_or_else(|| anyhow!("Mapped record has no alignment start"))?
-                    .get();
-                let end = start + rec.cigar().len();
-                let delta_vars = aln.variant_store()
-                    .map(|s| s.overlapping_multi(tid, start, end))
-                    .unwrap_or_default();
-                nw.dvnt_per_rec.push(delta_vars);
-            }
-            if !flags.is_secondary() {
-                segment.push(rec);
-                md_cig_flags.push(MdCigFlags::try_from_record(flags, rec)?);
-            } else if flags.is_last_segment() {
-                break;
-            }
-        }
-        Fragment::new(&self.penalties, segment, md_cig_flags)?.score(nw).map_err(|e| {
-            anyhow!(
-                "Error scoring fragment for alignment {aln_idx}: {}\n{}",
-                e,
-                state
-                    .get_records()
-                    .iter()
-                    .map(stringify_record)
-                    .collect::<Vec<String>>()
-                    .join("\n")
-            )
-        })
-    }
-
-    pub(super) fn handle_ordering(
+    fn handle_ordering(
         &mut self,
         best: &mut AlnBuffer,
         ord: Option<Ordering>,
@@ -169,7 +152,7 @@ let flags = state.flags(idx).ok_or_else(|| anyhow!("No flags for record index {i
             }
         }
     }
-    pub(super) fn handle_best(
+    fn handle_best(
         &mut self,
         best: &mut AlnBuffer,
         decision: Option<Decision>,
@@ -198,34 +181,16 @@ let flags = state.flags(idx).ok_or_else(|| anyhow!("No flags for record index {i
             })
         })
     }
-    pub(super) fn handle_record_is_fragment_finished(
-        &mut self,
-        i: usize,
-        rec: Record,
-        best: &mut AlnBuffer,
-    ) -> Result<bool> {
-        if !(self.is_secondary_skipped)(&rec)? {
-            let name = rec.name().ok_or_else(|| anyhow!("Record has no read name"))?;
-            if let Some(new_readname) = (self.is_new_qname)(best, name.as_ref()) {
-                if new_readname {
-                    #[cfg(test)]
-                    if self.aln.is_empty() {
-                        return Ok(true);
-                    }
-                    // end of round for this alignment
-                    self.aln[i].un_next(rec)?;
-                    return Ok(true);
-                }
-                for state in best.iter_mut().rev() {
-                    if state.get_nr() == i {
-                        state.add_record(rec)?;
-                        return Ok(false);
-                    }
-                }
-            }
-            best.push(FragmentState::from_record(rec, i)?);
-        } // else skip secondary
+}
 
-        Ok(false)
-    }
+#[cfg(test)]
+fn debug_print_best(best: &AlnBuffer, last: &AlnBuffer, ord: Option<std::cmp::Ordering>) {
+    assert_eq!(best[0].records[0].name(), last.records[0].name());
+    eprintln!(
+        "{}: {} vs {} => {:?}",
+        std::str::from_utf8(best[0].records[0].name().as_ref().unwrap()).unwrap_or("<?>"),
+        best[0].get_nr(),
+        best.last().unwrap().get_nr(),
+        ord
+    );
 }

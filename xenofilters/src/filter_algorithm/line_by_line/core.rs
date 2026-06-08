@@ -1,9 +1,9 @@
 use crate::aln_stream::AlignmentStream;
 use crate::alignment::FragmentState;
 use crate::{config::{Config, StripReadSuffix}, penalty::Penalty};
-use anyhow::{Result, ensure};
+use anyhow::Result;
 use noodles::sam::alignment::Record;
-use smallvec::{SmallVec, smallvec};
+use smallvec::SmallVec;
 use noodles::bam::record::Record as BamRecord;
 
 pub(crate) type RecordEvalFn = fn(&dyn Record) -> Result<bool>;
@@ -96,72 +96,6 @@ impl LineByLine {
             ambiguous_log_threshold,
         })
     }
-
-    pub(crate) fn process(&mut self) -> Result<()> {
-        let mut best: AlnBuffer = smallvec![];
-
-        let mut i = 0;
-        while i != self.aln.len() {
-            while let Some(rec) = self.aln[i].next_rec()? {
-                if self.handle_record_is_fragment_finished(i, rec, &mut best)? {
-                    break;
-                }
-            }
-            let mut decision = None;
-            if best.len() > 1 {
-                let last_idx = best.len() - 1;
-                let mut ord = best[0].partial_cmp(&best[last_idx]);
-                #[cfg(test)]
-                debug_print_best(&best, &best[last_idx], ord);
-
-                if ord.is_none() {
-                    let refs_first = best[0].md_cig_refs()?;
-                    let refs_last  = best[last_idx].md_cig_refs()?;
-
-                    // Compare first read of each fragment (index 0).
-                    if let (Some(a), Some(b)) =
-                        (refs_first.first(), refs_last.first())
-                    {
-                        ord = a.partial_cmp(b);
-                        #[cfg(test)]
-                        debug_print_best(&best, &best[last_idx], ord);
-                    }
-                }
-
-                decision = self.handle_ordering(&mut best, ord)?;
-                assert!(!best.is_empty());
-            }
-            i += 1;
-            if i == self.aln.len() {
-                if best.is_empty() {
-                    break;
-                }
-                self.handle_best(&mut best, decision)?;
-                i = 0;
-            }
-        }
-        while i > 0 {
-            i -= 1;
-            self.print_counters(i);
-            ensure!(
-                self.aln[i].next_rec()?.is_none(),
-                "alignment {i} still has reads"
-            );
-        }
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-fn debug_print_best(best: &AlnBuffer, last: &AlnBuffer, ord: Option<std::cmp::Ordering>) {
-    assert_eq!(best[0].records[0].name(), last.records[0].name());
-    eprintln!(
-        "{}: {} vs {} => {:?}",
-        std::str::from_utf8(best[0].records[0].name().as_ref().unwrap()).unwrap_or("<?>"),
-        best[0].get_nr(),
-        best.last().unwrap().get_nr(),
-        ord
-    );
 }
 
 #[cfg(test)]
