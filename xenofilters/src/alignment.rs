@@ -1,5 +1,4 @@
 mod errors;
-mod mdopiterator;
 mod ops;
 mod fragment;
 

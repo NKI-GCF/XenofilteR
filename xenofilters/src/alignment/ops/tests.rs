@@ -163,3 +163,92 @@ fn test_trailing_ins_mismatch() {
         assert!(res.is_ok());
     }
 }
+
+use crate::alignment::MdOp;
+use crate::alignment::MdOpIterator;
+use smallvec::smallvec;
+
+fn process_md_forward(md: &[u8]) -> Vec<MdOp> {
+    let md_iter = MdOpIterator {
+        bytes: Some(md.iter()),
+        peeked: None,
+    };
+    md_iter.map(|r| r.unwrap()).collect()
+}
+
+#[test]
+fn test_forward_mdop_10a5() {
+    let md_ops = process_md_forward(b"10A5");
+    assert_eq!(
+        md_ops,
+        vec![MdOp::Match(10), MdOp::Mismatch(b'A'), MdOp::Match(5),]
+    );
+}
+
+#[test]
+fn test_forward_mdop_tga() {
+    let md_ops = process_md_forward(b"TGA");
+    assert_eq!(
+        md_ops,
+        vec![
+            MdOp::Mismatch(b'T'),
+            MdOp::Mismatch(b'G'),
+            MdOp::Mismatch(b'A'),
+        ]
+    );
+}
+
+#[test]
+fn test_forward_mdop_adt20g() {
+    let md_ops = process_md_forward(b"A^T20G");
+    assert_eq!(
+        md_ops,
+        vec![
+            MdOp::Mismatch(b'A'),
+            MdOp::Deletion(smallvec![b'T']),
+            MdOp::Match(20),
+            MdOp::Mismatch(b'G'),
+        ]
+    );
+}
+
+#[test]
+fn test_forward_mdop_5datc3() {
+    let md_ops = process_md_forward(b"5^ATC3");
+    assert_eq!(
+        md_ops,
+        vec![
+            MdOp::Match(5),
+            MdOp::Deletion(smallvec![b'A', b'T', b'C']),
+            MdOp::Match(3),
+        ]
+    );
+}
+
+#[test]
+fn test_forward_mdop_1dn5() {
+    let md_ops = process_md_forward(b"1^N5");
+    assert_eq!(
+        md_ops,
+        vec![
+            MdOp::Match(1),
+            MdOp::Deletion(smallvec![b'N']),
+            MdOp::Match(5),
+        ]
+    );
+}
+
+#[test]
+fn test_forward_mdop_999g1() {
+    let md_ops = process_md_forward(b"999G1");
+    assert_eq!(
+        md_ops,
+        vec![MdOp::Match(999), MdOp::Mismatch(b'G'), MdOp::Match(1),]
+    );
+}
+
+#[test]
+#[should_panic]
+fn test_forward_mdop_invalid_char() {
+    let _md_ops = process_md_forward(b"10A5X");
+}
