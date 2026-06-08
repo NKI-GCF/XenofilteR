@@ -1,16 +1,16 @@
 use crate::variant::Variant;
 
 #[derive(Clone, Copy)]
-pub(crate) struct VariantEval<'a> {
+pub(crate) struct Eval<'a> {
     vnt: Option<&'a dyn Variant>,
     // FIXME: a variant could have multiple alleles, so these should become smallvecs:
     alt_score: f64,
     incurred: f64,
 }
 
-impl<'a> VariantEval<'a> {
+impl<'a> Eval<'a> {
     pub(crate) fn new() -> Self {
-        VariantEval {
+        Eval {
             incurred: 0.0,
             alt_score: 0.0,
             vnt: None

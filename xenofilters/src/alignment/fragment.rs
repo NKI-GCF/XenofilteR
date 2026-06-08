@@ -2,7 +2,7 @@ use crate::penalty::{MAX_Q, Penalty};
 use anyhow::{Result, anyhow};
 use noodles::bam::record::Record;
 use smallvec::SmallVec;
-use crate::variant::VariantEval;
+use crate::variant::Eval;
 use crate::alignment::{AlignmentError, ScoreOpIter, BaseOp};
 use crate::alignment::MdCigFlags;
 use crate::filter_algorithm::line_by_line::NeedlemanWunsch;
@@ -40,8 +40,8 @@ impl<'r> Fragment<'r> {
         }
         Ok(score + self.maximize_delta(nw.dvnt_per_rec))
     }
-    fn maximize_delta<'v>(&self, delta: SmallVec<[SmallVec<[VariantEval<'v>; 0]>; 8]>) -> f64 {
-        let mut variants: SmallVec<[&VariantEval; 4]> = delta
+    fn maximize_delta<'v>(&self, delta: SmallVec<[SmallVec<[Eval<'v>; 0]>; 8]>) -> f64 {
+        let mut variants: SmallVec<[&Eval; 4]> = delta
             .iter()
             .flatten()
             .filter(|v| v.delta() > 0.0)

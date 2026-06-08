@@ -7,7 +7,7 @@ use smallvec::SmallVec;
 use noodles::sam::alignment::RecordBuf;
 use crate::alignment::MdCigFlags;
 use std::cmp::{Ord, Ordering};
-use crate::variant::VariantEval;
+use crate::variant::Eval;
 
 
 #[derive(Clone, Copy, PartialOrd, PartialEq)]
@@ -40,7 +40,7 @@ impl Default for Cell {
 pub(crate) struct NeedlemanWunsch<'v> {
     pub(crate) prev: Vec<Cell>,
     pub(crate) curr: Vec<Cell>,
-    pub(crate) dvnt_per_rec: SmallVec<[SmallVec<[VariantEval<'v>; 0]>; 8]>,
+    pub(crate) dvnt_per_rec: SmallVec<[SmallVec<[Eval<'v>; 0]>; 8]>,
 }
 
 impl<'v> NeedlemanWunsch<'v> {

@@ -1,12 +1,12 @@
-mod population_variant;
-mod sample_variant;
-mod variant_store;
-mod variant_eval;
+mod population;
+mod sample;
+mod store;
+mod eval;
 
-pub(super) use population_variant::{PopulationVariant, parse_population_record};
-pub(super) use sample_variant::{SampleVariant, parse_sample_record};
-pub(super) use variant_store::{VariantStore, VariantStoreTrait};
-pub(crate) use variant_eval::VariantEval;
+pub(super) use population::{Population, parse_population_record};
+pub(super) use sample::{Sample, parse_sample_record};
+pub(super) use store::{Store, StoreTrait};
+pub(crate) use eval::Eval;
 
 /// Trait for any object that can be scored against an alignment.
 pub(crate) trait Variant: Sync + Send {

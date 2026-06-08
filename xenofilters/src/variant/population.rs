@@ -3,7 +3,7 @@ use anyhow::{Result, anyhow, ensure};
 use noodles::bcf::record::Record;
 use noodles::vcf::{Header, variant::record::info::field::Value};
 
-pub(crate) struct PopulationVariant {
+pub(crate) struct Population {
     pos: usize,
     ref_a: Vec<u8>,
     alt_a: Vec<u8>,
@@ -11,7 +11,7 @@ pub(crate) struct PopulationVariant {
     allele_frequency: f64,
 }
 
-impl Variant for PopulationVariant {
+impl Variant for Population {
     fn pos(&self) -> usize {
         self.pos
     }
@@ -28,7 +28,7 @@ impl Variant for PopulationVariant {
 }
 
 /// Example parser for Population VCF (checks INFO tag "AF")
-pub(crate) fn parse_population_record(record: &mut Record, header: &Header) -> Result<Vec<PopulationVariant>> {
+pub(crate) fn parse_population_record(record: &mut Record, header: &Header) -> Result<Vec<Population>> {
 
     let pos = record.variant_start().transpose()?.map(|p| p.get()).unwrap_or(0);
     // FIXME a variant could have multiple ALT alleles, but for simplicity we only consider one here.
@@ -47,5 +47,5 @@ pub(crate) fn parse_population_record(record: &mut Record, header: &Header) -> R
     let alt_a = alleles.to_vec();
     let ref_a = record.reference_bases().as_ref().to_vec();
 
-    Ok(vec![PopulationVariant { pos, ref_a, alt_a, allele_frequency }])
+    Ok(vec![Population { pos, ref_a, alt_a, allele_frequency }])
 }

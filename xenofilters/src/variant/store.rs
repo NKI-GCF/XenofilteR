@@ -1,4 +1,4 @@
-use crate::variant::{Variant, VariantEval};
+use crate::variant::{Variant, Eval};
 use anyhow::{Result, anyhow};
 use noodles::bcf::{record::Record, io::reader::Builder};
 use std::path::Path;
@@ -6,15 +6,15 @@ use smallvec::SmallVec;
 use std::collections::HashMap;
 use noodles::vcf::Header;
 
-pub(crate) trait VariantStoreTrait {
-    fn overlapping_multi<'s>(&'s self, rid: usize, start: usize, end: usize) -> SmallVec<[VariantEval<'s>; 0]>;
+pub(crate) trait StoreTrait {
+    fn overlapping_multi<'s>(&'s self, rid: usize, start: usize, end: usize) -> SmallVec<[Eval<'s>; 0]>;
 }
 
-impl<V: Variant> VariantStoreTrait for VariantStore<V> {
-    fn overlapping_multi<'s>(&'s self, id: usize, start: usize, end: usize) -> SmallVec<[VariantEval<'s>; 0]> {
+impl<V: Variant> StoreTrait for Store<V> {
+    fn overlapping_multi<'s>(&'s self, id: usize, start: usize, end: usize) -> SmallVec<[Eval<'s>; 0]> {
         let mut hits = SmallVec::new();
         for  v in self.overlapping(id, start, end) {
-            let mut eval = VariantEval::new();
+            let mut eval = Eval::new();
             eval.set_variant(v as &dyn Variant);
             hits.push(eval);
         }
@@ -24,17 +24,17 @@ impl<V: Variant> VariantStoreTrait for VariantStore<V> {
 
 /// `Vec<V>` per chrom, sorted by `pos`.
 #[derive(Debug)]
-pub(crate) struct VariantStore<V: Variant> {
+pub(crate) struct Store<V: Variant> {
     pub(crate) per_chr: HashMap<usize, Vec<V>>,
     /// Maximum reference span of any variant
     pub(crate) max_variant_len: usize,
 }
 
-impl<V: Variant> VariantStore<V> {
+impl<V: Variant> Store<V> {
     pub(crate) fn new(
         f: &Path,
         parser: impl Fn(&mut Record, &Header) -> Result<Vec<V>>,
-    ) -> Result<VariantStore<V>> {
+    ) -> Result<Store<V>> {
         let mut bcf_reader = Builder::default().build_from_path(f)
             .map_err(|e| anyhow!("Failed to open VCF/BCF {}: {}", f.display(), e))?;
 
@@ -74,7 +74,7 @@ impl<V: Variant> VariantStore<V> {
             }
         }
 
-        Ok(VariantStore {
+        Ok(Store {
             per_chr,
             max_variant_len,
         })

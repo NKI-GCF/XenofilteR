@@ -1,6 +1,6 @@
 use crate::bam::{out_from_file, path_unicode_ok};
 use crate::variant::{
-    VariantStoreTrait, VariantStore, PopulationVariant, SampleVariant, parse_population_record, parse_sample_record
+    StoreTrait, Store, Population, Sample, parse_population_record, parse_sample_record
 };
 use crate::config::{Config, StripReadSuffix};
 use anyhow::{Result, anyhow, ensure};
@@ -17,7 +17,7 @@ pub(crate) trait AlignmentStream {
     fn next_rec(&mut self) -> Result<Option<Record>>;
     fn write_record(&mut self, rec: &dyn AlnRecord, is_best: Option<bool>) -> Result<()>;
     fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<()>;
-    fn variant_store(&self) -> Option<&dyn VariantStoreTrait>;
+    fn variant_store(&self) -> Option<&dyn StoreTrait>;
     fn header(&self) -> &Header;
 }
 
@@ -27,8 +27,8 @@ pub(crate) struct AlnStream {
     filt: Option<BamWriter<BgzfWriter<File>>>,
     next: Option<Record>,
     output: Option<BamWriter<BgzfWriter<File>>>,
-    sample_variants: Option<VariantStore<SampleVariant>>,
-    population_variants: Option<VariantStore<PopulationVariant>>,
+    sample_variants: Option<Store<Sample>>,
+    population_variants: Option<Store<Population>>,
     header: Header,
 }
 
@@ -104,12 +104,12 @@ impl AlnStream {
         let sample_variants = opt
             .sample_variants
             .get(i)
-            .map(|p| VariantStore::new(p, parse_sample_record))
+            .map(|p| Store::new(p, parse_sample_record))
             .transpose()?;
         let population_variants = opt
             .population_variants
             .get(i)
-            .map(|p| VariantStore::new(p, parse_population_record))
+            .map(|p| Store::new(p, parse_population_record))
             .transpose()?;
 
         // check output paths are unicode here, so we hopefully only create files once all are ok.
@@ -192,11 +192,11 @@ impl AlignmentStream for AlnStream {
             .transpose()?;
         Ok(())
     }
-    fn variant_store(&self) -> Option<&dyn VariantStoreTrait> {
+    fn variant_store(&self) -> Option<&dyn StoreTrait> {
         self.sample_variants
             .as_ref()
-            .map(|s| s as &dyn VariantStoreTrait)
-            .or_else(|| self.population_variants.as_ref().map(|p| p as &dyn VariantStoreTrait))
+            .map(|s| s as &dyn StoreTrait)
+            .or_else(|| self.population_variants.as_ref().map(|p| p as &dyn StoreTrait))
     }
     fn header(&self) -> &Header {
         &self.header
