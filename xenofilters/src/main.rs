@@ -6,7 +6,7 @@ extern crate smallvec;
 
 mod alignment;
 mod aln_stream;
-mod bam_format;
+mod bam;
 mod filter_algorithm;
 mod fragment_state;
 mod variant;
@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 use aln_stream::{AlignmentStream, AlnStream};
 use anyhow::{Result, ensure};
-use bam_format::BamFormat;
+use bam::BamFormat;
 use clap::{Parser, ValueEnum};
 use filter_algorithm::line_by_line::LineByLine;
 use smallvec::{SmallVec, smallvec};

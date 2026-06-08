@@ -1,4 +1,4 @@
-use crate::bam_format::{out_from_file, path_unicode_ok};
+use crate::bam::{out_from_file, path_unicode_ok};
 use crate::variant::{
     VariantStoreTrait, VariantStore, PopulationVariant, SampleVariant, parse_population_record, parse_sample_record
 };

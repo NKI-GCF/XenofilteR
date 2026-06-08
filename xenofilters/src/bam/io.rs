@@ -1,18 +1,8 @@
 use anyhow::{Result, anyhow};
-use clap::ValueEnum;
 use noodles::bam::io::Writer as BamWriter;
 use noodles::sam::{Header, header::record::value::{Map, map::program::tag}};
 use noodles::bgzf::io::{Writer as BgzfWriter, writer::{CompressionLevel, Builder as BgzfBuilder}};
 use std::{fs::File, path::Path};
-
-
-#[derive(Copy, Clone, Debug, ValueEnum, Default, PartialEq)]
-pub(crate) enum BamFormat {
-    #[default]
-    Bam,
-    Sam,
-    Cram,
-}
 
 pub(crate) fn path_unicode_ok<'a, P: 'a + AsRef<Path>>(path: P) -> Result<()> {
     path.as_ref().to_str()
@@ -20,7 +10,7 @@ pub(crate) fn path_unicode_ok<'a, P: 'a + AsRef<Path>>(path: P) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn add_pg_line(header: &mut Header) -> Result<()>{
+fn add_pg_line(header: &mut Header) -> Result<()>{
     let id = "xenofilter";
 
     let program = Map::builder()
