@@ -21,18 +21,18 @@ pub(crate) trait AlignmentStream<R: AlnRecord> {
     fn header(&self) -> &Header;
 }
 
-pub(crate) struct AlnStream {
+pub(crate) struct AlnStream<R> {
     ambiguous: Option<BamWriter<BgzfWriter<File>>>,
     pub(crate) bam: Option<BamReader<BgzfReader<File>>>,
     filt: Option<BamWriter<BgzfWriter<File>>>,
-    next: Option<Record>,
+    next: Option<R>,
     output: Option<BamWriter<BgzfWriter<File>>>,
     sample_variants: Option<Store<Sample>>,
     population_variants: Option<Store<Population>>,
     header: Header,
 }
 
-impl AlnStream {
+impl AlnStream<Record> {
     pub(crate) fn new(opt: &mut Config, i: usize) -> Result<Self> {
         let bam_str = opt.alignment[i].as_str();
         let file = File::open(bam_str)?;
@@ -136,12 +136,12 @@ impl AlnStream {
     }
 }
 
-impl AlignmentStream<Record> for AlnStream {
+impl<R: AlnRecord + From<noodles::bam::Record>> AlignmentStream<R> for AlnStream<R> {
     fn next_qname(&self) -> &[u8] {
         self.next.as_ref().and_then(|r| r.name()).map_or(b"", |n| n.as_ref())
     }
 
-    fn un_next(&mut self, rec: Record) -> Result<()> {
+    fn un_next(&mut self, rec: R) -> Result<()> {
         if self.next.is_some() {
             return Err(anyhow!("Cannot un-next more than one record"));
         }
@@ -149,14 +149,14 @@ impl AlignmentStream<Record> for AlnStream {
         Ok(())
     }
 
-    fn next_rec(&mut self) -> Result<Option<Record>> {
-        self.next
+    fn next_rec(&mut self) -> Result<Option<R>> {
+        Ok(self.next
             .take()
             .map(Ok)
             .or_else(|| {
-                self.bam.as_mut().and_then(|b| b.records().next()).map(|o| o.map_err(|e| anyhow!(e)))
+                self.bam.as_mut().and_then(|b| b.records().next().map(|r| r.map(R::from)))
             })
-            .transpose()
+            .transpose()?)
     }
 
     fn write_record(&mut self, rec: &dyn AlnRecord, is_best: Option<bool>) -> Result<()> {

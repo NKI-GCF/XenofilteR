@@ -7,20 +7,22 @@ use crate::alignment::{AlignmentError, ScoreOpIter, BaseOp};
 use crate::alignment::MdCigFlags;
 use crate::filter_algorithm::line_by_line::NeedlemanWunsch;
 
+const READ_CT: usize = 8;
+
 pub(crate) struct Fragment<'r, R> {
     pen: &'r Penalty,
-    seg: SmallVec<[&'r R; 8]>,
-    md_cig_flags: SmallVec<[MdCigFlags<'r>; 2]>,
-    seg_start: SmallVec<[usize; 2]>,
+    seg: SmallVec<[&'r R; READ_CT]>,
+    md_cig_flags: SmallVec<[MdCigFlags<'r>; READ_CT]>,
+    seg_start: SmallVec<[usize; READ_CT]>,
     seg_i: usize,
     refpos: usize,
     nt_i: usize,
-    dp: SmallVec<[f64; 8]>,
+    dp: SmallVec<[f64; READ_CT]>,
 }
 
 impl<'r, R: Record + QualityAt> Fragment<'r, R> {
-    pub(crate) fn new(pen: &'r Penalty, seg: SmallVec<[&'r R; 8]>, md_cig_flags: SmallVec<[MdCigFlags<'r>; 2]>) -> Result<Self, AlignmentError> {
-        let seg_start: SmallVec<[usize; 2]> = seg
+    pub(crate) fn new(pen: &'r Penalty, seg: SmallVec<[&'r R; READ_CT]>, md_cig_flags: SmallVec<[MdCigFlags<'r>; READ_CT]>) -> Result<Self, AlignmentError> {
+        let seg_start: SmallVec<[usize; READ_CT]> = seg
             .iter()
             .map(|r| r.alignment_start().transpose().map(|o| o.map(|p| p.get()).unwrap_or(0)))
             .collect::<Result<_, _>>()?;
@@ -33,7 +35,7 @@ impl<'r, R: Record + QualityAt> Fragment<'r, R> {
             seg_i: 0,
             refpos,
             nt_i: 0,
-            dp: smallvec![0.0; 8],
+            dp: smallvec![0.0; READ_CT],
         })
     }
     pub(crate) fn score<'v>(&mut self, mut nw: NeedlemanWunsch<'v>) -> Result<f64, AlignmentError>
@@ -48,7 +50,7 @@ impl<'r, R: Record + QualityAt> Fragment<'r, R> {
         }
         Ok(score + self.maximize_delta(nw.dvnt_per_rec))
     }
-    fn maximize_delta<'v>(&mut self, delta: SmallVec<[SmallVec<[Eval<'v>; 0]>; 8]>) -> f64 {
+    fn maximize_delta<'v>(&mut self, delta: SmallVec<[SmallVec<[Eval<'v>; 0]>; READ_CT]>) -> f64 {
         let mut variants: SmallVec<[&Eval; 4]> = delta
             .iter()
             .flatten()
