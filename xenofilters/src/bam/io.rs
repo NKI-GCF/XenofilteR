@@ -59,12 +59,20 @@ mod tests {
     fn test_add_pg_line() {
         let mut header = Header::default();
         add_pg_line(&mut header);
-        let pg_lines: Vec<_> = header.to_hashmap().get("PG").cloned().unwrap_or_default();
-        assert_eq!(pg_lines.len(), 1);
-        let pg_line = &pg_lines[0];
-        assert_eq!(pg_line.get("ID").unwrap(), "xenofilter");
-        assert_eq!(pg_line.get("PN").unwrap(), "xenofilter");
-        assert_eq!(pg_line.get("VN").unwrap(), env!("CARGO_PKG_VERSION"));
-        assert!(pg_line.get("CL").is_some());
+        let pg = header.programs();
+        let mut roots = pg.roots();
+        let (id, map): (&[u8], &_) = roots.next().map(|(id, map)| (id.as_ref(), map)).expect("No PG");
+        assert_eq!(id, b"xenofilter");
+
+        let of = map.other_fields();
+        let vn = of.get(&tag::VERSION).expect("VN").to_string();
+        let vn = vn.split('.').collect::<Vec<_>>();
+        let env_vn = env!("CARGO_PKG_VERSION").split('.').collect::<Vec<_>>();
+        assert_eq!(vn[0].parse::<u32>().expect("maj1"), env_vn[0].parse::<u32>().expect("maj2"));
+        assert_eq!(vn[1].parse::<u32>().expect("min1"), env_vn[1].parse::<u32>().expect("min2"));
+
+        let cl_value = of.get(&tag::COMMAND_LINE).expect("CL tag not found");
+        assert_eq!(cl_value.to_string(), std::env::args().collect::<Vec<_>>().join(" "));
+        assert_eq!(roots.next(), None);
     }
 }

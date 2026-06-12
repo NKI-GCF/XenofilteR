@@ -1,8 +1,7 @@
 use super::core::LineByLine;
-use crate::alignment::{Fragment, stringify_record, QualityAt};
+use crate::alignment::{Fragment, stringify_record, SimpleRec};
 use crate::alignment::FragmentState;
 use anyhow::{Result, anyhow};
-use noodles::sam::alignment::Record;
 use smallvec::SmallVec;
 use crate::alignment::MdCigFlags;
 use crate::variant::Eval;
@@ -55,7 +54,7 @@ impl<'v> NeedlemanWunsch<'v> {
     }
 }
 
-impl<R: Record + PartialEq + QualityAt> LineByLine<R> {
+impl<R: SimpleRec> LineByLine<R> {
     pub(super) fn score_candidate(
         &self,
         state: &FragmentState<R>,
@@ -66,14 +65,13 @@ impl<R: Record + PartialEq + QualityAt> LineByLine<R> {
         let mut md_cig_flags = SmallVec::with_capacity(state.get_records().len());
         let aln = self.aln.get(aln_idx).ok_or_else(|| anyhow!("No alignment for index {aln_idx}"))?;
 
-        for idx in state.order_mates(&self.aln) {
+        for idx in state.order_mates() {
             let rec = &state.get_records()[idx];
 let flags = state.flags(idx).ok_or_else(|| anyhow!("No flags for record index {idx} in alignment {aln_idx}"))?;
             if flags.is_unmapped() {
                 nw.dvnt_per_rec.push(SmallVec::new());
             } else {
-                let header = aln.header();
-                let tid = rec.reference_sequence_id(header).transpose()?
+                let tid = rec.ref_seq_id().transpose()?
                     .ok_or_else(|| anyhow!("Mapped record has no reference sequence ID"))?;
                 let start = rec.alignment_start().transpose()?
                     .ok_or_else(|| anyhow!("Mapped record has no alignment start"))?
@@ -86,7 +84,7 @@ let flags = state.flags(idx).ok_or_else(|| anyhow!("No flags for record index {i
             }
             if !flags.is_secondary() {
                 segment.push(rec);
-                md_cig_flags.push(MdCigFlags::try_from_record(flags, rec)?);
+                md_cig_flags.push(MdCigFlags::try_from_record(rec, flags)?);
             } else if flags.is_last_segment() {
                 break;
             }

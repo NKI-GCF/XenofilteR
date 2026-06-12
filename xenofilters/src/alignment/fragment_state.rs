@@ -1,11 +1,10 @@
-use noodles::sam::alignment::Record;
 use smallvec::{SmallVec, smallvec};
 use std::cmp::Ordering;
-use crate::aln_stream::AlignmentStream;
 use noodles::sam::alignment::record::Cigar;
 use noodles::sam::alignment::record::Flags;
 use anyhow::Result;
 use crate::alignment::MdCigFlags;
+use crate::alignment::SimpleRec;
 
 #[derive(PartialEq, Debug)]
 pub(crate) struct FragmentState<R> {
@@ -14,7 +13,7 @@ pub(crate) struct FragmentState<R> {
     species_nr: usize,
 }
 
-impl<R: Record> FragmentState<R> {
+impl<R: SimpleRec> FragmentState<R> {
     pub(crate) fn from_record(r: R, species_nr: usize) -> Result<Self> {
         Ok(FragmentState {
             flags: smallvec![r.flags()?],
@@ -33,7 +32,7 @@ impl<R: Record> FragmentState<R> {
             if flags.is_secondary() {
                 return Ok(false);
             }
-            let mcf = MdCigFlags::try_from_record(flags, record)?;
+            let mcf = MdCigFlags::try_from_record(record, flags)?;
             if !mcf.is_perfect() {
                 return Ok(false);
             }
@@ -63,7 +62,7 @@ impl<R: Record> FragmentState<R> {
         f.is_unmapped() && (!f.is_segmented() || f.is_mate_unmapped())
     }
 
-    pub(crate) fn order_mates(&self, aln: &SmallVec<[Box<dyn AlignmentStream<R>>; 2]>) -> SmallVec<[usize; 2]> {
+    pub(crate) fn order_mates(&self) -> SmallVec<[usize; 2]> {
         let len = self.records.len();
         let mut indices: SmallVec<[(u8, usize, usize, usize); 2]> = SmallVec::with_capacity(len);
         for i in 0..len {
@@ -72,7 +71,7 @@ impl<R: Record> FragmentState<R> {
                 Some(Ok(pos)) => pos.get(),
                 _ => panic!("Mapped record has no alignment start"),
             };
-            let tid = match r.reference_sequence_id(aln[i].header()) {
+            let tid = match r.ref_seq_id() {
                 Some(Ok(tid)) => tid,
                 _ => panic!("Mapped record has no reference sequence ID"),
             };
@@ -90,7 +89,7 @@ impl<R: Record> FragmentState<R> {
     }
 }
 
-impl<R: Record + PartialEq> PartialOrd for FragmentState<R> {
+impl<R: SimpleRec> PartialOrd for FragmentState<R> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         match (self.is_all_unmapped(), other.is_all_unmapped()) {
             (true,  true)  => Some(Ordering::Equal),

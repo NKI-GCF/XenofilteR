@@ -102,15 +102,18 @@ impl<'a> ScoreOpIter<'a> {
     }
 }
 
-#[cfg(test)]
+/*#[cfg(test)]
 impl<'a> std::fmt::Debug for ScoreOpIter<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut cigar = self.cigar.as_ref().clone();
+        //let cig_str = cigar.iter().map(|c| format!("{}{:?}", c.len(), c.kind())).collect::<String>();
+
         f.debug_struct("ScoreOpIter")
             .field("cig_m_remain", &self.cig_m_remain)
-            .field("cigar", &self.cigar)
+            .field("cigar", &cigar)
             .finish()
     }
-}
+}*/
 
 #[cfg(test)]
 pub(crate) mod tests;

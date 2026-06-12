@@ -43,5 +43,4 @@ pub(crate) mod tests {
     use super::*;
     pub(crate) use alignment::tests::*;
     pub(crate) use aln_stream::tests::*;
-    pub(crate) use bam_format::BamFormat;
 }

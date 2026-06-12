@@ -4,6 +4,10 @@ use crate::{config::{Config, StripReadSuffix}, penalty::Penalty};
 use anyhow::Result;
 use noodles::sam::alignment::Record;
 use smallvec::SmallVec;
+use crate::alignment::SimpleRec;
+
+//#[cfg(test)]
+//use noodles::sam::alignment::record_buf::RecordBuf;
 
 pub(crate) type RecordEvalFn = fn(&dyn Record) -> Result<bool>;
 pub(crate) type AlnBuffer<R> = SmallVec<[FragmentState<R>; 2]>;
@@ -32,7 +36,7 @@ pub(crate) struct LineByLine<R> {
     pub(super) ambiguous_log_threshold: f64,
 }
 
-impl<R: Record + PartialEq> LineByLine<R> {
+impl<R: SimpleRec> LineByLine<R> {
     pub(crate) fn new(
         config: Config,
         mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
@@ -73,10 +77,10 @@ impl<R: Record + PartialEq> LineByLine<R> {
                 })
             },
             StripReadSuffix::Auto => {
-                #[cfg(not(test))]
+                //#[cfg(test)]
+                //debug_new_qname_fn()
+                //#[cfg(not(test))]
                 unreachable!("Auto mode should be handled during AlnStream initialization");
-                #[cfg(test)]
-                debug_new_qname_fn()
             }
         };
         for i in 0..aln.len() {
@@ -97,9 +101,9 @@ impl<R: Record + PartialEq> LineByLine<R> {
     }
 }
 
-#[cfg(test)]
-fn debug_new_qname_fn() -> fn(&AlnBuffer, &[u8]) -> Option<bool> {
-    |best: &AlnBuffer, qname2: &[u8]| {
+/*#[cfg(test)]
+fn debug_new_qname_fn() -> fn(&AlnBuffer<dyn Record>, &[u8]) -> Option<bool> {
+    |best: &AlnBuffer<Record>, qname2: &[u8]| {
         if let Some(first_qname) = best.first().map(|b| b.first_qname()) {
             if first_qname.ends_with(b"/1") || first_qname.ends_with(b"/2") {
                 return best.first().map(|b| b.first_qname()).map(|qname1| {
@@ -111,5 +115,5 @@ fn debug_new_qname_fn() -> fn(&AlnBuffer, &[u8]) -> Option<bool> {
             .map(|b| b.first_qname())
             .map(|qname1| qname1 != qname2)
     }
-}
+}*/
 

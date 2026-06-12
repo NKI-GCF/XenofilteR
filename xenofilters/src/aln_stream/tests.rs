@@ -1,38 +1,40 @@
-use crate::tests::{BamFormat, create_record};
-use crate::{AlignmentStream, AlnStream, Config, StripReadSuffix};
+use crate::bam::BamFormat;
+use crate::tests::create_record;
+use crate::{AlignmentStream, AlnStream};
+use crate::config::{Config, StripReadSuffix};
 use anyhow::Result;
-use noodles::sam::alignment::record_buf::RecordBuf as BamRecord;
-use crate::variant::VariantStoreTrait;
-use noodles::sam::header::Header;
-use noodles::sam::alignment::Record as RecordTrait;
+use noodles::sam::{alignment::{record_buf::RecordBuf, Record as AlnRecord}, header::Header};
+use noodles::bam::Record as BamRecord;
+use crate::variant::StoreTrait;
+use crate::alignment::SimpleRec;
 
 pub(crate) struct MockStream {
-    pub(crate) reads: Vec<BamRecord>,
-    written: Vec<(BamRecord, Option<bool>)>,
-    aln_stream: AlnStream,
+    pub(crate) reads: Vec<RecordBuf>,
+    written: Vec<(RecordBuf, Option<bool>)>,
+    aln_stream: AlnStream<RecordBuf>,
     i: usize,
 }
 
-impl AlignmentStream for MockStream {
+impl AlignmentStream<RecordBuf> for MockStream {
     fn next_qname(&self) -> &[u8] {
         self.aln_stream.next_qname()
     }
 
-    fn un_next(&mut self, rec: BamRecord) -> Result<()> {
+    fn un_next(&mut self, rec: RecordBuf) -> Result<()> {
         self.un_next(rec)
     }
 
-    fn next_rec(&mut self) -> Result<Option<BamRecord>> {
+    fn next_rec(&mut self) -> Result<Option<RecordBuf>> {
         self.next_rec()
     }
 
-    fn write_record(&mut self, rec: &dyn RecordTrait, is_best: Option<bool>) -> Result<()> {
+    fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<()> {
         self.write_record(rec, is_best)
     }
     fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<()> {
         Ok(())
     }
-    fn variant_store(&self) -> Option<&dyn VariantStoreTrait> {
+    fn variant_store(&self) -> Option<&dyn StoreTrait> {
         None
     }
     fn header(&self) -> &Header {
@@ -41,7 +43,7 @@ impl AlignmentStream for MockStream {
 }
 
 impl MockStream {
-    pub(crate) fn new(i: usize, reads: Vec<BamRecord>) -> Self {
+    pub(crate) fn new(i: usize, reads: Vec<RecordBuf>) -> Self {
         let aln_stream = AlnStream {
             ambiguous: None,
             bam: None,
@@ -59,7 +61,7 @@ impl MockStream {
             i
         }
     }
-    fn next_rec(&mut self) -> Result<Option<BamRecord>> {
+    fn next_rec(&mut self) -> Result<Option<RecordBuf>> {
         if let Some(rec) = self.aln_stream.next_rec()? {
             return Ok(Some(rec));
         }
@@ -67,10 +69,10 @@ impl MockStream {
             return Ok(None);
         }
         let rec = self.reads.remove(0);
-        self.aln_stream.un_next(rec)?;
+        self.aln_stream.un_next(rec.into())?;
         self.aln_stream.next_rec()
     }
-    fn un_next(&mut self, rec: BamRecord) -> Result<()> {
+    fn un_next(&mut self, rec: RecordBuf) -> Result<()> {
         let name = rec.name().expect("Invalid Name");
         eprintln!(
             "Un-next({}) read: {}",
@@ -79,7 +81,7 @@ impl MockStream {
         );
         self.aln_stream.un_next(rec)
     }
-    fn write_record(&mut self, rec: &dyn RecordTrait, state: Option<bool>) -> Result<()> {
+    fn write_record(&mut self, rec: RecordBuf, state: Option<bool>) -> Result<()> {
         self.written.push((rec, state));
         Ok(())
     }
@@ -122,17 +124,20 @@ fn test_aln_stream_un_next() -> Result<()> {
 
     let rec1 = mock_stream.next_rec()?.unwrap();
     let name1 = rec1.name().unwrap();
-    assert_eq!(name1.as_ref(), b"read1/1");
+    let name1: &[u8] = name1.as_ref();
+    assert_eq!(name1, b"read1/1");
 
     mock_stream.un_next(rec1)?;
 
     let rec2 = mock_stream.next_rec()?.unwrap();
     let name2 = rec2.name().unwrap();
-    assert_eq!(name2.as_ref(), b"read1/1");
+    let name2_bytes: &[u8] = name2.as_ref();
+    assert_eq!(name2_bytes, b"read1/1");
 
     let rec3 = mock_stream.next_rec()?.unwrap();
     let name3 = rec3.name().unwrap();
-    assert_eq!(name3.as_ref(), b"read2/1");
+    let name3_bytes: &[u8] = name3.as_ref();
+    assert_eq!(name3_bytes, b"read2/1");
 
     Ok(())
 }

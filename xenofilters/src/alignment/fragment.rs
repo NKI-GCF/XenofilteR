@@ -6,6 +6,8 @@ use crate::variant::Eval;
 use crate::alignment::{AlignmentError, ScoreOpIter, BaseOp};
 use crate::alignment::MdCigFlags;
 use crate::filter_algorithm::line_by_line::NeedlemanWunsch;
+use noodles::sam::alignment::RecordBuf;
+use noodles::sam::Header;
 
 const READ_CT: usize = 8;
 
@@ -20,7 +22,7 @@ pub(crate) struct Fragment<'r, R> {
     dp: SmallVec<[f64; READ_CT]>,
 }
 
-impl<'r, R: Record + QualityAt> Fragment<'r, R> {
+impl<'r, R: SimpleRec> Fragment<'r, R> {
     pub(crate) fn new(pen: &'r Penalty, seg: SmallVec<[&'r R; READ_CT]>, md_cig_flags: SmallVec<[MdCigFlags<'r>; READ_CT]>) -> Result<Self, AlignmentError> {
         let seg_start: SmallVec<[usize; READ_CT]> = seg
             .iter()
@@ -303,25 +305,39 @@ impl<'r, R: Record + QualityAt> Fragment<'r, R> {
     }
 }
 
-pub trait QualityAt {
+pub(crate) trait SimpleRec: Record + PartialEq {
     fn quality_at(&self, i: usize) -> Option<u8>;
+    fn ref_seq_id(&self) -> Option<Result<usize, std::io::Error>>;
+    fn as_record_buf(&self, header: &Header) -> Result<RecordBuf, std::io::Error>;
 }
 
-impl QualityAt for noodles::bam::Record {
+impl SimpleRec for noodles::bam::Record {
     fn quality_at(&self, i: usize) -> Option<u8> {
         self.quality_scores().as_ref().get(i).copied()
     }
+    fn ref_seq_id(&self) -> Option<Result<usize, std::io::Error>> {
+        self.reference_sequence_id()
+    }
+    fn as_record_buf(&self, header: &Header) -> Result<RecordBuf, std::io::Error> {
+        RecordBuf::try_from_alignment_record(header, self)
+    }
 }
 
-impl QualityAt for noodles::sam::alignment::RecordBuf {
+impl SimpleRec for noodles::sam::alignment::RecordBuf {
     fn quality_at(&self, i: usize) -> Option<u8> {
         self.quality_scores().as_ref().get(i).copied()
+    }
+    fn ref_seq_id(&self) -> Option<Result<usize, std::io::Error>> {
+        self.reference_sequence_id().map(Ok)
+    }
+    fn as_record_buf(&self, _header: &Header) -> Result<RecordBuf, std::io::Error> {
+        Ok(self.clone())
     }
 }
 
 impl<'r, R> Fragment<'r, R>
 where
-    R: Record + QualityAt,
+    R: Record + SimpleRec,
 {
     fn q(&self, seg_i: usize, nt_i: usize) -> Result<usize> {
         self.seg[seg_i]

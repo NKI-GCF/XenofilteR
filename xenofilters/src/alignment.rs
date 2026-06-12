@@ -6,7 +6,7 @@ mod md_cig_flags;
 
 pub(crate) use errors::AlignmentError;
 pub(crate) use ops::{BaseOp, ScoreOpIter};
-pub(crate) use fragment::{Fragment, QualityAt};
+pub(crate) use fragment::{Fragment, SimpleRec};
 pub(crate) use fragment_state::FragmentState;
 pub(crate) use md_cig_flags::MdCigFlags;
 
@@ -47,5 +47,4 @@ pub(crate) fn stringify_record<R: Record + PartialEq>(rec: &R) -> String {
 pub(crate) mod tests {
     use super::*;
     pub(crate) use ops::tests::*;
-    pub(crate) use prepared::tests::*;
 }

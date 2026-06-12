@@ -9,13 +9,17 @@ use std::io::Read as ioRead;
 use noodles::bgzf::io::{Reader as BgzfReader, Writer as BgzfWriter};
 use std::fs::File;
 use noodles::sam::header::Header;
-use noodles::sam::alignment::{Record as AlnRecord, io::Write};
+use noodles::sam::alignment::io::Write;
+use crate::alignment::SimpleRec;
+use noodles::sam::alignment::record_buf::RecordBuf;
+use std::io::{Error, ErrorKind};
 
-pub(crate) trait AlignmentStream<R: AlnRecord> {
+
+pub(crate) trait AlignmentStream<R: SimpleRec> {
     fn next_qname(&self) -> &[u8];
     fn un_next(&mut self, rec: R) -> Result<()>;
     fn next_rec(&mut self) -> Result<Option<R>>;
-    fn write_record(&mut self, rec: &dyn AlnRecord, is_best: Option<bool>) -> Result<()>;
+    fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<()>;
     fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<()>;
     fn variant_store(&self) -> Option<&dyn StoreTrait>;
     fn header(&self) -> &Header;
@@ -136,7 +140,26 @@ impl AlnStream<Record> {
     }
 }
 
-impl<R: AlnRecord + From<noodles::bam::Record>> AlignmentStream<R> for AlnStream<R> {
+trait FromBamRecord: Sized {
+    fn from_bam_record(header: &Header, rec: Record) -> std::io::Result<Self>;
+}
+
+impl FromBamRecord for Record {
+    fn from_bam_record(_header: &Header, rec: Record) -> std::io::Result<Self> {
+        Record::try_from(rec).map_err(|_| Error::new(ErrorKind::Other, "next_rec"))
+    }
+}
+
+impl FromBamRecord for RecordBuf {
+    fn from_bam_record(header: &Header, rec: Record) -> std::io::Result<Self> {
+        RecordBuf::try_from_alignment_record(header, &rec)
+    }
+}
+
+impl<R> AlignmentStream<R> for AlnStream<R>
+where
+    R: SimpleRec + FromBamRecord,
+{
     fn next_qname(&self) -> &[u8] {
         self.next.as_ref().and_then(|r| r.name()).map_or(b"", |n| n.as_ref())
     }
@@ -150,60 +173,55 @@ impl<R: AlnRecord + From<noodles::bam::Record>> AlignmentStream<R> for AlnStream
     }
 
     fn next_rec(&mut self) -> Result<Option<R>> {
+        let header = &self.header;   // disjoint field borrow before &mut self.bam
         Ok(self.next
             .take()
             .map(Ok)
             .or_else(|| {
-                self.bam.as_mut().and_then(|b| b.records().next().map(|r| r.map(R::from)))
+                self.bam.as_mut().and_then(|b| {
+                    b.records().next().map(|r| {
+                        r.and_then(|r| R::from_bam_record(header, r))
+                    })
+                })
             })
             .transpose()?)
     }
 
-    fn write_record(&mut self, rec: &dyn AlnRecord, is_best: Option<bool>) -> Result<()> {
+    fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<()> {
         let output = match is_best {
             Some(true) => self.output.as_mut(),
             Some(false) => self.filt.as_mut(),
             None => self.ambiguous.as_mut(),
         };
         if let Some(o) = output {
-            o.write_alignment_record(&self.header, rec)?;
+            o.write_alignment_record(&self.header, &rec)?;
         }
         Ok(())
     }
+
     fn init_writers(&mut self, opt: &Config, i: usize) -> Result<()> {
         let add_pg_line = !opt.no_program_line;
-
-        self.output = opt
-            .output
-            .get(i)
+        self.output = opt.output.get(i)
             .map(|f| out_from_file(f, &self.header, add_pg_line))
             .transpose()?;
-
-        self.filt = opt
-            .filtered_output
-            .get(i)
+        self.filt = opt.filtered_output.get(i)
             .map(|f| out_from_file(f, &self.header, add_pg_line))
             .transpose()?;
-
-        self.ambiguous = opt
-            .ambiguous_output
-            .get(i)
+        self.ambiguous = opt.ambiguous_output.get(i)
             .map(|f| out_from_file(f, &self.header, add_pg_line))
             .transpose()?;
         Ok(())
     }
+
     fn variant_store(&self) -> Option<&dyn StoreTrait> {
-        self.sample_variants
-            .as_ref()
-            .map(|s| s as &dyn StoreTrait)
+        self.sample_variants.as_ref().map(|s| s as &dyn StoreTrait)
             .or_else(|| self.population_variants.as_ref().map(|p| p as &dyn StoreTrait))
     }
+
     fn header(&self) -> &Header {
         &self.header
     }
 }
-
-// Minimal Mock to satisfy the AlnStream trait/interface
 
 #[cfg(test)]
 pub(crate) mod tests;

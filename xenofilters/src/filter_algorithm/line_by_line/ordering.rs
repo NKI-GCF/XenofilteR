@@ -1,8 +1,8 @@
 use super::core::{AlnBuffer, LineByLine};
 use crate::alignment::FragmentState;
 use anyhow::{Result, anyhow, ensure};
-use crate::alignment::QualityAt;
-use noodles::sam::alignment::{RecordBuf, Record};
+use crate::alignment::SimpleRec;
+use noodles::sam::alignment::RecordBuf;
 use std::cmp::{Ord, Ordering};
 use smallvec::smallvec;
 
@@ -14,7 +14,7 @@ pub(super) enum Decision {
     VariantRescued(u8),
 }
 
-impl<R: Record + PartialEq + QualityAt> LineByLine<R> {
+impl<R: SimpleRec> LineByLine<R> {
     pub(crate) fn process(&mut self) -> Result<()> {
         let mut best: AlnBuffer<R> = smallvec![];
 
@@ -30,7 +30,7 @@ impl<R: Record + PartialEq + QualityAt> LineByLine<R> {
                 let last_idx = best.len() - 1;
                 let mut ord = best[0].partial_cmp(&best[last_idx]);
                 #[cfg(test)]
-                debug_print_best(&best, &best[last_idx], ord);
+                debug_print_best(&best, &best, ord);
 
                 if ord.is_none() {
                     let perfect_first = best[0].is_all_perfect()?;
@@ -43,9 +43,8 @@ impl<R: Record + PartialEq + QualityAt> LineByLine<R> {
                         (false, false) => None,                    // fall through to per-base
                     };
                     #[cfg(test)]
-                    debug_print_best(&best, &best[last_idx], ord);
+                    debug_print_best(&best, &best, ord);
                 }
-
                 decision = self.handle_ordering(&mut best, ord)?;
                 assert!(!best.is_empty());
             }
@@ -102,14 +101,14 @@ impl<R: Record + PartialEq + QualityAt> LineByLine<R> {
         let mut last = best.pop().unwrap();
         let nr = last.get_nr();
         last.drain_records()
-            .try_for_each(|r| self.write_record(nr, &r, Some(false)))
+            .try_for_each(|r| self.write_record(nr, r.as_record_buf(&self.aln[nr].header())?, Some(false)))
     }
     fn handle_less_than(&mut self, best: &mut AlnBuffer<R>) -> Result<()> {
         let all_before_last = best.len() - 1;
         best.drain(0..all_before_last).try_for_each(|mut b| {
             let nr = b.get_nr();
             b.drain_records()
-                .try_for_each(|r| self.write_record(nr, &r, Some(false)))
+                .try_for_each(|r| self.write_record(nr, r.as_record_buf(&self.aln[nr].header())?, Some(false)))
         })
     }
     fn handle_ordering(
@@ -179,7 +178,7 @@ impl<R: Record + PartialEq + QualityAt> LineByLine<R> {
                     }
                     _ => { /* no tag to add */ }
                 }
-                self.write_record(nr, &record_buf, best_state)
+                self.write_record(nr, record_buf, best_state)
             })
         })
     }
@@ -189,11 +188,16 @@ impl<R: Record + PartialEq + QualityAt> LineByLine<R> {
 mod tests;
 
 #[cfg(test)]
-fn debug_print_best(best: &AlnBuffer, last: &AlnBuffer, ord: Option<std::cmp::Ordering>) {
-    assert_eq!(best[0].records[0].name(), last.records[0].name());
+pub(crate) use tests::*;
+
+#[cfg(test)]
+fn debug_print_best<R: SimpleRec>(best: &AlnBuffer<R>, last: &AlnBuffer<R>, ord: Option<std::cmp::Ordering>) {
+    let best_rec = &best[0].get_records()[0];
+    let last_rec = &last[0].get_records()[0];
+    assert_eq!(best_rec.name(), last_rec.name());
     eprintln!(
         "{}: {} vs {} => {:?}",
-        std::str::from_utf8(best[0].records[0].name().as_ref().unwrap()).unwrap_or("<?>"),
+        std::str::from_utf8(best_rec.name().as_ref().unwrap()).unwrap_or("<?>"),
         best[0].get_nr(),
         best.last().unwrap().get_nr(),
         ord

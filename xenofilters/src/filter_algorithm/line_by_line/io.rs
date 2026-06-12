@@ -3,9 +3,9 @@ use anyhow::Result;
 use noodles::sam::alignment::record::data::field::Tag;
 use noodles::sam::alignment::record_buf::data::field::Value;
 use noodles::sam::alignment::record_buf::RecordBuf;
-use noodles::sam::alignment::Record;
+use crate::alignment::SimpleRec;
 
-impl<R: Record + PartialEq> LineByLine<R> {
+impl<R: SimpleRec> LineByLine<R> {
     pub(super) fn add_aux_tags(
         &mut self,
         rec: &mut RecordBuf,
@@ -21,7 +21,7 @@ impl<R: Record + PartialEq> LineByLine<R> {
     pub(super) fn write_record(
         &mut self,
         i: usize,
-        rec: &dyn Record,
+        rec: RecordBuf,
         best_state: Option<bool>,
     ) -> Result<()> {
         match (i, best_state) {

@@ -11,8 +11,8 @@ pub(crate) struct MdCigFlags<'r> {
 impl<'r> MdCigFlags<'r> {
     /// Build an `MdCigRef` from a stored `MdCigFlags` and its matching record.
     pub(crate) fn try_from_record<R: Record>(
-        flags: &'r Flags,
         record: &'r R,
+        flags: &'r Flags,
     ) -> Result<Self> {
         ensure!(!flags.is_unmapped(), "BUG: unmapped record should already have been excluded");
         match record.data().get(&Tag::MISMATCHED_POSITIONS).transpose()?
