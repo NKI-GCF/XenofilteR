@@ -56,9 +56,9 @@ mod tests {
         assert!(path_unicode_ok("file_with_üñîçødé.bam").is_ok());
     }
     #[test]
-    fn test_add_pg_line() {
+    fn test_add_pg_line() -> Result<()> {
         let mut header = Header::default();
-        add_pg_line(&mut header);
+        add_pg_line(&mut header)?;
         let pg = header.programs();
         let mut roots = pg.roots();
         let (id, map): (&[u8], &_) = roots.next().map(|(id, map)| (id.as_ref(), map)).expect("No PG");
@@ -74,5 +74,6 @@ mod tests {
         let cl_value = of.get(&tag::COMMAND_LINE).expect("CL tag not found");
         assert_eq!(cl_value.to_string(), std::env::args().collect::<Vec<_>>().join(" "));
         assert_eq!(roots.next(), None);
+        Ok(())
     }
 }

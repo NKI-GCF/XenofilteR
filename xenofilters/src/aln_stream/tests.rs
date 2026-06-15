@@ -3,10 +3,8 @@ use crate::tests::create_record;
 use crate::{AlignmentStream, AlnStream};
 use crate::config::{Config, StripReadSuffix};
 use anyhow::Result;
-use noodles::sam::{alignment::{record_buf::RecordBuf, Record as AlnRecord}, header::Header};
-use noodles::bam::Record as BamRecord;
+use noodles::sam::{alignment::record_buf::RecordBuf, header::Header};
 use crate::variant::StoreTrait;
-use crate::alignment::SimpleRec;
 
 pub(crate) struct MockStream {
     pub(crate) reads: Vec<RecordBuf>,

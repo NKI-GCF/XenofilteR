@@ -87,6 +87,17 @@ impl<R: SimpleRec> FragmentState<R> {
         indices.sort();
         indices.iter().map(|t| t.3).collect()
     }
+    pub(crate) fn cmp_perfect(&self, other: &FragmentState<R>) -> Result<Option<Ordering>> {
+        let perfect_self = self.is_all_perfect()?;
+        let perfect_other = other.is_all_perfect()?;
+
+        Ok(match (perfect_self, perfect_other) {
+            (true,  true)  => Some(Ordering::Equal),
+            (false, true)  => Some(Ordering::Less),   // first is worse
+            (true,  false) => Some(Ordering::Greater), // last is worse
+            (false, false) => None,   // fall through to per-base
+        })
+    }
 }
 
 impl<R: SimpleRec> PartialOrd for FragmentState<R> {
@@ -98,6 +109,7 @@ impl<R: SimpleRec> PartialOrd for FragmentState<R> {
             (false, false) => None,
         }
     }
+
 }
 
 #[cfg(test)]

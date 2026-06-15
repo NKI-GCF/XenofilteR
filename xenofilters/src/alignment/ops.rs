@@ -7,6 +7,7 @@ pub(crate) enum BaseOp {
     Mis,
     Del(usize),   // still worth grouping — no per-base work
     Ins(usize),
+    Clip(usize),
     RefSkip(usize),
     Relocate {
         pos: usize,
@@ -40,7 +41,7 @@ impl<'a> Iterator for ScoreOpIter<'a> {
             let op = self.cigar.next().and_then(|c| c.ok())?;
             match op.kind() {
                 Kind::HardClip | Kind::Pad => self.next(),
-                Kind::SoftClip => Some(Ok(BaseOp::Mis)), // 1 soft-clipped base
+                Kind::SoftClip => Some(Ok(BaseOp::Clip(op.len()))),
                 Kind::Insertion => Some(Ok(BaseOp::Ins(op.len()))),
                 Kind::Skip => Some(Ok(BaseOp::RefSkip(op.len()))),
                 Kind::Deletion => Some(self.skip_md_deletion(op.len()).map(|()| BaseOp::Del(op.len()))),
@@ -58,7 +59,7 @@ impl<'a> Iterator for ScoreOpIter<'a> {
 
 impl<'a> ScoreOpIter<'a> {
     fn next_md_base(&mut self) -> Result<BaseOp, AlignmentError> {
-        if self.md_match_remain != 0 {
+        if self.md_match_remain == 0 {
             let md = self.md.get(self.md_at);
             self.md_at += 1;
             match md {
@@ -82,16 +83,16 @@ impl<'a> ScoreOpIter<'a> {
         }
     }
 
-    fn skip_md_deletion(&mut self, mut cig_remain: usize) -> Result<(), AlignmentError> {
+    fn skip_md_deletion(&mut self, cig_remain: usize) -> Result<(), AlignmentError> {
         match self.md.get(self.md_at) {
             Some(b'^') => {
                 self.md_at += 1;
-                cig_remain += self.md_at;
+                let md_start = self.md_at;
                 while let Some(b) = self.md.get(self.md_at) {
                     if !matches!(b, b'A' | b'C' | b'G' | b'T' | b'N') { break; }
                     self.md_at += 1;
                 }
-                if cig_remain < self.md_at {
+                if self.md_at - md_start == cig_remain {
                     Ok(())
                 } else {
                     Err(AlignmentError::MdCigMis(None, None))

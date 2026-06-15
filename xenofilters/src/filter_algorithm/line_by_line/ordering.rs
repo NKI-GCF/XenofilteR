@@ -27,23 +27,12 @@ impl<R: SimpleRec> LineByLine<R> {
             }
             let mut decision = None;
             if best.len() > 1 {
-                let last_idx = best.len() - 1;
-                let mut ord = best[0].partial_cmp(&best[last_idx]);
-                #[cfg(test)]
-                debug_print_best(&best, &best, ord);
+                let last = &best[best.len() - 1];
+
+                let mut ord = best[0].partial_cmp(&last);
 
                 if ord.is_none() {
-                    let perfect_first = best[0].is_all_perfect()?;
-                    let perfect_last  = best[last_idx].is_all_perfect()?;
-
-                    ord = match (perfect_first, perfect_last) {
-                        (true,  true)  => Some(Ordering::Equal),
-                        (false, true)  => Some(Ordering::Less),   // first is worse
-                        (true,  false) => Some(Ordering::Greater), // last is worse
-                        (false, false) => None,                    // fall through to per-base
-                    };
-                    #[cfg(test)]
-                    debug_print_best(&best, &best, ord);
+                    ord = best[0].cmp_perfect(&last)?;
                 }
                 decision = self.handle_ordering(&mut best, ord)?;
                 assert!(!best.is_empty());
@@ -188,10 +177,8 @@ impl<R: SimpleRec> LineByLine<R> {
 mod tests;
 
 #[cfg(test)]
-pub(crate) use tests::*;
-
-#[cfg(test)]
 fn debug_print_best<R: SimpleRec>(best: &AlnBuffer<R>, last: &AlnBuffer<R>, ord: Option<std::cmp::Ordering>) {
+    // FIXME: this does not print or test all reads in the buffer, just the first one.
     let best_rec = &best[0].get_records()[0];
     let last_rec = &last[0].get_records()[0];
     assert_eq!(best_rec.name(), last_rec.name());

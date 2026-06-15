@@ -3,7 +3,6 @@ use crate::tests::create_record;
 use anyhow::Result;
 use std::cmp::Ordering;
 use smallvec::{SmallVec, smallvec};
-use noodles::sam::alignment::record::Flags;
 use noodles::sam::alignment::record_buf::RecordBuf;
 
 // Tests ok
@@ -13,7 +12,7 @@ fn test_fragment_state_multiple_records() -> Result<()> {
     let rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
     let rec2 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
     let mut state = FragmentState::from_record(rec1, 0)?;
-    state.records.push(rec2);
+    state.add_record(rec2)?;
     assert_eq!(state.records.len(), 2);
     assert_eq!(state.first_qname(), b"read1");
     Ok(())
@@ -71,12 +70,10 @@ fn test_fragment_state_partial_ord_multiple_records_no_quick_balance() -> Result
     let rec2 = create_record(b"read1", "100M", &[], &qual, "80T20", false)?;
     let mut state1 = FragmentState::from_record(rec1, 0)?;
     state1
-        .records
-        .push(create_record(b"read1", "100M", &[], &qual, "85G15", false)?);
+        .add_record(create_record(b"read1", "100M", &[], &qual, "85G15", false)?)?;
     let mut state2 = FragmentState::from_record(rec2, 0)?;
     state2
-        .records
-        .push(create_record(b"read1", "100M", &[], &qual, "80T20", false)?);
+        .add_record(create_record(b"read1", "100M", &[], &qual, "80T20", false)?)?;
     assert_eq!(state1.partial_cmp(&state2), None); // No quick balance
     Ok(())
 }
@@ -98,7 +95,7 @@ fn test_fragment_state_order_mates_multiple_records() -> Result<()> {
     let rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
     let rec2 = create_record(b"read1", "100M", &[], &qual, "100", true)?;
     let mut state = FragmentState::from_record(rec1, 0)?;
-    state.records.push(rec2);
+    state.add_record(rec2)?;
     let order = state.order_mates();
     let expected : SmallVec<[usize; 2]> = smallvec![0, 1];
     assert_eq!(order, expected); // Forward read should come before reverse read
@@ -111,13 +108,12 @@ fn test_fragment_state_partial_ord_multiple_records() -> Result<()> {
     let rec2 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
     let mut state1 = FragmentState::from_record(rec1, 0)?;
     state1
-        .records
-        .push(create_record(b"read1", "100M", &[], &qual, "100", false)?);
+        .add_record(create_record(b"read1", "100M", &[], &qual, "100", false)?)?;
     let mut state2 = FragmentState::from_record(rec2, 0)?;
     state2
-        .records
-        .push(create_record(b"read1", "100M", &[], &qual, "90A10", false)?);
-    assert_eq!(state1.partial_cmp(&state2), Some(Ordering::Greater)); // Perfect matches are better
+        .add_record(create_record(b"read1", "100M", &[], &qual, "90A10", false)?)?;
+    assert_eq!(state1.partial_cmp(&state2), None); // Perfect matches are better
+    assert_eq!(state1.cmp_perfect(&state2)?, Some(Ordering::Greater)); // Perfect matches are better
     Ok(())
 }
 #[test]
@@ -127,16 +123,17 @@ fn test_fragment_state_ordering() -> Result<()> {
     let rec2 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
     let state1 = FragmentState::from_record(rec1, 0)?;
     let state2 = FragmentState::from_record(rec2, 1)?;
-    assert_eq!(state1.partial_cmp(&state2), Some(Ordering::Equal));
+    assert_eq!(state1.partial_cmp(&state2), None); 
+
+    assert_eq!(state1.cmp_perfect(&state2)?, Some(Ordering::Equal));
     Ok(())
 }
 #[test]
 fn test_fragment_state_partial_ord_with_unmapped() -> Result<()> {
     let qual = vec![37; 100];
     let seq = vec![b'A'; 100];
-    let mut rec1 = create_record(b"read1", "", &seq, &qual, "", false)?;
+    let rec1 = create_record(b"read1", "", &seq, &qual, "", false)?;
     let rec2 = create_record(b"read2", "100M", &seq, &qual, "", false)?;
-    rec1.flags_mut().toggle(Flags::from_bits(0x4).unwrap()); // Set unmapped flag
     let state1 = FragmentState::from_record(rec1, 0)?;
     let state2 = FragmentState::from_record(rec2, 0)?;
     assert_eq!(state1.partial_cmp(&state2), Some(Ordering::Less));
@@ -146,10 +143,8 @@ fn test_fragment_state_partial_ord_with_unmapped() -> Result<()> {
 fn test_fragment_state_partial_ord_both_unmapped() -> Result<()> {
     let qual = vec![37; 100];
     let seq = vec![b'A'; 100];
-    let mut rec1 = create_record(b"read1", "", &seq, &qual, "", false)?;
-    let mut rec2 = create_record(b"read2", "", &seq, &qual, "", false)?;
-    rec1.flags_mut().toggle(Flags::from_bits(0x4).unwrap()); // Set unmapped flag
-    rec2.flags_mut().toggle(Flags::from_bits(0x4).unwrap()); // Set unmapped flag
+    let rec1 = create_record(b"read1", "", &seq, &qual, "", false)?;
+    let rec2 = create_record(b"read2", "", &seq, &qual, "", false)?;
     let state1: FragmentState<RecordBuf> = FragmentState::from_record(rec1, 0)?;
     let state2: FragmentState<RecordBuf> = FragmentState::from_record(rec2, 0)?;
     assert_eq!(state1.partial_cmp(&state2), Some(Ordering::Equal));
@@ -162,7 +157,8 @@ fn test_fragment_state_partial_ord_perfect_vs_imperfect() -> Result<()> {
     let rec2 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
     let state1 = FragmentState::from_record(rec1, 0)?;
     let state2 = FragmentState::from_record(rec2, 0)?;
-    assert_eq!(state1.partial_cmp(&state2), Some(Ordering::Greater)); // Perfect match is better
+    assert_eq!(state1.partial_cmp(&state2), None);
+    assert_eq!(state1.cmp_perfect(&state2)?, Some(Ordering::Greater)); // Perfect match is better
     Ok(())
 }
 #[test]
@@ -172,6 +168,7 @@ fn test_fragment_state_partial_ord_imperfect_vs_perfect() -> Result<()> {
     let rec2 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
     let state1 = FragmentState::from_record(rec1, 0)?;
     let state2 = FragmentState::from_record(rec2, 0)?;
-    assert_eq!(state1.partial_cmp(&state2), Some(Ordering::Less)); // Perfect match is better
+    assert_eq!(state1.partial_cmp(&state2), None); // Perfect match is better
+    assert_eq!(state1.cmp_perfect(&state2)?, Some(Ordering::Less)); // Perfect match is better
     Ok(())
 }

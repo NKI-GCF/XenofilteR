@@ -9,6 +9,7 @@ use noodles::sam::{
         record_buf::{data::field::Value, Data},
     },
 };
+use noodles::core::Position;
 
 pub(crate) fn create_cigar(cigar: &str) -> Result<Cigar> {
     let mut ops = Vec::new();
@@ -59,7 +60,7 @@ pub(crate) fn create_record(
     is_rev: bool,
 ) -> Result<RecordBuf> {
     let mut record = RecordBuf::default();
-    let is_unmapped = cig_str.is_empty();
+    let is_unmapped = cig_str.is_empty() || cig_str == "*";
 
     *record.name_mut() = Some(qname.into());
     let read_len = if is_unmapped {
@@ -75,9 +76,11 @@ pub(crate) fn create_record(
             .into_iter()
             .collect();
         *record.data_mut() = data;
+        *record.cigar_mut() = create_cigar(cig_str)?;
+        *record.alignment_start_mut() = Some(Position::MIN);
+        *record.reference_sequence_id_mut() = Some(0);
         read_len_from_cigar(cig_str)
     };
-    *record.cigar_mut() = create_cigar(cig_str)?;
     *record.sequence_mut() = if seq.is_empty() {
         Sequence::from(repeat(b'A').take(read_len).collect::<Vec<u8>>())
     } else {

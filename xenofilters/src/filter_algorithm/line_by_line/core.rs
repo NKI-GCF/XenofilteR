@@ -6,9 +6,6 @@ use noodles::sam::alignment::Record;
 use smallvec::SmallVec;
 use crate::alignment::SimpleRec;
 
-//#[cfg(test)]
-//use noodles::sam::alignment::record_buf::RecordBuf;
-
 pub(crate) type RecordEvalFn = fn(&dyn Record) -> Result<bool>;
 pub(crate) type AlnBuffer<R> = SmallVec<[FragmentState<R>; 2]>;
 
@@ -77,10 +74,10 @@ impl<R: SimpleRec> LineByLine<R> {
                 })
             },
             StripReadSuffix::Auto => {
-                //#[cfg(test)]
-                //debug_new_qname_fn()
-                //#[cfg(not(test))]
+                #[cfg(not(test))]
                 unreachable!("Auto mode should be handled during AlnStream initialization");
+                #[cfg(test)]
+                debug_new_qname_fn()
             }
         };
         for i in 0..aln.len() {
@@ -101,9 +98,9 @@ impl<R: SimpleRec> LineByLine<R> {
     }
 }
 
-/*#[cfg(test)]
-fn debug_new_qname_fn() -> fn(&AlnBuffer<dyn Record>, &[u8]) -> Option<bool> {
-    |best: &AlnBuffer<Record>, qname2: &[u8]| {
+#[cfg(test)]
+fn debug_new_qname_fn<R: SimpleRec>() -> fn(&AlnBuffer<R>, &[u8]) -> Option<bool> {
+    |best: &AlnBuffer<R>, qname2: &[u8]| {
         if let Some(first_qname) = best.first().map(|b| b.first_qname()) {
             if first_qname.ends_with(b"/1") || first_qname.ends_with(b"/2") {
                 return best.first().map(|b| b.first_qname()).map(|qname1| {
@@ -115,5 +112,5 @@ fn debug_new_qname_fn() -> fn(&AlnBuffer<dyn Record>, &[u8]) -> Option<bool> {
             .map(|b| b.first_qname())
             .map(|qname1| qname1 != qname2)
     }
-}*/
+}
 

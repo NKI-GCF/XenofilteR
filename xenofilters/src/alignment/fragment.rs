@@ -119,6 +119,13 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
                         self.refpos += 1;
                     }
                 },
+                BaseOp::Clip(len) => {
+                    for _ in 0..len {
+                        ref_score += self.pen.log_likelihood_mismatch[self.q(self.seg_i, self.nt_i)?];
+                        self.nt_i += 1;
+                    }
+                    // refpos does NOT advance — soft clips consume read bases, not reference bases
+                },
                 BaseOp::Mis => {
                     ref_score += self.pen.log_likelihood_mismatch[self.q(self.seg_i, self.nt_i)?];
                     self.nt_i += 1;
@@ -129,11 +136,11 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
                         self.nt_i += 1;
                         self.refpos += 1;
                     }
-                }
+                },
                 BaseOp::Del(len) => {
                     self.refpos += len;
                     ref_score += self.pen.gap_open + (len as f64) * self.pen.gap_extend;
-                }
+                },
                 BaseOp::Ins(len) => {
                     self.nt_i += len;
                     ref_score += self.pen.gap_open + (len as f64) * self.pen.gap_extend;
@@ -141,7 +148,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
                 BaseOp::Relocate { penalty_score, pos } => {
                     self.refpos = pos;
                     ref_score += penalty_score;
-                }
+                },
                 BaseOp::RefSkip(len) => {
                     self.refpos += len;
                 }
