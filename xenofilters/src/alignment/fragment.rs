@@ -124,7 +124,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
                         ref_score += self.pen.log_likelihood_mismatch[self.q(self.seg_i, self.nt_i)?];
                         self.nt_i += 1;
                     }
-                    // refpos does NOT advance — soft clips consume read bases, not reference bases
+                    // refpos does NOT advance - soft clips consume read bases, not reference bases
                 },
                 BaseOp::Mis => {
                     ref_score += self.pen.log_likelihood_mismatch[self.q(self.seg_i, self.nt_i)?];
