@@ -12,7 +12,6 @@ use noodles::sam::header::Header;
 use noodles::sam::alignment::io::Write;
 use crate::alignment::SimpleRec;
 use noodles::sam::alignment::record_buf::RecordBuf;
-use std::io::{Error, ErrorKind};
 
 
 pub(crate) trait AlignmentStream<R: SimpleRec> {
@@ -146,7 +145,7 @@ trait FromBamRecord: Sized {
 
 impl FromBamRecord for Record {
     fn from_bam_record(_header: &Header, rec: Record) -> std::io::Result<Self> {
-        Record::try_from(rec).map_err(|_| Error::new(ErrorKind::Other, "next_rec"))
+        Ok(rec)
     }
 }
 

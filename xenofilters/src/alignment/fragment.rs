@@ -40,17 +40,17 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             dp: smallvec![0.0; READ_CT],
         })
     }
-    pub(crate) fn score<'v>(&mut self, mut nw: NeedlemanWunsch<'v>) -> Result<f64, AlignmentError>
+    pub(crate) fn score<'v>(&mut self, nw: &mut NeedlemanWunsch, mut dvnt_per_rec: SmallVec<[SmallVec<[Eval<'v>; 0]>; 8]>) -> Result<f64, AlignmentError>
     {
-        let mut score = self.score_with_variant(&mut nw, 0)?;
+        let mut score = self.score_with_variant(nw, &mut dvnt_per_rec, 0)?;
 
         for i in 1..self.seg.len() {
             self.seg_i = i;
             self.refpos = self.seg_start[i];
             self.nt_i = 0;
-            score += self.score_with_variant(&mut nw, i)?;
+            score += self.score_with_variant(nw, &mut dvnt_per_rec, i)?;
         }
-        Ok(score + self.maximize_delta(nw.dvnt_per_rec))
+        Ok(score + self.maximize_delta(dvnt_per_rec))
     }
     fn maximize_delta<'v>(&mut self, delta: SmallVec<[SmallVec<[Eval<'v>; 0]>; READ_CT]>) -> f64 {
         let mut variants: SmallVec<[&Eval; 4]> = delta
@@ -86,7 +86,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         *self.dp.last().unwrap_or(&0.0)
     }
 
-    fn score_with_variant(&mut self, nw: &mut NeedlemanWunsch<'_>, i: usize) -> Result<f64> {
+    fn score_with_variant<'v>(&mut self, nw: &mut NeedlemanWunsch, dvnt_per_rec: &mut SmallVec<[SmallVec<[Eval<'v>; 0]>; 8]>, i: usize) -> Result<f64> {
         let mut score = 0.0;
 
         // Score variant bases that reach into segments before the current one.
@@ -98,7 +98,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             let seg_ref_end = seg_ref_start + self.seg[prior_seg_i].cigar().len();
 
             // prior (or following) segment bases contribute to alt scoring only, no incurrence.
-            self.score_variants_in_window(nw, i, prior_seg_i, seg_ref_start, seg_ref_end, 0.0)?;
+            self.score_variants_in_window(nw, dvnt_per_rec, i, prior_seg_i, seg_ref_start, seg_ref_end, 0.0)?;
         }
 
         let mut iter = ScoreOpIter::new(&self.md_cig_flags[self.seg_i]).peekable();
@@ -154,7 +154,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
                 }
             }
 
-            self.score_variants_in_window(nw, i, self.seg_i, ref_start, self.refpos, ref_score)?;
+            self.score_variants_in_window(nw, dvnt_per_rec, i, self.seg_i, ref_start, self.refpos, ref_score)?;
             score += ref_score;
         }
 
@@ -165,14 +165,15 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             let seg_ref_start = self.seg_start[next_seg_i];
             let seg_ref_end = seg_ref_start + self.seg[next_seg_i].sequence().len();
 
-            self.score_variants_in_window(nw, i, next_seg_i, seg_ref_start, seg_ref_end, 0.0)?;
+            self.score_variants_in_window(nw, dvnt_per_rec, i, next_seg_i, seg_ref_start, seg_ref_end, 0.0)?;
         }
 
         Ok(score)
     }
-    fn score_variants_in_window(
+    fn score_variants_in_window<'v>(
         &self,
-        nw: &mut NeedlemanWunsch<'_>,
+        nw: &mut NeedlemanWunsch,
+        dvnt_per_rec: &mut SmallVec<[SmallVec<[Eval<'v>; 0]>; 8]>,
         dvnt_i: usize,
         seg_i: usize,
         start: usize,
@@ -180,19 +181,19 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         ref_score: f64,  // unweighted, for non-variant positions
     ) -> Result<()> {
         let mut i = 0;
-        while i < nw.dvnt_per_rec[dvnt_i].len() && nw.dvnt_per_rec[dvnt_i][i].start() < end {
+        while i < dvnt_per_rec[dvnt_i].len() && dvnt_per_rec[dvnt_i][i].start() < end {
             if let Some((weighted_ref_score, alt_score)) =
-                self.score_variant_in_seg(nw, dvnt_i, i, seg_i, start, end)?
+                self.score_variant_in_seg(nw, dvnt_per_rec, dvnt_i, i, seg_i, start, end)?
             {
                 // Use weighted_ref_score instead of ref_score for variant positions
-                nw.dvnt_per_rec[dvnt_i][i].update(weighted_ref_score, alt_score);
-                let fully_processed = nw.dvnt_per_rec[dvnt_i][i].ref_end() <= end && nw.dvnt_per_rec[dvnt_i][i].alt_end() <= end;
+                dvnt_per_rec[dvnt_i][i].update(weighted_ref_score, alt_score);
+                let fully_processed = dvnt_per_rec[dvnt_i][i].ref_end() <= end && dvnt_per_rec[dvnt_i][i].alt_end() <= end;
                 if fully_processed {
-                    nw.dvnt_per_rec[dvnt_i].remove(i);
+                    dvnt_per_rec[dvnt_i].remove(i);
                     continue;
                 }
             } else {
-                nw.dvnt_per_rec[dvnt_i][i].update(ref_score, 0.0);
+                dvnt_per_rec[dvnt_i][i].update(ref_score, 0.0);
             }
             i += 1;
         }
@@ -210,16 +211,17 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
 
     /// Score a variant's alt allele against read bases from a specific segment.
     /// `ref_start` and `ref_end` define the reference window to score within this segment.
-    fn score_variant_in_seg(
+    fn score_variant_in_seg<'v>(
         &self,
-        nw: &mut NeedlemanWunsch<'_>,
+        nw: &mut NeedlemanWunsch,
+        dvnt_per_rec: &mut SmallVec<[SmallVec<[Eval<'v>; 0]>; 8]>,
         dvnt_i: usize,
         dvnt_j: usize,
         seg_i: usize,
         ref_start: usize,
         ref_end: usize,
     ) -> Result<Option<(f64, f64)>> {  // (weighted_ref_score, alt_score)
-        let vnt_eval = &nw.dvnt_per_rec[dvnt_i][dvnt_j];
+        let vnt_eval = &dvnt_per_rec[dvnt_i][dvnt_j];
         let vnt_start = vnt_eval.start();
 
         // Clamp the ref window to the variant's ref span

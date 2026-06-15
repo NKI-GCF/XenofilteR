@@ -5,6 +5,7 @@ use anyhow::Result;
 use noodles::sam::alignment::Record;
 use smallvec::SmallVec;
 use crate::alignment::SimpleRec;
+use crate::filter_algorithm::line_by_line::NeedlemanWunsch;
 
 pub(crate) type RecordEvalFn = fn(&dyn Record) -> Result<bool>;
 pub(crate) type AlnBuffer<R> = SmallVec<[FragmentState<R>; 2]>;
@@ -31,6 +32,7 @@ pub(crate) struct LineByLine<R> {
     pub(super) add_decision_tag: bool,
     pub(super) penalties: Penalty,
     pub(super) ambiguous_log_threshold: f64,
+    pub(super) nw_scratch: NeedlemanWunsch,
 }
 
 impl<R: SimpleRec> LineByLine<R> {
@@ -94,6 +96,7 @@ impl<R: SimpleRec> LineByLine<R> {
             add_decision_tag: config.add_decision_tag,
             penalties: config.to_penalties(),
             ambiguous_log_threshold,
+            nw_scratch: NeedlemanWunsch::new(),
         })
     }
 }

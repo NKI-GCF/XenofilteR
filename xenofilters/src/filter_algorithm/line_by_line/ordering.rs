@@ -29,10 +29,10 @@ impl<R: SimpleRec> LineByLine<R> {
             if best.len() > 1 {
                 let last = &best[best.len() - 1];
 
-                let mut ord = best[0].partial_cmp(&last);
+                let mut ord = best[0].partial_cmp(last);
 
                 if ord.is_none() {
-                    ord = best[0].cmp_perfect(&last)?;
+                    ord = best[0].cmp_perfect(last)?;
                 }
                 decision = self.handle_ordering(&mut best, ord)?;
                 assert!(!best.is_empty());
@@ -90,14 +90,14 @@ impl<R: SimpleRec> LineByLine<R> {
         let mut last = best.pop().unwrap();
         let nr = last.get_nr();
         last.drain_records()
-            .try_for_each(|r| self.write_record(nr, r.as_record_buf(&self.aln[nr].header())?, Some(false)))
+            .try_for_each(|r| self.write_record(nr, r.as_record_buf(self.aln[nr].header())?, Some(false)))
     }
     fn handle_less_than(&mut self, best: &mut AlnBuffer<R>) -> Result<()> {
         let all_before_last = best.len() - 1;
         best.drain(0..all_before_last).try_for_each(|mut b| {
             let nr = b.get_nr();
             b.drain_records()
-                .try_for_each(|r| self.write_record(nr, r.as_record_buf(&self.aln[nr].header())?, Some(false)))
+                .try_for_each(|r| self.write_record(nr, r.as_record_buf(self.aln[nr].header())?, Some(false)))
         })
     }
     fn handle_ordering(

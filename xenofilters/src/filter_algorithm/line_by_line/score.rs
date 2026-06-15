@@ -4,7 +4,6 @@ use crate::alignment::FragmentState;
 use anyhow::{Result, anyhow};
 use smallvec::SmallVec;
 use crate::alignment::MdCigFlags;
-use crate::variant::Eval;
 
 #[derive(Clone, Copy, PartialOrd, PartialEq)]
 pub(crate) struct Cell {
@@ -33,18 +32,19 @@ impl Default for Cell {
 }
 
 #[derive(Clone)]
-pub(crate) struct NeedlemanWunsch<'v> {
+pub(crate) struct NeedlemanWunsch {
     pub(crate) prev: Vec<Cell>,
     pub(crate) curr: Vec<Cell>,
-    pub(crate) dvnt_per_rec: SmallVec<[SmallVec<[Eval<'v>; 0]>; 8]>,
 }
 
-impl<'v> NeedlemanWunsch<'v> {
-    pub(super) fn new(capacity: usize) -> Self {
-        Self { prev: Vec::new(), curr: Vec::new(), dvnt_per_rec: SmallVec::with_capacity(capacity) }
+impl NeedlemanWunsch {
+    pub(super) fn new() -> Self {
+        Self { prev: Vec::new(), curr: Vec::new() }
     }
 
     pub(crate) fn resize(&mut self, new_len: usize) {
+        self.prev.clear();
+        self.curr.clear();
         self.prev.resize(new_len, Cell::default());
         self.curr.resize(new_len, Cell::default());
     }
@@ -56,20 +56,21 @@ impl<'v> NeedlemanWunsch<'v> {
 
 impl<R: SimpleRec> LineByLine<R> {
     pub(super) fn score_candidate(
-        &self,
+        &mut self,
         state: &FragmentState<R>,
         aln_idx: usize,
     ) -> Result<f64> {
-        let mut nw = NeedlemanWunsch::new(state.get_records().len());
+        self.nw_scratch.resize(state.get_records().len());
         let mut segment: SmallVec<[&R; 8]> = SmallVec::new();
         let mut md_cig_flags = SmallVec::with_capacity(state.get_records().len());
         let aln = self.aln.get(aln_idx).ok_or_else(|| anyhow!("No alignment for index {aln_idx}"))?;
+        let mut dvnt_per_rec = SmallVec::with_capacity(state.get_records().len());
 
         for idx in state.order_mates() {
             let rec = &state.get_records()[idx];
 let flags = state.flags(idx).ok_or_else(|| anyhow!("No flags for record index {idx} in alignment {aln_idx}"))?;
             if flags.is_unmapped() {
-                nw.dvnt_per_rec.push(SmallVec::new());
+                dvnt_per_rec.push(SmallVec::new());
             } else {
                 let tid = rec.ref_seq_id().transpose()?
                     .ok_or_else(|| anyhow!("Mapped record has no reference sequence ID"))?;
@@ -80,7 +81,7 @@ let flags = state.flags(idx).ok_or_else(|| anyhow!("No flags for record index {i
                 let delta_vars = aln.variant_store()
                     .map(|s| s.overlapping_multi(tid, start, end))
                     .unwrap_or_default();
-                nw.dvnt_per_rec.push(delta_vars);
+                dvnt_per_rec.push(delta_vars);
             }
             if !flags.is_secondary() {
                 segment.push(rec);
@@ -89,7 +90,7 @@ let flags = state.flags(idx).ok_or_else(|| anyhow!("No flags for record index {i
                 break;
             }
         }
-        Fragment::new(&self.penalties, segment, md_cig_flags)?.score(nw).map_err(|e| {
+        Fragment::new(&self.penalties, segment, md_cig_flags)?.score(&mut self.nw_scratch, dvnt_per_rec).map_err(|e| {
             anyhow!(
                 "Error scoring fragment for alignment {aln_idx}: {}\n{}",
                 e,
