@@ -5,7 +5,9 @@ use anyhow::Result;
 use noodles::sam::alignment::Record;
 use smallvec::SmallVec;
 use crate::alignment::SimpleRec;
-use crate::filter_algorithm::line_by_line::NeedlemanWunsch;
+
+pub(crate) const READ_CT: usize = 8;
+pub(crate) const VNT_LEN: usize = 16;
 
 pub(crate) type RecordEvalFn = fn(&dyn Record) -> Result<bool>;
 pub(crate) type AlnBuffer<R> = SmallVec<[FragmentState<R>; 2]>;
@@ -23,6 +25,60 @@ fn is_secondary(rec: &dyn Record) -> Result<bool> {
     Ok(rec.flags()?.is_secondary())
 }
 
+#[derive(Clone, Copy, PartialOrd, PartialEq)]
+pub(crate) struct Cell {
+    pub(crate) m: f64, // Match/Mismatch
+    pub(crate) i: f64, // Insertion (gap in Alt)
+    pub(crate) d: f64, // Deletion (gap in Read)
+}
+
+impl Cell {
+    pub(crate) fn reinit(&mut self, gap_open: f64, gap_extend: f64, i: i32) {
+        self.m = f64::NEG_INFINITY;
+        self.i = f64::NEG_INFINITY;
+        self.d = f64::NEG_INFINITY;
+        match i {
+            0 => self.m = 0.0,
+            i if i < 0 => self.i = gap_open + (i.abs() as f64) * gap_extend,
+            i => self.d = gap_open + (i as f64) * gap_extend,
+        }
+    }
+}
+
+impl Default for Cell {
+    fn default() -> Self {
+        Self { m: -f64::INFINITY, i: -f64::INFINITY, d: -f64::INFINITY }
+    }
+}
+
+pub(crate) struct Scratch {
+    pub(crate) prev: SmallVec<[Cell; VNT_LEN]>,
+    pub(crate) curr: SmallVec<[Cell; VNT_LEN]>,
+    pub(crate) dp: SmallVec<[f64; READ_CT]>,
+}
+
+impl Scratch {
+    pub(crate) fn new() -> Self {
+        Self {
+            prev: SmallVec::new(),
+            curr: SmallVec::new(),
+            dp: SmallVec::new(),
+        }
+    }
+    pub(crate) fn resize_nw(&mut self, new_len: usize) {
+        self.prev.clear();
+        self.curr.clear();
+        self.prev.resize(new_len, Cell::default());
+        self.curr.resize(new_len, Cell::default());
+    }
+
+    pub(crate) fn swap_nw(&mut self) {
+        std::mem::swap(&mut self.prev, &mut self.curr);
+    }
+
+}
+    
+
 pub(crate) struct LineByLine<R> {
     pub(super) aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
     pub(super) branch_counters: [u64; 32],
@@ -32,7 +88,7 @@ pub(crate) struct LineByLine<R> {
     pub(super) add_decision_tag: bool,
     pub(super) penalties: Penalty,
     pub(super) ambiguous_log_threshold: f64,
-    pub(super) nw_scratch: NeedlemanWunsch,
+    pub(super) scratch: Scratch,
 }
 
 impl<R: SimpleRec> LineByLine<R> {
@@ -96,7 +152,7 @@ impl<R: SimpleRec> LineByLine<R> {
             add_decision_tag: config.add_decision_tag,
             penalties: config.to_penalties(),
             ambiguous_log_threshold,
-            nw_scratch: NeedlemanWunsch::new(),
+            scratch: Scratch::new(),
         })
     }
 }

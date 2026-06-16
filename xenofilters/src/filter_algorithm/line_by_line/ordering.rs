@@ -120,8 +120,9 @@ impl<R: SimpleRec> LineByLine<R> {
                 let (first_score, last_score) = {
                     let first = best.first().unwrap();
                     let last  = best.last().unwrap();
-                    (self.score_candidate(first, first.get_nr())?,
-                     self.score_candidate(last,  last.get_nr())?)
+                    let score1 = self.score_candidate(first, first.get_nr())?;
+                    let score2 = self.score_candidate(last,  last.get_nr())?;
+                    (score1, score2)
                 };
 
                 let mut delta = first_score - last_score;
@@ -175,18 +176,3 @@ impl<R: SimpleRec> LineByLine<R> {
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-fn debug_print_best<R: SimpleRec>(best: &AlnBuffer<R>, last: &AlnBuffer<R>, ord: Option<std::cmp::Ordering>) {
-    // FIXME: this does not print or test all reads in the buffer, just the first one.
-    let best_rec = &best[0].get_records()[0];
-    let last_rec = &last[0].get_records()[0];
-    assert_eq!(best_rec.name(), last_rec.name());
-    eprintln!(
-        "{}: {} vs {} => {:?}",
-        std::str::from_utf8(best_rec.name().as_ref().unwrap()).unwrap_or("<?>"),
-        best[0].get_nr(),
-        best.last().unwrap().get_nr(),
-        ord
-    );
-}

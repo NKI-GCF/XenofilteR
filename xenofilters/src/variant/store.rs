@@ -6,12 +6,16 @@ use smallvec::SmallVec;
 use std::collections::HashMap;
 use noodles::vcf::Header;
 
+pub(crate) const VNT_CT: usize = 4;
+
+pub(crate) type EvalVec<'s> = SmallVec<[Eval<'s>; VNT_CT]>;
+
 pub(crate) trait StoreTrait {
-    fn overlapping_multi<'s>(&'s self, rid: usize, start: usize, end: usize) -> SmallVec<[Eval<'s>; 0]>;
+    fn overlapping_multi<'s>(&'s self, rid: usize, start: usize, end: usize) -> EvalVec<'s>;
 }
 
 impl<V: Variant> StoreTrait for Store<V> {
-    fn overlapping_multi<'s>(&'s self, id: usize, start: usize, end: usize) -> SmallVec<[Eval<'s>; 0]> {
+    fn overlapping_multi<'s>(&'s self, id: usize, start: usize, end: usize) -> EvalVec<'s> {
         let mut hits = SmallVec::new();
         for  v in self.overlapping(id, start, end) {
             let mut eval = Eval::new();

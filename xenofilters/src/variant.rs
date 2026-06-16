@@ -5,8 +5,14 @@ mod eval;
 
 pub(super) use population::{Population, parse_population_record};
 pub(super) use sample::{Sample, parse_sample_record};
-pub(super) use store::{Store, StoreTrait};
+pub(super) use store::{Store, StoreTrait, VNT_CT};
 pub(crate) use eval::Eval;
+
+use smallvec::SmallVec;
+use crate::filter_algorithm::line_by_line::READ_CT;
+use store::EvalVec;
+
+pub(super) type FragEvalVec<'v> = SmallVec<[EvalVec<'v>; READ_CT]>;
 
 /// Trait for any object that can be scored against an alignment.
 pub(crate) trait Variant: Sync + Send {

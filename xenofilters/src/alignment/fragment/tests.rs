@@ -6,7 +6,6 @@ use anyhow::Result;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::{SmallVec, smallvec};
 use crate::alignment::MdCigFlags;
-use crate::penalty::MAX_Q;
 use super::*;
 
 pub(crate) fn setup_penalties() -> Penalty {
