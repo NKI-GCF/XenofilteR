@@ -14,12 +14,17 @@ impl<R: SimpleRec> LineByLine<R> {
         let mut md_cig_flags = SmallVec::with_capacity(state.get_records().len());
         let aln = self.aln.get(aln_idx).ok_or_else(|| anyhow!("No alignment for index {aln_idx}"))?;
         let mut dvnt: FragEvalVec<'_> = SmallVec::new();
-        dvnt.clear();
-        dvnt.resize(state.get_records().len(), SmallVec::new());
 
         for idx in state.order_mates() {
             let rec = &state.get_records()[idx];
 let flags = state.flags(idx).ok_or_else(|| anyhow!("No flags for record index {idx} in alignment {aln_idx}"))?;
+            // TODO: add test to confirm secondary is always after non-secondary after order_mates.
+            if flags.is_secondary() {
+                if flags.is_last_segment() {
+                    break;
+                }
+                continue;
+            }
             if flags.is_unmapped() {
                 dvnt.push(SmallVec::new());
             } else {
@@ -36,12 +41,8 @@ let flags = state.flags(idx).ok_or_else(|| anyhow!("No flags for record index {i
                 };
                 dvnt.push(delta_vars);
             }
-            if !flags.is_secondary() {
-                segment.push(rec);
-                md_cig_flags.push(MdCigFlags::try_from_record(rec, flags)?);
-            } else if flags.is_last_segment() {
-                break;
-            }
+            segment.push(rec);
+            md_cig_flags.push(MdCigFlags::try_from_record(rec, flags)?);
         }
         Fragment::new(&self.penalties, segment, md_cig_flags)?.score(&mut self.scratch, &mut dvnt).map_err(move |e| {
             anyhow!(
