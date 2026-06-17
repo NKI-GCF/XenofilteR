@@ -309,7 +309,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             p.reinit(self.pen.gap_open, self.pen.gap_extend, -(j as i32));
         }
 
-        let nt_i_base = ref_start - seg_ref_start;
+        let nt_i_base = eff_ref_start - seg_ref_start;
         let revcmp = self.requires_revcmp(seg_i);
         let seq = self.seg[seg_i].sequence();
         let seq_len = seq.len();

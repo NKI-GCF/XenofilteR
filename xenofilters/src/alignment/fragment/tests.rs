@@ -46,6 +46,11 @@ impl Variant for FakeVariant {
         0.1
     }
 }
+fn make_eval<'a>(v: &'a dyn Variant) -> Eval<'a> {
+    let mut e = Eval::new();
+    e.set_variant(v);
+    e
+}
 
 #[test]
 fn test_stitched_fragment_creation() -> Result<()> {
@@ -116,23 +121,37 @@ impl Variant for MockVariant {
     }
 }
 
-fn mk_eval(pos: usize, ref_len: usize, alt_len: usize, delta: f64) -> Eval<'static> {
-    let v: &'static MockVariant = Box::leak(Box::new(MockVariant {
-        pos,
-        ref_len,
-        alt_len,
-    }));
+struct TestVariant {
+    pos: usize,
+    ref_a: Vec<u8>,
+    alt_a: Vec<u8>,
+}
 
-    let mut e = Eval::new();
-    e.set_variant(v);
-
-    if delta >= 0.0 {
-        e.update(0.0, delta);
-    } else {
-        e.update(-delta, 0.0);
+impl Variant for TestVariant {
+    fn pos(&self) -> usize {
+        self.pos
     }
+    fn ref_allele(&self) -> &[u8] {
+        &self.ref_a
+    }
+    fn alt_allele(&self) -> &[u8] {
+        &self.alt_a
+    }
+    fn p_variant(&self) -> f64 {
+        0.0
+    } // unused by maximize_delta
+}
 
-    e
+fn mk_eval(pos: usize, ref_len: usize, alt_len: usize, delta: f64) -> Eval<'static> {
+    let v: &'static TestVariant = Box::leak(Box::new(TestVariant {
+        pos,
+        ref_a: vec![b'A'; ref_len],
+        alt_a: vec![b'A'; alt_len],
+    }));
+    let mut eval = Eval::new();
+    eval.set_variant(v);
+    eval.update(0.0, delta); // delta() = alt_score - incurred = delta - 0 = delta
+    eval
 }
 
 #[test]
@@ -237,37 +256,6 @@ fn maximize_delta_uses_max_ref_or_alt_end_for_insertions() {
     assert!((maximize_delta(&mut dvnt, &mut dp) - 50.0).abs() < 1e-9);
 }
 
-struct TestVariant {
-    pos: usize,
-    ref_allele: &'static [u8],
-    alt_allele: &'static [u8],
-    p_variant: f64,
-}
-
-impl Variant for TestVariant {
-    fn pos(&self) -> usize {
-        self.pos
-    }
-
-    fn ref_allele(&self) -> &[u8] {
-        self.ref_allele
-    }
-
-    fn alt_allele(&self) -> &[u8] {
-        self.alt_allele
-    }
-
-    fn p_variant(&self) -> f64 {
-        self.p_variant
-    }
-}
-
-fn make_eval<'a>(v: &'a dyn Variant) -> Eval<'a> {
-    let mut e = Eval::new();
-    e.set_variant(v);
-    e
-}
-
 #[test]
 fn snp_alt_support_gives_positive_delta() -> Result<()> {
     let rec = create_record(b"read1", "5M", b"AAGAA", &[30; 5], "5", false)?;
@@ -284,9 +272,8 @@ fn snp_alt_support_gives_positive_delta() -> Result<()> {
 
     let v = TestVariant {
         pos: 3,
-        ref_allele: b"A",
-        alt_allele: b"G",
-        p_variant: 1.0,
+        ref_a: b"A".to_vec(),
+        alt_a: b"G".to_vec(),
     };
 
     let mut dvnt = smallvec![smallvec![make_eval(&v)]];
@@ -294,7 +281,10 @@ fn snp_alt_support_gives_positive_delta() -> Result<()> {
 
     let score = frag.score(&mut scratch, &mut dvnt)?;
 
-    assert!(score > 0.0);
+    assert!(
+        score > 0.0,
+        "Expected positive score for read supporting alt allele, got {score}"
+    );
 
     Ok(())
 }
@@ -315,9 +305,8 @@ fn snp_ref_support_gives_no_bonus() -> Result<()> {
 
     let v = TestVariant {
         pos: 3,
-        ref_allele: b"A",
-        alt_allele: b"G",
-        p_variant: 1.0,
+        ref_a: b"A".to_vec(),
+        alt_a: b"G".to_vec(),
     };
 
     let mut dvnt = smallvec![smallvec![make_eval(&v)]];
@@ -379,5 +368,28 @@ fn test_maximize_delta_picks_best_not_sum_for_overlapping_variants() -> Result<(
     let mut dvnt: FragEvalVec<'_> = smallvec![smallvec![e1, e2]];
     let mut dp = SmallVec::new();
     assert_eq!(maximize_delta(&mut dvnt, &mut dp), 10.0); // not 13.0
+    Ok(())
+}
+
+#[test]
+fn snp_no_alt_support_gives_nonpositive_delta() -> Result<()> {
+    // Read has 'A' at the variant position (matches declared ref, not alt) — no rescue expected.
+    let rec = create_record(b"read1", "5M", b"AAAAA", &[30; 5], "5", false)?;
+    let flags = rec.flags();
+    let p = setup_penalties();
+    let mut frag = Fragment::new(
+        &p,
+        smallvec![&rec],
+        smallvec![MdCigFlags::try_from_record(&rec, &flags)?],
+    )?;
+    let v = TestVariant {
+        pos: 3,
+        ref_a: b"A".to_vec(),
+        alt_a: b"G".to_vec(),
+    };
+    let mut dvnt = smallvec![smallvec![make_eval(&v)]];
+    let mut scratch = Scratch::new();
+    let score = frag.score(&mut scratch, &mut dvnt)?;
+    assert!(score <= 0.0);
     Ok(())
 }
