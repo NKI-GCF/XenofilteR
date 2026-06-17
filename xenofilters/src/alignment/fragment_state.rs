@@ -1,10 +1,11 @@
-use smallvec::{SmallVec, smallvec};
-use std::cmp::Ordering;
-use noodles::sam::alignment::record::Cigar;
-use noodles::sam::alignment::record::Flags;
-use anyhow::Result;
 use crate::alignment::MdCigFlags;
 use crate::alignment::SimpleRec;
+use crate::filter_algorithm::line_by_line::READ_CT;
+use anyhow::Result;
+use noodles::sam::alignment::record::Cigar;
+use noodles::sam::alignment::record::Flags;
+use smallvec::{smallvec, SmallVec};
+use std::cmp::Ordering;
 
 #[derive(PartialEq, Debug)]
 pub(crate) struct FragmentState<R> {
@@ -26,19 +27,6 @@ impl<R: SimpleRec> FragmentState<R> {
         self.records.push(r);
         Ok(())
     }
-    pub(crate) fn is_all_perfect(&self) -> Result<bool> {
-        for (flags, record) in self.flags.iter().zip(self.records.iter()) {
-            // Secondary alignment = split hit = penalty → not perfect
-            if flags.is_secondary() {
-                return Ok(false);
-            }
-            let mcf = MdCigFlags::try_from_record(record, flags)?;
-            if !mcf.is_perfect() {
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
     pub(crate) fn get_records(&self) -> &[R] {
         &self.records
     }
@@ -47,7 +35,10 @@ impl<R: SimpleRec> FragmentState<R> {
     }
     #[must_use]
     pub(crate) fn first_qname(&self) -> &[u8] {
-        self.records.first().and_then(|r| r.name()).map_or(b"", |n| n.as_ref())
+        self.records
+            .first()
+            .and_then(|r| r.name())
+            .map_or(b"", |n| n.as_ref())
     }
     #[must_use]
     pub(crate) fn get_nr(&self) -> usize {
@@ -62,7 +53,7 @@ impl<R: SimpleRec> FragmentState<R> {
         f.is_unmapped() && (!f.is_segmented() || f.is_mate_unmapped())
     }
 
-    pub(crate) fn order_mates(&self) -> SmallVec<[usize; 2]> {
+    pub(crate) fn order_mates(&self) -> SmallVec<[usize; READ_CT]> {
         let len = self.records.len();
         let mut indices: SmallVec<[(u8, usize, usize, usize); 2]> = SmallVec::with_capacity(len);
         for i in 0..len {
@@ -81,35 +72,58 @@ impl<R: SimpleRec> FragmentState<R> {
             } else {
                 start
             };
-           let ord = u8::from(flags.is_last_segment()) * 2 + u8::from(flags.is_secondary());
+            let ord = u8::from(flags.is_last_segment()) * 2 + u8::from(flags.is_secondary());
             indices.push((ord, tid, pos, i));
         }
         indices.sort();
         indices.iter().map(|t| t.3).collect()
     }
-    pub(crate) fn cmp_perfect(&self, other: &FragmentState<R>) -> Result<Option<Ordering>> {
-        let perfect_self = self.is_all_perfect()?;
-        let perfect_other = other.is_all_perfect()?;
+    pub(crate) fn cmp_perfect<'f>(
+        &'f self,
+        other: &'f FragmentState<R>,
+        ord: &mut Option<Ordering>,
+    ) -> Result<(SmallVec<[MdCigFlags<'f>; 8]>, SmallVec<[MdCigFlags<'f>; 8]>)> {
+        let mut mcfs1: SmallVec<[MdCigFlags<'f>; 8]> =
+            SmallVec::with_capacity(self.get_records().len());
+        let mut perfect_self = true;
+        for (flags, record) in self.flags.iter().zip(self.records.iter()) {
+            let mcf = MdCigFlags::try_from_record(record, flags)?;
+            if flags.is_secondary() || !mcf.is_perfect() {
+                perfect_self = false;
+            }
+            mcfs1.push(mcf);
+        }
 
-        Ok(match (perfect_self, perfect_other) {
-            (true,  true)  => Some(Ordering::Equal),
-            (false, true)  => Some(Ordering::Less),   // first is worse
-            (true,  false) => Some(Ordering::Greater), // last is worse
-            (false, false) => None,   // fall through to per-base
-        })
+        let mut mcfs2: SmallVec<[MdCigFlags<'f>; 8]> =
+            SmallVec::with_capacity(other.get_records().len());
+        let mut perfect_other = true;
+        for (flags, record) in other.flags.iter().zip(other.records.iter()) {
+            let mcf = MdCigFlags::try_from_record(record, flags)?;
+            if flags.is_secondary() || !mcf.is_perfect() {
+                perfect_other = false;
+            }
+            mcfs2.push(mcf);
+        }
+
+        *ord = match (perfect_self, perfect_other) {
+            (true, true) => Some(Ordering::Equal),
+            (false, true) => Some(Ordering::Less),
+            (true, false) => Some(Ordering::Greater),
+            (false, false) => None,
+        };
+        Ok((mcfs1, mcfs2))
     }
 }
 
 impl<R: SimpleRec> PartialOrd for FragmentState<R> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         match (self.is_all_unmapped(), other.is_all_unmapped()) {
-            (true,  true)  => Some(Ordering::Equal),
-            (true,  false) => Some(Ordering::Less),
-            (false, true)  => Some(Ordering::Greater),
+            (true, true) => Some(Ordering::Equal),
+            (true, false) => Some(Ordering::Less),
+            (false, true) => Some(Ordering::Greater),
             (false, false) => None,
         }
     }
-
 }
 
 #[cfg(test)]

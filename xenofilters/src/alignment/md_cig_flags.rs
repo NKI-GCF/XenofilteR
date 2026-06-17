@@ -1,5 +1,5 @@
-use anyhow::{Result, anyhow, ensure};
-use noodles::sam::alignment::record::{Cigar, Flags, Record, data::field::Tag, data::field::Value};
+use anyhow::{anyhow, ensure, Result};
+use noodles::sam::alignment::record::{data::field::Tag, data::field::Value, Cigar, Flags, Record};
 use std::cmp::Ordering;
 
 pub(crate) struct MdCigFlags<'r> {
@@ -10,17 +10,22 @@ pub(crate) struct MdCigFlags<'r> {
 
 impl<'r> MdCigFlags<'r> {
     /// Build an `MdCigRef` from a stored `MdCigFlags` and its matching record.
-    pub(crate) fn try_from_record<R: Record>(
-        record: &'r R,
-        flags: &'r Flags,
-    ) -> Result<Self> {
-        ensure!(!flags.is_unmapped(), "BUG: unmapped record should already have been excluded");
-        match record.data().get(&Tag::MISMATCHED_POSITIONS).transpose()?
-            .ok_or_else(|| anyhow!("missing MD tag"))? {
+    pub(crate) fn try_from_record<R: Record>(record: &'r R, flags: &'r Flags) -> Result<Self> {
+        ensure!(
+            !flags.is_unmapped(),
+            "BUG: unmapped record should already have been excluded"
+        );
+        match record
+            .data()
+            .get(&Tag::MISMATCHED_POSITIONS)
+            .transpose()?
+            .ok_or_else(|| anyhow!("missing MD tag"))?
+        {
             Value::String(bstr) => {
                 // SAFETY: 'r is the lifetime of `record`, and `bstr` is derived from that borrow.
                 let slice: &[u8] = bstr.as_ref();
-                let md: &'r [u8] = unsafe { std::slice::from_raw_parts(slice.as_ptr(), slice.len()) };
+                let md: &'r [u8] =
+                    unsafe { std::slice::from_raw_parts(slice.as_ptr(), slice.len()) };
 
                 let cig: Box<dyn Cigar + 'r> = record.cigar();
                 Ok(MdCigFlags { flags, md, cig })
@@ -29,7 +34,7 @@ impl<'r> MdCigFlags<'r> {
         }
     }
 
-    pub(super) fn is_perfect(&self) -> bool {
+    pub(crate) fn is_perfect(&self) -> bool {
         // Single cigar operation and MD string is all digits (no mismatches).
         self.cig.len() == 1 && self.md.iter().all(|&b| b.is_ascii_digit())
     }
@@ -42,7 +47,7 @@ impl<'r> MdCigFlags<'r> {
     pub(super) fn get_md(&self) -> &[u8] {
         self.md
     }
-    pub(super) fn get_cigar(&self) -> &(dyn Cigar + 'r) {
+    pub(crate) fn get_cigar(&self) -> &(dyn Cigar + 'r) {
         &self.cig
     }
 }
@@ -52,7 +57,7 @@ impl<'r> PartialOrd for MdCigFlags<'r> {
         match (self.is_perfect(), other.is_perfect()) {
             (true, true) => Some(Ordering::Equal), // both unmapped => tie-break with next pair
             (true, false) => Some(Ordering::Less), // self worse
-            (false, true) => Some(Ordering::Greater),    // other worse
+            (false, true) => Some(Ordering::Greater), // other worse
             (false, false) => None, // Slow path, first cig/md after init, then per base evaluation.
         }
     }

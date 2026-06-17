@@ -1,9 +1,9 @@
 use crate::alignment::fragment_state::FragmentState;
 use crate::tests::create_record;
 use anyhow::Result;
-use std::cmp::Ordering;
-use smallvec::{SmallVec, smallvec};
 use noodles::sam::alignment::record_buf::RecordBuf;
+use smallvec::{smallvec, SmallVec};
+use std::cmp::Ordering;
 
 // Tests ok
 #[test]
@@ -69,11 +69,9 @@ fn test_fragment_state_partial_ord_multiple_records_no_quick_balance() -> Result
     let rec1 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
     let rec2 = create_record(b"read1", "100M", &[], &qual, "80T20", false)?;
     let mut state1 = FragmentState::from_record(rec1, 0)?;
-    state1
-        .add_record(create_record(b"read1", "100M", &[], &qual, "85G15", false)?)?;
+    state1.add_record(create_record(b"read1", "100M", &[], &qual, "85G15", false)?)?;
     let mut state2 = FragmentState::from_record(rec2, 0)?;
-    state2
-        .add_record(create_record(b"read1", "100M", &[], &qual, "80T20", false)?)?;
+    state2.add_record(create_record(b"read1", "100M", &[], &qual, "80T20", false)?)?;
     assert_eq!(state1.partial_cmp(&state2), None); // No quick balance
     Ok(())
 }
@@ -97,7 +95,7 @@ fn test_fragment_state_order_mates_multiple_records() -> Result<()> {
     let mut state = FragmentState::from_record(rec1, 0)?;
     state.add_record(rec2)?;
     let order = state.order_mates();
-    let expected : SmallVec<[usize; 2]> = smallvec![0, 1];
+    let expected: SmallVec<[usize; 2]> = smallvec![0, 1];
     assert_eq!(order, expected); // Forward read should come before reverse read
     Ok(())
 }
@@ -107,13 +105,13 @@ fn test_fragment_state_partial_ord_multiple_records() -> Result<()> {
     let rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
     let rec2 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
     let mut state1 = FragmentState::from_record(rec1, 0)?;
-    state1
-        .add_record(create_record(b"read1", "100M", &[], &qual, "100", false)?)?;
+    state1.add_record(create_record(b"read1", "100M", &[], &qual, "100", false)?)?;
     let mut state2 = FragmentState::from_record(rec2, 0)?;
-    state2
-        .add_record(create_record(b"read1", "100M", &[], &qual, "90A10", false)?)?;
+    state2.add_record(create_record(b"read1", "100M", &[], &qual, "90A10", false)?)?;
     assert_eq!(state1.partial_cmp(&state2), None); // Perfect matches are better
-    assert_eq!(state1.cmp_perfect(&state2)?, Some(Ordering::Greater)); // Perfect matches are better
+    let mut ord: Option<Ordering> = None;
+    let _ = state1.cmp_perfect(&state2, &mut ord)?;
+    assert_eq!(ord, Some(Ordering::Greater)); // Perfect matches are better
     Ok(())
 }
 #[test]
@@ -123,9 +121,11 @@ fn test_fragment_state_ordering() -> Result<()> {
     let rec2 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
     let state1 = FragmentState::from_record(rec1, 0)?;
     let state2 = FragmentState::from_record(rec2, 1)?;
-    assert_eq!(state1.partial_cmp(&state2), None); 
+    assert_eq!(state1.partial_cmp(&state2), None);
 
-    assert_eq!(state1.cmp_perfect(&state2)?, Some(Ordering::Equal));
+    let mut ord: Option<Ordering> = None;
+    let _ = state1.cmp_perfect(&state2, &mut ord)?;
+    assert_eq!(ord, Some(Ordering::Equal));
     Ok(())
 }
 #[test]
@@ -158,7 +158,10 @@ fn test_fragment_state_partial_ord_perfect_vs_imperfect() -> Result<()> {
     let state1 = FragmentState::from_record(rec1, 0)?;
     let state2 = FragmentState::from_record(rec2, 0)?;
     assert_eq!(state1.partial_cmp(&state2), None);
-    assert_eq!(state1.cmp_perfect(&state2)?, Some(Ordering::Greater)); // Perfect match is better
+
+    let mut ord: Option<Ordering> = None;
+    let _ = state1.cmp_perfect(&state2, &mut ord)?;
+    assert_eq!(ord, Some(Ordering::Greater)); // Perfect match is better
     Ok(())
 }
 #[test]
@@ -169,6 +172,8 @@ fn test_fragment_state_partial_ord_imperfect_vs_perfect() -> Result<()> {
     let state1 = FragmentState::from_record(rec1, 0)?;
     let state2 = FragmentState::from_record(rec2, 0)?;
     assert_eq!(state1.partial_cmp(&state2), None); // Perfect match is better
-    assert_eq!(state1.cmp_perfect(&state2)?, Some(Ordering::Less)); // Perfect match is better
+    let mut ord: Option<Ordering> = None;
+    let _ = state1.cmp_perfect(&state2, &mut ord)?;
+    assert_eq!(ord, Some(Ordering::Less)); // Perfect match is better
     Ok(())
 }
