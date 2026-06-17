@@ -1,12 +1,13 @@
+use super::*;
+use crate::alignment::fragment::Fragment;
+use crate::alignment::MdCigFlags;
 use crate::config::Config;
 use crate::penalty::Penalty;
-use crate::alignment::fragment::Fragment;
 use crate::tests::create_record;
+use crate::variant::{Eval, Variant};
 use anyhow::Result;
 use noodles::sam::alignment::record_buf::RecordBuf;
-use smallvec::{SmallVec, smallvec};
-use crate::alignment::MdCigFlags;
-use super::*;
+use smallvec::{smallvec, SmallVec};
 
 pub(crate) fn setup_penalties() -> Penalty {
     let c = Config::default();
@@ -44,7 +45,14 @@ fn test_complement() {
 
 #[test]
 fn test_q() -> Result<()> {
-    let record = create_record(b"read1", "5M", &[b'A'; 5], &[30, 31, 32, 33, 34], "5", false)?;
+    let record = create_record(
+        b"read1",
+        "5M",
+        &[b'A'; 5],
+        &[30, 31, 32, 33, 34],
+        "5",
+        false,
+    )?;
     let flags = record.flags();
     let seg = smallvec![&record];
     let md_cig_flags = smallvec![MdCigFlags::try_from_record(&record, &flags)?];
@@ -53,5 +61,243 @@ fn test_q() -> Result<()> {
     assert_eq!(fragment.q(0, 0)?, 30);
     assert_eq!(fragment.q(0, 4)?, 34);
     assert!(fragment.q(0, 5).is_err());
+    Ok(())
+}
+
+struct MockVariant {
+    pos: usize,
+    ref_len: usize,
+    alt_len: usize,
+}
+
+impl Variant for MockVariant {
+    fn pos(&self) -> usize {
+        self.pos
+    }
+
+    fn ref_allele(&self) -> &[u8] {
+        &b"AAAAAAAA"[..self.ref_len]
+    }
+
+    fn alt_allele(&self) -> &[u8] {
+        &b"TTTTTTTT"[..self.alt_len]
+    }
+
+    fn p_variant(&self) -> f64 {
+        0.5
+    }
+}
+
+fn mk_eval(pos: usize, ref_len: usize, alt_len: usize, delta: f64) -> Eval<'static> {
+    let v: &'static MockVariant = Box::leak(Box::new(MockVariant {
+        pos,
+        ref_len,
+        alt_len,
+    }));
+
+    let mut e = Eval::new();
+    e.set_variant(v);
+
+    if delta >= 0.0 {
+        e.update(0.0, delta);
+    } else {
+        e.update(-delta, 0.0);
+    }
+
+    e
+}
+
+#[test]
+fn maximize_delta_empty_returns_zero() {
+    let mut dvnt: FragEvalVec = smallvec![smallvec![]];
+    let mut dp = SmallVec::new();
+
+    assert_eq!(maximize_delta(&mut dvnt, &mut dp), 0.0);
+}
+
+#[test]
+fn maximize_delta_ignores_negative_deltas() {
+    let mut dvnt: FragEvalVec =
+        smallvec![smallvec![mk_eval(10, 1, 1, -5.0), mk_eval(20, 1, 1, -10.0),]];
+
+    let mut dp = SmallVec::new();
+
+    assert_eq!(maximize_delta(&mut dvnt, &mut dp), 0.0);
+}
+
+#[test]
+fn maximize_delta_single_variant() {
+    let mut dvnt: FragEvalVec = smallvec![smallvec![mk_eval(10, 1, 1, 7.5)]];
+
+    let mut dp = SmallVec::new();
+
+    assert!((maximize_delta(&mut dvnt, &mut dp) - 7.5).abs() < 1e-9);
+}
+
+#[test]
+fn maximize_delta_sums_non_overlapping_variants() {
+    let mut dvnt: FragEvalVec = smallvec![smallvec![
+        mk_eval(10, 1, 1, 5.0),
+        mk_eval(20, 1, 1, 7.0),
+        mk_eval(30, 1, 1, 11.0),
+    ]];
+
+    let mut dp = SmallVec::new();
+
+    assert!((maximize_delta(&mut dvnt, &mut dp) - 23.0).abs() < 1e-9);
+}
+
+#[test]
+fn maximize_delta_prefers_larger_overlapping_variant() {
+    let mut dvnt: FragEvalVec = smallvec![smallvec![
+        mk_eval(10, 10, 10, 5.0), // [10,20)
+        mk_eval(15, 10, 10, 8.0), // [15,25)
+    ]];
+
+    let mut dp = SmallVec::new();
+
+    assert!((maximize_delta(&mut dvnt, &mut dp) - 8.0).abs() < 1e-9);
+}
+
+#[test]
+fn maximize_delta_finds_best_chain() {
+    let mut dvnt: FragEvalVec = smallvec![smallvec![
+        mk_eval(10, 10, 10, 5.0),   // [10,20)
+        mk_eval(15, 10, 10, 100.0), // [15,25)
+        mk_eval(30, 10, 10, 6.0),   // [30,40)
+    ]];
+
+    let mut dp = SmallVec::new();
+
+    assert!((maximize_delta(&mut dvnt, &mut dp) - 106.0).abs() < 1e-9);
+}
+
+#[test]
+fn maximize_delta_handles_nested_variants() {
+    let mut dvnt: FragEvalVec = smallvec![smallvec![
+        mk_eval(10, 20, 20, 5.0), // [10,30)
+        mk_eval(15, 2, 2, 20.0),  // [15,17)
+        mk_eval(40, 1, 1, 3.0),   // [40,41)
+    ]];
+
+    let mut dp = SmallVec::new();
+
+    assert!((maximize_delta(&mut dvnt, &mut dp) - 23.0).abs() < 1e-9);
+}
+
+#[test]
+fn maximize_delta_boundary_touching_is_non_overlapping() {
+    let mut dvnt: FragEvalVec = smallvec![smallvec![
+        mk_eval(10, 10, 10, 5.0), // [10,20)
+        mk_eval(20, 10, 10, 7.0), // [20,30)
+    ]];
+
+    let mut dp = SmallVec::new();
+
+    assert!((maximize_delta(&mut dvnt, &mut dp) - 12.0).abs() < 1e-9);
+}
+
+#[test]
+fn maximize_delta_uses_max_ref_or_alt_end_for_insertions() {
+    let mut dvnt: FragEvalVec = smallvec![smallvec![
+        mk_eval(10, 1, 20, 10.0), // end = 30
+        mk_eval(25, 1, 1, 50.0),  // overlaps insertion span
+    ]];
+
+    let mut dp = SmallVec::new();
+
+    assert!((maximize_delta(&mut dvnt, &mut dp) - 50.0).abs() < 1e-9);
+}
+
+struct TestVariant {
+    pos: usize,
+    ref_allele: &'static [u8],
+    alt_allele: &'static [u8],
+    p_variant: f64,
+}
+
+impl Variant for TestVariant {
+    fn pos(&self) -> usize {
+        self.pos
+    }
+
+    fn ref_allele(&self) -> &[u8] {
+        self.ref_allele
+    }
+
+    fn alt_allele(&self) -> &[u8] {
+        self.alt_allele
+    }
+
+    fn p_variant(&self) -> f64 {
+        self.p_variant
+    }
+}
+
+fn make_eval<'a>(v: &'a dyn Variant) -> Eval<'a> {
+    let mut e = Eval::new();
+    e.set_variant(v);
+    e
+}
+
+#[test]
+fn snp_alt_support_gives_positive_delta() -> Result<()> {
+    let rec = create_record(b"read1", "5M", b"AAGAA", &[30; 5], "5", false)?;
+
+    let flags = rec.flags();
+
+    let p = setup_penalties();
+
+    let mut frag = Fragment::new(
+        &p,
+        smallvec![&rec],
+        smallvec![MdCigFlags::try_from_record(&rec, &flags)?],
+    )?;
+
+    let v = TestVariant {
+        pos: 3,
+        ref_allele: b"A",
+        alt_allele: b"G",
+        p_variant: 1.0,
+    };
+
+    let mut dvnt = smallvec![smallvec![make_eval(&v)]];
+    let mut scratch = Scratch::default();
+
+    let score = frag.score(&mut scratch, &mut dvnt)?;
+
+    assert!(score > 0.0);
+
+    Ok(())
+}
+
+#[test]
+fn snp_ref_support_gives_no_bonus() -> Result<()> {
+    let rec = create_record(b"read1", "5M", b"AAAAA", &[30; 5], "5", false)?;
+
+    let flags = rec.flags();
+
+    let p = setup_penalties();
+
+    let mut frag = Fragment::new(
+        &p,
+        smallvec![&rec],
+        smallvec![MdCigFlags::try_from_record(&rec, &flags)?],
+    )?;
+
+    let v = TestVariant {
+        pos: 3,
+        ref_allele: b"A",
+        alt_allele: b"G",
+        p_variant: 1.0,
+    };
+
+    let mut dvnt = smallvec![smallvec![make_eval(&v)]];
+    let mut scratch = Scratch::default();
+
+    let score = frag.score(&mut scratch, &mut dvnt)?;
+
+    assert!(score <= 0.0);
+
     Ok(())
 }
