@@ -13,7 +13,7 @@ impl<'a> Eval<'a> {
         Eval {
             incurred: 0.0,
             alt_score: 0.0,
-            vnt: None
+            vnt: None,
         }
     }
     pub(crate) fn delta(&self) -> f64 {
@@ -23,7 +23,8 @@ impl<'a> Eval<'a> {
         self.ref_end().max(self.alt_end())
     }
     pub(crate) fn vnt(&self) -> &'a dyn Variant {
-        self.vnt.expect("VariantEval should always have a variant reference")
+        self.vnt
+            .expect("VariantEval should always have a variant reference")
     }
     pub(crate) fn set_variant(&mut self, vnt: &'a dyn Variant) {
         self.vnt = Some(vnt);
@@ -42,3 +43,6 @@ impl<'a> Eval<'a> {
         self.alt_score += alt_score;
     }
 }
+
+#[cfg(test)]
+mod tests;

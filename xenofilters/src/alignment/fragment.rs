@@ -1,13 +1,13 @@
-use crate::penalty::{MAX_Q, Penalty};
-use anyhow::{Result, anyhow};
-use noodles::sam::alignment::Record;
-use smallvec::SmallVec;
-use crate::variant::{Eval, FragEvalVec, VNT_CT};
-use crate::alignment::{AlignmentError, ScoreOpIter, BaseOp};
 use crate::alignment::MdCigFlags;
+use crate::alignment::{AlignmentError, BaseOp, ScoreOpIter};
 use crate::filter_algorithm::line_by_line::{Scratch, READ_CT};
+use crate::penalty::{Penalty, MAX_Q};
+use crate::variant::{Eval, FragEvalVec, VNT_CT};
+use anyhow::{anyhow, Result};
+use noodles::sam::alignment::Record;
 use noodles::sam::alignment::RecordBuf;
 use noodles::sam::Header;
+use smallvec::SmallVec;
 
 pub(crate) struct Fragment<'r, R> {
     pen: &'r Penalty,
@@ -19,11 +19,50 @@ pub(crate) struct Fragment<'r, R> {
     nt_i: usize,
 }
 
+fn maximize_delta<'v>(dvnt: &mut FragEvalVec<'v>, dp: &mut SmallVec<[f64; READ_CT]>) -> f64 {
+    let mut variants: SmallVec<[&Eval; VNT_CT]> =
+        dvnt.iter().flatten().filter(|v| v.delta() > 0.0).collect();
+
+    if variants.is_empty() {
+        return 0.0;
+    }
+
+    // Sort by end coordinate for Weighted Interval Scheduling
+    variants.sort_unstable_by_key(|v| v.end());
+
+    dp.clear();
+    dp.resize(variants.len(), 0.0);
+    dp[0] = variants[0].delta();
+
+    for i in 1..variants.len() {
+        let current_weight = variants[i].delta();
+        let current_start = variants[i].start();
+
+        let mut incl_weight = current_weight;
+
+        let latest = variants[..i].partition_point(|v| v.end() <= current_start);
+        if latest > 0 {
+            incl_weight += dp[latest - 1];
+        }
+
+        dp[i] = dp[i - 1].max(incl_weight);
+    }
+    *dp.last().unwrap_or(&0.0)
+}
+
 impl<'r, R: SimpleRec> Fragment<'r, R> {
-    pub(crate) fn new(pen: &'r Penalty, seg: SmallVec<[&'r R; READ_CT]>, md_cig_flags: SmallVec<[MdCigFlags<'r>; READ_CT]>) -> Result<Self, AlignmentError> {
+    pub(crate) fn new(
+        pen: &'r Penalty,
+        seg: SmallVec<[&'r R; READ_CT]>,
+        md_cig_flags: SmallVec<[MdCigFlags<'r>; READ_CT]>,
+    ) -> Result<Self, AlignmentError> {
         let seg_start: SmallVec<[usize; READ_CT]> = seg
             .iter()
-            .map(|r| r.alignment_start().transpose().map(|o| o.map(|p| p.get()).unwrap_or(0)))
+            .map(|r| {
+                r.alignment_start()
+                    .transpose()
+                    .map(|o| o.map(|p| p.get()).unwrap_or(0))
+            })
             .collect::<Result<_, _>>()?;
         let refpos = seg_start[0];
         Ok(Self {
@@ -36,8 +75,11 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             nt_i: 0,
         })
     }
-    pub(crate) fn score<'v>(&mut self, scratch: &mut Scratch, dvnt: &mut FragEvalVec<'v>) -> Result<f64, AlignmentError>
-    {
+    pub(crate) fn score<'v>(
+        &mut self,
+        scratch: &mut Scratch,
+        dvnt: &mut FragEvalVec<'v>,
+    ) -> Result<f64, AlignmentError> {
         let mut score = self.score_with_variant(scratch, dvnt, 0)?;
 
         for i in 1..self.seg.len() {
@@ -46,54 +88,37 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             self.nt_i = 0;
             score += self.score_with_variant(scratch, dvnt, i)?;
         }
-        Ok(score + self.maximize_delta(dvnt, &mut scratch.dp))
-    }
-    fn maximize_delta<'v>(&mut self, dvnt: &mut FragEvalVec<'v>, dp: &mut SmallVec<[f64; READ_CT]>) -> f64 {
-        let mut variants: SmallVec<[&Eval; VNT_CT]> = dvnt.iter()
-            .flatten()
-            .filter(|v| v.delta() > 0.0)
-            .collect();
-
-        if variants.is_empty() {
-            return 0.0;
-        }
-
-        // Sort by end coordinate for Weighted Interval Scheduling
-        variants.sort_unstable_by_key(|v| v.end());
-
-        dp.clear();
-        dp.resize(variants.len(), 0.0);
-        dp[0] = variants[0].delta();
-
-        for i in 1..variants.len() {
-            let current_weight = variants[i].delta();
-            let current_start = variants[i].start();
-
-            let mut incl_weight = current_weight;
-
-            let latest = variants[..i].partition_point(|v| v.end() <= current_start);
-            if latest > 0 {
-                incl_weight += dp[latest - 1];
-            }
-
-            dp[i] = dp[i - 1].max(incl_weight);
-        }
-        *dp.last().unwrap_or(&0.0)
+        Ok(score + maximize_delta(dvnt, &mut scratch.dp))
     }
 
-    fn score_with_variant<'v>(&mut self, scratch: &mut Scratch, dvnt: &mut FragEvalVec<'v>,i: usize) -> Result<f64> {
+    fn score_with_variant<'v>(
+        &mut self,
+        scratch: &mut Scratch,
+        dvnt: &mut FragEvalVec<'v>,
+        i: usize,
+    ) -> Result<f64> {
         let mut score = 0.0;
 
         // Score variant bases that reach into segments before the current one.
         for prior_seg_i in 0..self.seg_i {
-            if self.md_cig_flags[prior_seg_i].is_last_segment() != self.md_cig_flags[self.seg_i].is_last_segment() {
+            if self.md_cig_flags[prior_seg_i].is_last_segment()
+                != self.md_cig_flags[self.seg_i].is_last_segment()
+            {
                 continue; // skip read 1 read(s) when processing read 2
             }
             let seg_ref_start = self.seg_start[prior_seg_i];
             let seg_ref_end = seg_ref_start + self.seg[prior_seg_i].cigar().len();
 
             // prior (or following) segment bases contribute to alt scoring only, no incurrence.
-            self.score_variants_in_window(scratch, dvnt, i, prior_seg_i, seg_ref_start, seg_ref_end, 0.0)?;
+            self.score_variants_in_window(
+                scratch,
+                dvnt,
+                i,
+                prior_seg_i,
+                seg_ref_start,
+                seg_ref_end,
+                0.0,
+            )?;
         }
 
         let mut iter = ScoreOpIter::new(&self.md_cig_flags[self.seg_i]).peekable();
@@ -109,58 +134,79 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
                     self.refpos += 1;
                     while matches!(iter.peek(), Some(Ok(BaseOp::Match))) {
                         iter.next();
-                        ref_score += self.pen.log_likelihood_match[self.q(self.seg_i, self.nt_i)?];
+                        ref_score +=
+                            self.pen.log_likelihood_match[self.q(self.seg_i, self.nt_i)?];
                         self.nt_i += 1;
                         self.refpos += 1;
                     }
-                },
+                }
                 BaseOp::Clip(len) => {
                     for _ in 0..len {
-                        ref_score += self.pen.log_likelihood_mismatch[self.q(self.seg_i, self.nt_i)?];
+                        ref_score +=
+                            self.pen.log_likelihood_mismatch[self.q(self.seg_i, self.nt_i)?];
                         self.nt_i += 1;
                     }
                     // refpos does NOT advance - soft clips consume read bases, not reference bases
-                },
+                }
                 BaseOp::Mis => {
                     ref_score += self.pen.log_likelihood_mismatch[self.q(self.seg_i, self.nt_i)?];
                     self.nt_i += 1;
                     self.refpos += 1;
                     while matches!(iter.peek(), Some(Ok(BaseOp::Mis))) {
                         iter.next();
-                        ref_score += self.pen.log_likelihood_mismatch[self.q(self.seg_i, self.nt_i)?];
+                        ref_score +=
+                            self.pen.log_likelihood_mismatch[self.q(self.seg_i, self.nt_i)?];
                         self.nt_i += 1;
                         self.refpos += 1;
                     }
-                },
+                }
                 BaseOp::Del(len) => {
                     self.refpos += len;
                     ref_score += self.pen.gap_open + (len as f64) * self.pen.gap_extend;
-                },
+                }
                 BaseOp::Ins(len) => {
                     self.nt_i += len;
                     ref_score += self.pen.gap_open + (len as f64) * self.pen.gap_extend;
-                },
+                }
                 BaseOp::Relocate { penalty_score, pos } => {
                     self.refpos = pos;
                     ref_score += penalty_score;
-                },
+                }
                 BaseOp::RefSkip(len) => {
                     self.refpos += len;
                 }
             }
 
-            self.score_variants_in_window(scratch, dvnt, i, self.seg_i, ref_start, self.refpos, ref_score)?;
+            self.score_variants_in_window(
+                scratch,
+                dvnt,
+                i,
+                self.seg_i,
+                ref_start,
+                self.refpos,
+                ref_score,
+            )?;
             score += ref_score;
         }
 
         for next_seg_i in (self.seg_i + 1)..self.seg.len() {
-            if self.md_cig_flags[next_seg_i].is_last_segment() != self.md_cig_flags[self.seg_i].is_last_segment() {
+            if self.md_cig_flags[next_seg_i].is_last_segment()
+                != self.md_cig_flags[self.seg_i].is_last_segment()
+            {
                 break; // skip segments from read 2 when processing read 1
             }
             let seg_ref_start = self.seg_start[next_seg_i];
             let seg_ref_end = seg_ref_start + self.seg[next_seg_i].sequence().len();
 
-            self.score_variants_in_window(scratch, dvnt, i, next_seg_i, seg_ref_start, seg_ref_end, 0.0)?;
+            self.score_variants_in_window(
+                scratch,
+                dvnt,
+                i,
+                next_seg_i,
+                seg_ref_start,
+                seg_ref_end,
+                0.0,
+            )?;
         }
 
         Ok(score)
@@ -173,7 +219,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         seg_i: usize,
         start: usize,
         end: usize,
-        ref_score: f64,  // unweighted, for non-variant positions
+        ref_score: f64, // unweighted, for non-variant positions
     ) -> Result<()> {
         let mut i = 0;
         while i < dvnt[dvnt_i].len() && dvnt[dvnt_i][i].start() < end {
@@ -182,7 +228,8 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             {
                 // Use weighted_ref_score instead of ref_score for variant positions
                 dvnt[dvnt_i][i].update(weighted_ref_score, alt_score);
-                let fully_processed = dvnt[dvnt_i][i].ref_end() <= end && dvnt[dvnt_i][i].alt_end() <= end;
+                let fully_processed =
+                    dvnt[dvnt_i][i].ref_end() <= end && dvnt[dvnt_i][i].alt_end() <= end;
                 if fully_processed {
                     dvnt[dvnt_i].remove(i);
                     continue;
@@ -215,7 +262,8 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         seg_i: usize,
         ref_start: usize,
         ref_end: usize,
-    ) -> Result<Option<(f64, f64)>> {  // (weighted_ref_score, alt_score)
+    ) -> Result<Option<(f64, f64)>> {
+        // (weighted_ref_score, alt_score)
         let vnt_eval = &dvnt[dvnt_i][dvnt_j];
         let vnt_start = vnt_eval.start();
 
@@ -229,18 +277,19 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         let vnt = vnt_eval.vnt();
         let alt = vnt.alt_allele();
         let alt_slice = &alt[ref_consumed.min(alt.len())..(ref_consumed + ref_len).min(alt.len())];
-        if alt_slice.is_empty() && ref_len == 0 { return Ok(None); }
+        if alt_slice.is_empty() && ref_len == 0 {
+            return Ok(None);
+        }
 
         let p_variant = vnt.p_variant();
         let seg_ref_start = self.seg_start[seg_i];
+        let nt_offset = eff_ref_start - seg_ref_start;
 
         // Weighted ref score over the overlapping bases
         let mut weighted_ref_score = 0.0;
         for j in 0..(eff_ref_end - eff_ref_start) {
-            let pos = seg_ref_start;
-            let nt_i = (eff_ref_start - pos) + j;
-            let q = self.q(seg_i, nt_i)?;
-            let lm  = self.pen.log_likelihood_match[q];
+            let q = self.q(seg_i, nt_offset + j)?;
+            let lm = self.pen.log_likelihood_match[q];
             let lmm = self.pen.log_likelihood_mismatch[q];
             // ref path: read matches ref, so weight by (1 - p_variant)
             weighted_ref_score += (1.0 - p_variant) * lm + p_variant * lmm;
@@ -289,12 +338,14 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
                 };
 
                 scratch.curr[j].m = per_base_score
-                    + scratch.prev[j - 1].m
+                    + scratch.prev[j - 1]
+                        .m
                         .max(scratch.prev[j - 1].i)
                         .max(scratch.prev[j - 1].d);
 
-                scratch.curr[j].i = (scratch.curr[j - 1].m + self.pen.gap_open + self.pen.gap_extend)
-                    .max(scratch.curr[j - 1].i + self.pen.gap_extend);
+                scratch.curr[j].i =
+                    (scratch.curr[j - 1].m + self.pen.gap_open + self.pen.gap_extend)
+                        .max(scratch.curr[j - 1].i + self.pen.gap_extend);
 
                 scratch.curr[j].d = (scratch.prev[j].m + self.pen.gap_open + self.pen.gap_extend)
                     .max(scratch.prev[j].d + self.pen.gap_extend);
@@ -303,7 +354,10 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             scratch.swap_nw();
         }
 
-        let alt_score = scratch.prev[m].m.max(scratch.prev[m].i).max(scratch.prev[m].d);
+        let alt_score = scratch.prev[m]
+            .m
+            .max(scratch.prev[m].i)
+            .max(scratch.prev[m].d);
 
         Ok(Some((weighted_ref_score, alt_score)))
     }
