@@ -1,9 +1,19 @@
 use crate::alignment::fragment_state::FragmentState;
 use crate::tests::create_record;
 use anyhow::Result;
+use noodles::core::Position;
+use noodles::sam::alignment::record::Flags;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::{smallvec, SmallVec};
 use std::cmp::Ordering;
+
+fn segment(qname: &[u8], flag_bits: u16, tid: usize, start: usize) -> Result<RecordBuf> {
+    let mut rec = create_record(qname, "5M", &[], &[], "5", false)?;
+    *rec.flags_mut() = Flags::from_bits(flag_bits).unwrap();
+    *rec.reference_sequence_id_mut() = Some(tid);
+    *rec.alignment_start_mut() = Some(Position::new(start).expect("nonzero position"));
+    Ok(rec)
+}
 
 // Tests ok
 #[test]
@@ -175,5 +185,24 @@ fn test_fragment_state_partial_ord_imperfect_vs_perfect() -> Result<()> {
     let mut ord: Option<Ordering> = None;
     let _ = state1.cmp_perfect(&state2, &mut ord)?;
     assert_eq!(ord, Some(Ordering::Less)); // Perfect match is better
+    Ok(())
+}
+
+#[test]
+fn test_order_mates_sorts_by_segment_then_secondary_then_tid_then_pos() -> Result<()> {
+    let primary_first = segment(b"r", 0x40, 0, 100)?; // ord 0
+    let secondary_first = segment(b"r", 0x40 | 0x100, 0, 200)?; // ord 1
+    let primary_last = segment(b"r", 0x80, 1, 50)?; // ord 2
+    let secondary_last = segment(b"r", 0x80 | 0x100, 1, 999)?; // ord 3
+
+    // Insert deliberately out of order to verify sorting, not insertion order.
+    let mut state = FragmentState::from_record(secondary_last, 0)?; // idx 0
+    state.add_record(primary_last)?; // idx 1
+    state.add_record(secondary_first)?; // idx 2
+    state.add_record(primary_first)?; // idx 3
+
+    let order = state.order_mates();
+    let expected: SmallVec<[usize; 2]> = smallvec![3, 2, 1, 0];
+    assert_eq!(order, expected);
     Ok(())
 }

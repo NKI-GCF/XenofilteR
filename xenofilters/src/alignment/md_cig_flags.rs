@@ -68,3 +68,6 @@ impl<'r> PartialEq for MdCigFlags<'r> {
         self.partial_cmp(other) == Some(Ordering::Equal)
     }
 }
+
+#[cfg(test)]
+mod tests;

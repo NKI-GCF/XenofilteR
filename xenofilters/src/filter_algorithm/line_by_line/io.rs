@@ -1,9 +1,9 @@
 use super::core::LineByLine;
+use crate::alignment::SimpleRec;
 use anyhow::Result;
 use noodles::sam::alignment::record::data::field::Tag;
 use noodles::sam::alignment::record_buf::data::field::Value;
 use noodles::sam::alignment::record_buf::RecordBuf;
-use crate::alignment::SimpleRec;
 
 impl<R: SimpleRec> LineByLine<R> {
     pub(super) fn add_aux_tags(
@@ -57,5 +57,27 @@ impl<R: SimpleRec> LineByLine<R> {
             24 + i,
             self.branch_counters[24 + i]
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::tests::create_record;
+    use smallvec::smallvec;
+
+    #[test]
+    fn test_add_aux_tags_inserts_expected_tag_and_value() -> Result<()> {
+        let mut lbl: LineByLine<RecordBuf> = LineByLine::new(Config::default(), smallvec![])?;
+        let mut rec = create_record(b"r", "5M", &[], &[], "5", false)?;
+        lbl.add_aux_tags(&mut rec, b"XF", 42)?;
+
+        let tag = Tag::new(b'X', b'F');
+        match rec.data().get(&tag) {
+            Some(Value::UInt8(v)) => assert_eq!(*v, 42),
+            other => panic!("unexpected tag value: {other:?}"),
+        }
+        Ok(())
     }
 }

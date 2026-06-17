@@ -19,7 +19,10 @@ pub(crate) struct Fragment<'r, R> {
     nt_i: usize,
 }
 
-fn maximize_delta<'v>(dvnt: &mut FragEvalVec<'v>, dp: &mut SmallVec<[f64; READ_CT]>) -> f64 {
+pub(super) fn maximize_delta<'v>(
+    dvnt: &mut FragEvalVec<'v>,
+    dp: &mut SmallVec<[f64; READ_CT]>,
+) -> f64 {
     let mut variants: SmallVec<[&Eval; VNT_CT]> =
         dvnt.iter().flatten().filter(|v| v.delta() > 0.0).collect();
 

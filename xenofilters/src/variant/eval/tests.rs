@@ -303,3 +303,58 @@ fn variant_overlap_excludes_disjoint_regions() {
     assert!(!v.overlaps(1, 50));
     assert!(!v.overlaps(200, 300));
 }
+
+struct FakeVariant {
+    pos: usize,
+    ref_a: Vec<u8>,
+    alt_a: Vec<u8>,
+}
+impl Variant for FakeVariant {
+    fn pos(&self) -> usize {
+        self.pos
+    }
+    fn ref_allele(&self) -> &[u8] {
+        &self.ref_a
+    }
+    fn alt_allele(&self) -> &[u8] {
+        &self.alt_a
+    }
+    fn p_variant(&self) -> f64 {
+        0.1
+    }
+}
+
+#[test]
+fn test_start_ref_end_alt_end_and_end() {
+    let v = FakeVariant {
+        pos: 100,
+        ref_a: vec![b'A'; 3],
+        alt_a: vec![b'A'; 5],
+    };
+    let mut eval = Eval::new();
+    eval.set_variant(&v);
+    assert_eq!(eval.start(), 100);
+    assert_eq!(eval.ref_end(), 103);
+    assert_eq!(eval.alt_end(), 105);
+    assert_eq!(eval.end(), 105);
+}
+
+#[test]
+fn test_update_accumulates_and_delta_is_alt_minus_incurred() {
+    let v = FakeVariant {
+        pos: 0,
+        ref_a: vec![b'A'],
+        alt_a: vec![b'A'],
+    };
+    let mut eval = Eval::new();
+    eval.set_variant(&v);
+    eval.update(1.0, 2.0);
+    eval.update(0.5, 0.5);
+    assert!((eval.delta() - 1.0).abs() < 1e-12); // (2.0+0.5) - (1.0+0.5)
+}
+
+#[test]
+#[should_panic(expected = "VariantEval should always have a variant reference")]
+fn test_vnt_panics_when_unset() {
+    let _ = Eval::new().vnt();
+}

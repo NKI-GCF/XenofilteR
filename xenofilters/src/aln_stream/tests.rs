@@ -1,10 +1,10 @@
 use crate::bam::BamFormat;
-use crate::tests::create_record;
-use crate::{AlignmentStream, AlnStream};
 use crate::config::{Config, StripReadSuffix};
+use crate::tests::create_record;
+use crate::variant::StoreTrait;
+use crate::{AlignmentStream, AlnStream};
 use anyhow::Result;
 use noodles::sam::{alignment::record_buf::RecordBuf, header::Header};
-use crate::variant::StoreTrait;
 
 pub(crate) struct MockStream {
     pub(crate) reads: Vec<RecordBuf>,
@@ -56,7 +56,7 @@ impl MockStream {
             reads,
             written: Vec::new(),
             aln_stream,
-            i
+            i,
         }
     }
     fn next_rec(&mut self) -> Result<Option<RecordBuf>> {
@@ -82,6 +82,19 @@ impl MockStream {
     fn write_record(&mut self, rec: RecordBuf, state: Option<bool>) -> Result<()> {
         self.written.push((rec, state));
         Ok(())
+    }
+}
+
+fn empty_aln_stream() -> AlnStream<RecordBuf> {
+    AlnStream {
+        ambiguous: None,
+        bam: None,
+        filt: None,
+        next: None,
+        output: None,
+        sample_variants: None,
+        population_variants: None,
+        header: Header::default(),
     }
 }
 
@@ -138,4 +151,48 @@ fn test_aln_stream_un_next() -> Result<()> {
     assert_eq!(name3_bytes, b"read2/1");
 
     Ok(())
+}
+
+#[test]
+fn test_next_qname_empty_when_no_next_record() {
+    assert_eq!(empty_aln_stream().next_qname(), b"");
+}
+
+#[test]
+fn test_next_qname_returns_pending_records_name() -> Result<()> {
+    let mut stream = empty_aln_stream();
+    let rec = create_record(b"r1", "5M", &[], &[30; 5], "5", false)?;
+    stream.un_next(rec)?;
+    assert_eq!(stream.next_qname(), b"r1");
+    Ok(())
+}
+
+#[test]
+fn test_un_next_errors_when_already_occupied() -> Result<()> {
+    let mut stream = empty_aln_stream();
+    stream.un_next(create_record(b"r1", "5M", &[], &[30; 5], "5", false)?)?;
+    let result = stream.un_next(create_record(b"r2", "5M", &[], &[30; 5], "5", false)?);
+    assert!(result.is_err());
+    Ok(())
+}
+
+#[test]
+fn test_next_rec_none_when_empty_and_no_bam_reader() -> Result<()> {
+    assert!(empty_aln_stream().next_rec()?.is_none());
+    Ok(())
+}
+
+#[test]
+fn test_write_record_is_noop_without_attached_writers() -> Result<()> {
+    let mut stream = empty_aln_stream();
+    let rec = create_record(b"r", "5M", &[], &[30; 5], "5", false)?;
+    assert!(stream.write_record(rec.clone(), Some(true)).is_ok());
+    assert!(stream.write_record(rec.clone(), Some(false)).is_ok());
+    assert!(stream.write_record(rec, None).is_ok());
+    Ok(())
+}
+
+#[test]
+fn test_variant_store_none_when_unset() {
+    assert!(empty_aln_stream().variant_store().is_none());
 }

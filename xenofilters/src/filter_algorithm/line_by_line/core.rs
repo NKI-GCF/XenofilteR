@@ -1,10 +1,13 @@
-use crate::aln_stream::AlignmentStream;
 use crate::alignment::FragmentState;
-use crate::{config::{Config, StripReadSuffix}, penalty::Penalty};
+use crate::alignment::SimpleRec;
+use crate::aln_stream::AlignmentStream;
+use crate::{
+    config::{Config, StripReadSuffix},
+    penalty::Penalty,
+};
 use anyhow::Result;
 use noodles::sam::alignment::Record;
 use smallvec::SmallVec;
-use crate::alignment::SimpleRec;
 
 pub(crate) const READ_CT: usize = 8;
 pub(crate) const VNT_LEN: usize = 16;
@@ -47,7 +50,11 @@ impl Cell {
 
 impl Default for Cell {
     fn default() -> Self {
-        Self { m: -f64::INFINITY, i: -f64::INFINITY, d: -f64::INFINITY }
+        Self {
+            m: -f64::INFINITY,
+            i: -f64::INFINITY,
+            d: -f64::INFINITY,
+        }
     }
 }
 
@@ -75,9 +82,7 @@ impl Scratch {
     pub(crate) fn swap_nw(&mut self) {
         std::mem::swap(&mut self.prev, &mut self.curr);
     }
-
 }
-    
 
 pub(crate) struct LineByLine<R> {
     pub(super) aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
@@ -96,7 +101,6 @@ impl<R: SimpleRec> LineByLine<R> {
         config: Config,
         mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
     ) -> Result<Self> {
-
         let is_unmapped_skipped = match config.discard_unmapped {
             true => unmapped_and_mate_unmapped,
             false => always_false,
@@ -162,9 +166,10 @@ fn debug_new_qname_fn<R: SimpleRec>() -> fn(&AlnBuffer<R>, &[u8]) -> Option<bool
     |best: &AlnBuffer<R>, qname2: &[u8]| {
         if let Some(first_qname) = best.first().map(|b| b.first_qname()) {
             if first_qname.ends_with(b"/1") || first_qname.ends_with(b"/2") {
-                return best.first().map(|b| b.first_qname()).map(|qname1| {
-                    qname1[..qname1.len() - 2] != qname2[..qname2.len() - 2]
-                });
+                return best
+                    .first()
+                    .map(|b| b.first_qname())
+                    .map(|qname1| qname1[..qname1.len() - 2] != qname2[..qname2.len() - 2]);
             }
         }
         best.first()
@@ -172,4 +177,3 @@ fn debug_new_qname_fn<R: SimpleRec>() -> fn(&AlnBuffer<R>, &[u8]) -> Option<bool
             .map(|qname1| qname1 != qname2)
     }
 }
-

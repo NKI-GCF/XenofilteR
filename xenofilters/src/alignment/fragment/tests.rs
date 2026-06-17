@@ -1,5 +1,4 @@
 use super::*;
-use crate::alignment::fragment::Fragment;
 use crate::alignment::MdCigFlags;
 use crate::config::Config;
 use crate::penalty::Penalty;
@@ -19,6 +18,35 @@ pub(crate) fn setup_penalties() -> Penalty {
     p
 }
 
+struct FakeVariant {
+    pos: usize,
+    ref_a: Vec<u8>,
+    alt_a: Vec<u8>,
+}
+impl FakeVariant {
+    fn new(pos: usize, len: usize) -> Self {
+        FakeVariant {
+            pos,
+            ref_a: vec![b'A'; len],
+            alt_a: vec![b'A'; len],
+        }
+    }
+}
+impl Variant for FakeVariant {
+    fn pos(&self) -> usize {
+        self.pos
+    }
+    fn ref_allele(&self) -> &[u8] {
+        &self.ref_a
+    }
+    fn alt_allele(&self) -> &[u8] {
+        &self.alt_a
+    }
+    fn p_variant(&self) -> f64 {
+        0.1
+    }
+}
+
 #[test]
 fn test_stitched_fragment_creation() -> Result<()> {
     let record1 = create_record(b"read1", "5M3S", &[b'A'; 8], &[30; 8], "5", false)?;
@@ -31,7 +59,7 @@ fn test_stitched_fragment_creation() -> Result<()> {
     let mut md_cig_flags: SmallVec<[MdCigFlags; READ_CT]> = SmallVec::new();
     md_cig_flags.push(MdCigFlags::try_from_record(&record1, &flags1)?);
     md_cig_flags.push(MdCigFlags::try_from_record(&record2, &flags2)?);
-    let _stitched = Fragment::new(&p, records, md_cig_flags);
+    let _stitched = Fragment::new(&p, records, md_cig_flags)?;
     Ok(())
 }
 #[test]
@@ -262,7 +290,7 @@ fn snp_alt_support_gives_positive_delta() -> Result<()> {
     };
 
     let mut dvnt = smallvec![smallvec![make_eval(&v)]];
-    let mut scratch = Scratch::default();
+    let mut scratch = Scratch::new();
 
     let score = frag.score(&mut scratch, &mut dvnt)?;
 
@@ -293,11 +321,63 @@ fn snp_ref_support_gives_no_bonus() -> Result<()> {
     };
 
     let mut dvnt = smallvec![smallvec![make_eval(&v)]];
-    let mut scratch = Scratch::default();
+    let mut scratch = Scratch::new();
 
     let score = frag.score(&mut scratch, &mut dvnt)?;
 
     assert!(score <= 0.0);
 
+    Ok(())
+}
+
+#[test]
+fn test_maximize_delta_no_variants_is_zero() -> Result<()> {
+    let mut dvnt: FragEvalVec<'_> = smallvec![SmallVec::new()];
+    let mut dp = SmallVec::new();
+    assert_eq!(maximize_delta(&mut dvnt, &mut dp), 0.0);
+    Ok(())
+}
+
+#[test]
+fn test_maximize_delta_ignores_non_positive_delta() -> Result<()> {
+    let v = FakeVariant::new(0, 1);
+    let mut e = Eval::new();
+    e.set_variant(&v);
+    e.update(5.0, 5.0); // delta == 0, filtered out
+    let mut dvnt: FragEvalVec<'_> = smallvec![smallvec![e]];
+    let mut dp = SmallVec::new();
+    assert_eq!(maximize_delta(&mut dvnt, &mut dp), 0.0);
+    Ok(())
+}
+
+#[test]
+fn test_maximize_delta_sums_non_overlapping_variants() -> Result<()> {
+    let v1 = FakeVariant::new(0, 1); // end = 1
+    let v2 = FakeVariant::new(10, 1); // end = 11
+    let mut e1 = Eval::new();
+    e1.set_variant(&v1);
+    e1.update(0.0, 3.0); // delta 3
+    let mut e2 = Eval::new();
+    e2.set_variant(&v2);
+    e2.update(0.0, 2.0); // delta 2
+    let mut dvnt: FragEvalVec<'_> = smallvec![smallvec![e1, e2]];
+    let mut dp = SmallVec::new();
+    assert_eq!(maximize_delta(&mut dvnt, &mut dp), 5.0);
+    Ok(())
+}
+
+#[test]
+fn test_maximize_delta_picks_best_not_sum_for_overlapping_variants() -> Result<()> {
+    let v1 = FakeVariant::new(0, 5); // [0,5)
+    let v2 = FakeVariant::new(2, 5); // [2,7) overlaps v1
+    let mut e1 = Eval::new();
+    e1.set_variant(&v1);
+    e1.update(0.0, 10.0); // delta 10
+    let mut e2 = Eval::new();
+    e2.set_variant(&v2);
+    e2.update(0.0, 3.0); // delta 3
+    let mut dvnt: FragEvalVec<'_> = smallvec![smallvec![e1, e2]];
+    let mut dp = SmallVec::new();
+    assert_eq!(maximize_delta(&mut dvnt, &mut dp), 10.0); // not 13.0
     Ok(())
 }

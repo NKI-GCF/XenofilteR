@@ -1,6 +1,9 @@
-use anyhow::{Result, ensure};
+use crate::{
+    bam::BamFormat,
+    penalty::{Penalty, MAX_Q},
+};
+use anyhow::{ensure, Result};
 use clap::{Parser, ValueEnum};
-use crate::{bam::BamFormat, penalty::{MAX_Q, Penalty}};
 use std::path::PathBuf;
 
 const ARG_MAX: usize = 4;
@@ -169,4 +172,5 @@ impl Config {
     }
 }
 
-
+#[cfg(test)]
+pub(crate) mod tests;

@@ -1,15 +1,18 @@
+use crate::alignment::{BaseOp, MdCigFlags, ScoreOpIter};
 use anyhow::Result;
+use noodles::core::Position;
 use noodles::sam::alignment::{
-    record::{Flags, cigar::{op::Kind, Op}}, record_buf::{Cigar, RecordBuf, Sequence, QualityScores},
+    record::data::field::Tag,
+    record_buf::{data::field::Value, Data},
+};
+use noodles::sam::alignment::{
+    record::{
+        cigar::{op::Kind, Op},
+        Flags,
+    },
+    record_buf::{Cigar, QualityScores, RecordBuf, Sequence},
 };
 use std::iter::repeat;
-use noodles::sam::{
-    alignment::{
-        record::data::field::Tag,
-        record_buf::{data::field::Value, Data},
-    },
-};
-use noodles::core::Position;
 
 pub(crate) fn create_cigar(cigar: &str) -> Result<Cigar> {
     let mut ops = Vec::new();
@@ -96,3 +99,99 @@ pub(crate) fn create_record(
     Ok(record)
 }
 
+fn op_repr(op: &BaseOp) -> String {
+    match op {
+        BaseOp::Match => "M".into(),
+        BaseOp::Mis => "X".into(),
+        BaseOp::Del(n) => format!("D{n}"),
+        BaseOp::Ins(n) => format!("I{n}"),
+        BaseOp::Clip(n) => format!("C{n}"),
+        BaseOp::RefSkip(n) => format!("N{n}"),
+        BaseOp::Relocate { pos, .. } => format!("R{pos}"),
+    }
+}
+
+fn ops_for(cigar: &str, md: &str) -> Result<Vec<String>> {
+    let rec = create_record(b"r", cigar, &[], &[], md, false)?;
+    let flags = rec.flags();
+    let mcf = MdCigFlags::try_from_record(&rec, &flags)?;
+    let ops: Result<Vec<BaseOp>, _> = ScoreOpIter::new(&mcf).collect();
+    Ok(ops
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+        .iter()
+        .map(op_repr)
+        .collect())
+}
+
+#[test]
+fn test_pure_match() -> Result<()> {
+    assert_eq!(ops_for("5M", "5")?, vec!["M", "M", "M", "M", "M"]);
+    Ok(())
+}
+
+#[test]
+fn test_single_mismatch() -> Result<()> {
+    assert_eq!(ops_for("5M", "2A2")?, vec!["M", "M", "X", "M", "M"]);
+    Ok(())
+}
+
+#[test]
+fn test_consecutive_mismatches() -> Result<()> {
+    // MD "1AC2": 1 match, 2 consecutive mismatches, 2 matches = 5 bases
+    assert_eq!(ops_for("5M", "1AC2")?, vec!["M", "X", "X", "M", "M"]);
+    Ok(())
+}
+
+#[test]
+fn test_insertion_not_consumed_by_md_and_grouped() -> Result<()> {
+    assert_eq!(ops_for("2M2I2M", "4")?, vec!["M", "M", "I2", "M", "M"]);
+    Ok(())
+}
+
+#[test]
+fn test_deletion_consumes_caret_block() -> Result<()> {
+    assert_eq!(ops_for("2M3D2M", "2^AAA2")?, vec!["M", "M", "D3", "M", "M"]);
+    Ok(())
+}
+
+#[test]
+fn test_soft_clip_is_single_grouped_op() -> Result<()> {
+    assert_eq!(ops_for("3S5M", "5")?, vec!["C3", "M", "M", "M", "M", "M"]);
+    Ok(())
+}
+
+#[test]
+fn test_ref_skip_not_consumed_by_md() -> Result<()> {
+    assert_eq!(ops_for("2M3N2M", "4")?, vec!["M", "M", "N3", "M", "M"]);
+    Ok(())
+}
+
+#[test]
+fn test_hard_clip_and_pad_are_invisible_to_iterator() -> Result<()> {
+    assert_eq!(ops_for("2H5M2H", "5")?, vec!["M", "M", "M", "M", "M"]);
+    assert_eq!(ops_for("2M2P2M", "4")?, vec!["M", "M", "M", "M"]);
+    Ok(())
+}
+
+#[test]
+fn test_sequence_match_mismatch_kinds_route_through_md() -> Result<()> {
+    assert_eq!(ops_for("5=", "5")?, vec!["M", "M", "M", "M", "M"]);
+    Ok(())
+}
+
+#[test]
+fn test_multidigit_md_run_length() -> Result<()> {
+    assert_eq!(ops_for("12M", "12")?.len(), 12);
+    Ok(())
+}
+
+#[test]
+fn test_deletion_length_mismatch_is_error() {
+    // CIGAR deletes 3 bases, MD caret block only has 2 — must error, not silently desync.
+    assert!(ops_for("2M3D2M", "2^AA2").is_err());
+}
+
+#[test]
+fn test_invalid_md_character_is_error() {
+    assert!(ops_for("4M", "2x2").is_err());
+}

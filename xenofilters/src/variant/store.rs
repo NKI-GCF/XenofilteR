@@ -103,3 +103,6 @@ impl<V: Variant> Store<V> {
         hits
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -447,7 +447,7 @@ fn test_handle_ordering_ambiguous_when_below_threshold_and_negative_delta() -> R
     // Also test negative-delta case (we flip sign internally)
     // (reuse the same best – just swap first/last scores by changing order or use a second mock)
     // The code already does `delta = -delta` and then uses the positive value for phred.
-    let mut best_flipped: AlnBuffer<RecordBuf> = smallvec![
+    let best_flipped: AlnBuffer<RecordBuf> = smallvec![
         FragmentState::from_record(create_record(b"R1", "5M5S", &[], &[], "5", false)?, 1)?,
         FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0)?,
     ];
