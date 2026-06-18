@@ -1,7 +1,9 @@
 # XenofilteR
 
-12-1-2026: The rust branch contains an experimental alternative implementation that requires less RAM.
-The rust version requires fastq order input, or name sorted (samtools collate is not enough).
+19-06-2026: The xenofilters directory contains an experimental alternative implementation, written in rust,
+that requires less RAM. The rust version requires fastq order input (unsorted), or name sorted. 
+The output of samtools collate is not enough, as that does not guarantee reads from the two
+streams match in order.
 
 XenofilteR: computational deconvolution of mouse and human reads in tumor xenograft sequence data
 
