@@ -1,20 +1,24 @@
 # xenofilter — Rust implementation
 
-Fast, streaming read classifier for xenograft / PDX data.
+Fast, streaming read classifier
+ - to assign xenograft / PDX data to host (or graft).
+ - to compare two alignment algorithms.
+ - to assign viral integration data to host or pathogen.
+ - to assign viral integration in xenograft data to host, graft or pathogen.
 
 Compares multiple aligned BAM streams (host vs graft vs ...) per fragment and decides:
 
-- best alignment → -o / stdout
-- worse but still usable → --filtered-output
-- ambiguous → --ambiguous-output
+- alignment is better than in other species → -o / stdout
+- ambiguous is as good or too close to other species→ --ambiguous-output
+- alignment is worse than in other species → --filtered-output
 
 ## Features (compared to original XenofilteR)
 
 - Streaming / low-memory mode when read names are sorted identically
 - Optional variant-aware rescue from VCF
 - Rust performance & safety
-- Custom BAM tags with decision score (planned)
-- @PG header line (planned)
+- Custom BAM tags with decision score
+- @PG header line
 
 When --add-decision-tag is used, winning records receive an aux tag:
 
@@ -27,7 +31,3 @@ When --add-decision-tag is used, winning records receive an aux tag:
 
 cargo build --release
 ./target/release/xenofilter host.bam graft.bam -o best.bam -f mouse.bam -a ambiguous.bam
-
-## See also
-
-Original XenofilteR (R): https://github.com/NKI-GCF/XenofilteR
