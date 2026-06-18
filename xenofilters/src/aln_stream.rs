@@ -12,6 +12,7 @@ use noodles::sam::header::Header;
 use noodles::sam::alignment::io::Write;
 use crate::alignment::SimpleRec;
 use noodles::sam::alignment::record_buf::RecordBuf;
+use std::path::PathBuf;
 
 
 pub(crate) trait AlignmentStream<R: SimpleRec> {
@@ -107,12 +108,12 @@ impl AlnStream<Record> {
         let sample_variants = opt
             .sample_variants
             .get(i)
-            .map(|p| Store::new(p, parse_sample_record))
+            .map(|s| Store::new(&PathBuf::try_from(s)?, parse_sample_record))
             .transpose()?;
         let population_variants = opt
             .population_variants
             .get(i)
-            .map(|p| Store::new(p, parse_population_record))
+            .map(|s| Store::new(&PathBuf::try_from(s)?, parse_population_record))
             .transpose()?;
 
         // check output paths are unicode here, so we hopefully only create files once all are ok.

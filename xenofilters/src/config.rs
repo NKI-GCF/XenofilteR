@@ -80,7 +80,7 @@ pub(crate) struct Config {
     pub(crate) population_variants: Vec<String>,
 
     /// Add an XF tag to the records.
-    #[arg(short, long, default_value = "false")]
+    #[arg(short='A', long, default_value = "false")]
     pub(crate) add_decision_tag: bool,
 
     /// Don't add a PG line to the output BAM header.
@@ -96,6 +96,7 @@ pub(crate) struct Config {
     #[arg(short, long, default_value = "false")]
     pub(crate) skip_secondary: bool,
 
+    /// Explicitly indicate that reads are paired-end
     #[arg(short, long)]
     pub(crate) is_paired: Option<bool>,
 
@@ -109,7 +110,7 @@ impl Config {
     pub(super) fn validate_and_init(&mut self) -> Result<()> {
         let aln_count = self.alignment.len();
 
-        // 1. Guard against single-stream niche execution accidents
+        // 1. Guard against single-stream niche execution accidents first
         if aln_count == 1 {
             ensure!(
                 self.single_alignment_mode,
@@ -124,31 +125,62 @@ impl Config {
                 !self.single_alignment_mode,
                 "--single-alignment-mode can only be used with exactly 1 alignment stream."
             );
-        }
-
-        // 2. Enforce Variant Assertions
-        let total_variants = self.sample_variants.len() + self.population_variants.len();
-        if aln_count == 1 {
             ensure!(
-                total_variants >= 2,
-                "Single alignment mode requires at least two variant sets (sample or population) to differentiate strains."
+                aln_count >= 2,
+                "At least two alignments required when not running in single alignment mode."
             );
         }
 
-        // 3. Output bounds validation
-        // In single alignment mode, we treat it logically as 2 streams, so we bound check using 2
-        let effective_aln_len = if aln_count == 1 { 2 } else { aln_count };
+        // Determine effective dimensions (logical comparisons)
+        let logical_len = if aln_count == 1 { 2 } else { aln_count };
 
+        // 2. Parse, validate, and normalize variant arrays to size matching comparisons
+        let mut normalized_samples = vec![PathBuf::new(); logical_len];
+        let mut normalized_populations = vec![PathBuf::new(); logical_len];
+
+        // Tracker to ensure each logical stream has at least one variant track assigned to it
+        let mut stream_has_variants = vec![false; logical_len];
+
+        // Parse explicit prefixes (e.g., "0:file.vcf") or default to position zip index
+        for (i, arg) in self.sample_variants.iter().enumerate() {
+            let (idx, path) = Self::parse_variant_string(arg, i)?;
+            ensure!(idx < logical_len, "Sample variant stream index {idx} out of bounds");
+            normalized_samples[idx] = path;
+            stream_has_variants[idx] = true;
+        }
+
+        for (i, arg) in self.population_variants.iter().enumerate() {
+            let (idx, path) = Self::parse_variant_string(arg, i)?;
+            ensure!(idx < logical_len, "Population variant stream index {idx} out of bounds");
+            normalized_populations[idx] = path;
+            stream_has_variants[idx] = true;
+        }
+
+        // Enforce structural strain variations requirement
+        if aln_count == 1 {
+            ensure!(
+                stream_has_variants[0] && stream_has_variants[1],
+                "Single alignment mode requires both strain slots (index 0 and 1) to have a variant profile. \
+                An option like '--sample-variant 0:a.vcf --population-variant 0:b.vcf' is invalid because strain 1 has no variations."
+            );
+        }
+
+        // Overwrite raw user input string vectors with fully populated, position-normalized PathBuf tracks
+        // NOTE: If you change these to Vec<PathBuf> in the Config struct, update the struct definitions!
+        // For compliance with remaining downstream code expecting strings, we map them back to strings.
+        self.sample_variants = normalized_samples.into_iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        self.population_variants = normalized_populations.into_iter().map(|p| p.to_string_lossy().into_owned()).collect();
+
+        // 3. Output bounds validation
         ensure!(
-            self.output.len() <= effective_aln_len,
+            self.output.len() <= logical_len,
             "More output paths than logical alignment processing streams specified"
         );
         ensure!(
-            self.filtered_output.len() <= effective_aln_len,
+            self.filtered_output.len() <= logical_len,
             "More filtered output paths than logical alignment processing streams specified"
         );
 
-        // Strict requirement from prompt: There should be only one ambiguous output file in this case
         if aln_count == 1 {
             ensure!(
                 self.ambiguous_output.len() <= 1,
@@ -156,7 +188,7 @@ impl Config {
             );
         } else {
             ensure!(
-                self.ambiguous_output.len() <= effective_aln_len,
+                self.ambiguous_output.len() <= logical_len,
                 "More ambiguous output paths than input specified"
             );
         }
@@ -174,14 +206,14 @@ impl Config {
         }
         Ok(())
     }
-    /// Helper to parse the explicit prefix bindings if provided, otherwise defaults to index
-    pub(crate) fn parse_variant_arg(arg: &str, default_idx: usize) -> (usize, PathBuf) {
+    /// Internal string parser to resolve explicit vs implicit stream indices
+    fn parse_variant_string(arg: &str, default_idx: usize) -> Result<(usize, PathBuf)> {
         if let Some((idx_str, path_str)) = arg.split_once(':') {
             if let Ok(idx) = idx_str.parse::<usize>() {
-                return (idx, PathBuf::from(path_str));
+                return Ok((idx, PathBuf::from(path_str)));
             }
         }
-        (default_idx, PathBuf::from(arg))
+        Ok((default_idx, PathBuf::from(arg)))
     }
     pub(super) fn to_penalties(&self) -> Penalty {
         let mut error_prob = [0.0_f64; MAX_Q];

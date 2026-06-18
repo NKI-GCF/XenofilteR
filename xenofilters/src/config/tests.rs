@@ -1,8 +1,25 @@
 use super::*;
 
+/*fn base_config() -> Config {
+    Config {
+        alignment: vec!["a.bam".into(), "b.bam".into()],
+        gap_open: 6.0,
+        gap_extend: 1.0,
+        mismatch_penalty: 4.0,
+        ..Default::default()
+    }
+}*/
+
 fn base_config() -> Config {
     Config {
         alignment: vec!["a.bam".into(), "b.bam".into()],
+        output: vec!["out1.bam".into(), "out2.bam".into()],
+        filtered_output: vec![],
+        ambiguous_output: vec![],
+        sample_variants: vec![],
+        population_variants: vec![],
+        single_alignment_mode: false,
+        read_from_stdin: false,
         gap_open: 6.0,
         gap_extend: 1.0,
         mismatch_penalty: 4.0,
@@ -88,23 +105,6 @@ fn test_validate_rejects_plain_default_config() {
     assert!(c.validate_and_init().is_err());
 }
 
-/// BUG (documented, not just a coverage gap): `read_from_stdin` requires
-/// `alignment.len() >= 2` (one ensure!) AND `alignment.len() == 1` (the stdin
-/// ensure!) simultaneously. These can never both hold, so `--read-from-stdin`
-/// is currently rejected unconditionally by validate_and_init, regardless of
-/// alignment count.
-#[test]
-fn test_read_from_stdin_is_currently_always_rejected() {
-    let mut c = base_config(); // 2 alignments
-    c.read_from_stdin = true;
-    assert!(c.validate_and_init().is_err());
-
-    let mut c2 = base_config();
-    c2.alignment = vec!["a.bam".into()]; // 1 alignment
-    c2.read_from_stdin = true;
-    assert!(c2.validate_and_init().is_err()); // fails the ">=2" check instead
-}
-
 #[test]
 fn test_to_penalties_q0_is_certain_error() {
     let p = base_config().to_penalties();
@@ -128,4 +128,135 @@ fn test_to_penalties_mismatch_scaling_factor() {
 fn test_to_penalties_match_likelihood_improves_with_quality() {
     let p = base_config().to_penalties();
     assert!(p.log_likelihood_match[40] > p.log_likelihood_match[10]);
+}
+
+/// Fixes the failing test. `read_from_stdin` with 2 alignments is now perfectly valid
+/// (returns Ok), but reading from stdin with 1 alignment under single-alignment mode is rejected.
+#[test]
+fn test_read_from_stdin_constraints() {
+    // Multi-alignment standard streaming is fine
+    let mut c = base_config();
+    c.read_from_stdin = true;
+    assert!(c.validate_and_init().is_ok(), "Standard multi-stream from stdin should pass validation");
+
+    // Single-alignment mode from stdin is strictly banned (cannot read twice)
+    let mut c2 = base_config();
+    c2.alignment = vec!["a.bam".into()];
+    c2.output = vec!["out1.bam".into(), "out2.bam".into()];
+    c2.single_alignment_mode = true;
+    c2.read_from_stdin = true;
+    c2.sample_variants = vec!["0:var1.vcf".into()];
+    c2.population_variants = vec!["1:var2.vcf".into()];
+
+    let res = c2.validate_and_init();
+    assert!(res.is_err(), "Single alignment mode must reject stdin");
+    assert!(
+        res.unwrap_err().to_string().contains("Cannot use single alignment mode with stdin"),
+        "Error message should mention stdin restrictions"
+    );
+}
+
+#[test]
+fn test_single_alignment_mode_requires_flag() {
+    let mut c = base_config();
+    c.alignment = vec!["single_strain.bam".into()];
+    c.output = vec!["out1.bam".into()];
+
+    let res = c.validate_and_init();
+    assert!(res.is_err());
+    assert!(
+        res.unwrap_err().to_string().contains("--single-alignment-mode"),
+        "Should fail with explicit flag reminder string"
+    );
+}
+#[test]
+fn test_single_alignment_mode_variant_assertions() {
+    // Case A: Missing variants entirely (0 variants total)
+    let mut c = base_config();
+    c.alignment = vec!["single_strain.bam".into()];
+    c.single_alignment_mode = true;
+
+    let res = c.validate_and_init();
+    assert!(res.is_err());
+    assert!(res.unwrap_err().to_string().contains("requires both strain slots"));
+
+    // Case B: Only 1 variant profile given (insufficient to differentiate strains)
+    let mut c = base_config();
+    c.alignment = vec!["single_strain.bam".into()];
+    c.single_alignment_mode = true;
+    c.sample_variants = vec!["0:strain_a.vcf".into()];
+
+    assert!(c.validate_and_init().is_err());
+
+    // Case C: Mix match of 1 sample and 1 population variant profile (Total = 2, Valid!)
+    let mut c = base_config();
+    c.alignment = vec!["single_strain.bam".into()];
+    c.single_alignment_mode = true;
+    c.sample_variants = vec!["0:strain_a.vcf".into()];
+    c.population_variants = vec!["1:strain_b.vcf".into()];
+
+    assert!(c.validate_and_init().is_ok(), "1 sample + 1 population profile is fully valid");
+}
+
+#[test]
+fn test_single_alignment_ambiguous_output_cap() {
+    let mut c = base_config();
+    c.alignment = vec!["single_strain.bam".into()];
+    c.single_alignment_mode = true;
+    c.sample_variants = vec!["0:a.vcf".into(), "1:b.vcf".into()];
+
+    // Attaching 2 ambiguous outputs for single-stream virtual splits is forbidden
+    c.ambiguous_output = vec!["ambig1.bam".into(), "ambig2.bam".into()];
+
+    let res = c.validate_and_init();
+    assert!(res.is_err());
+    assert!(res.unwrap_err().to_string().contains("Only one ambiguous output file is allowed"));
+}
+
+#[test]
+fn test_flag_mismatch_on_multi_alignment() {
+    let mut c = base_config(); // Has 2 alignments
+    c.single_alignment_mode = true; // User passed the flag accidentally
+
+    let res = c.validate_and_init();
+    assert!(res.is_err());
+    assert!(res.unwrap_err().to_string().contains("can only be used with exactly 1 alignment stream"));
+}
+
+
+#[test]
+fn test_invalid_variant_index_grouping_on_single_alignment() {
+    let mut c = base_config();
+    c.alignment = vec!["single_strain.bam".into()];
+    c.single_alignment_mode = true;
+
+    // Error case: both variations are targeting strain index 0. Strain index 1 remains empty.
+    c.sample_variants = vec!["0:file1.vcf".into()];
+    c.population_variants = vec!["0:pop_snps.vcf".into()];
+
+    let res = c.validate_and_init();
+    assert!(res.is_err());
+    assert!(res.unwrap_err().to_string().contains("requires both strain slots (index 0 and 1) to have a variant profile"));
+}
+
+#[test]
+fn test_variant_array_padding_normalization() {
+    let mut c = base_config();
+    c.alignment = vec!["single_strain.bam".into()];
+    c.single_alignment_mode = true;
+
+    // Provide sample variant only for index 0 and population variant only for index 1
+    c.sample_variants = vec!["0:varA.vcf".into()];
+    c.population_variants = vec!["1:varB.vcf".into()];
+
+    assert!(c.validate_and_init().is_ok());
+
+    // Assert structural backfilling:
+    // Slot 0 sample variant exists, slot 1 sample variant must be empty string
+    assert_eq!(c.sample_variants[0], "varA.vcf");
+    assert_eq!(c.sample_variants[1], "");
+
+    // Slot 0 pop variant must be empty string, slot 1 pop variant exists
+    assert_eq!(c.population_variants[0], "");
+    assert_eq!(c.population_variants[1], "varB.vcf");
 }
