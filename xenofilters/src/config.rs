@@ -38,7 +38,7 @@ pub(crate) struct Config {
 
     /// Input alignments to compare. If the same readnames are consecutive and in the same order for
     /// all inputs, a low memory non-hashing strategy is adopted.
-    #[arg(required = true, num_args = 2..ARG_MAX)]
+    #[arg(required = true, num_args = 1..ARG_MAX)]
     pub(crate) alignment: Vec<String>,
 
     /// Read first alignment from stdin; enforced with only one input alignment
@@ -69,11 +69,15 @@ pub(crate) struct Config {
     #[arg(short = 'R', long, default_value = "auto")]
     pub(crate) strip_read_suffix: StripReadSuffix,
 
+    /// Sample-specific variants used for variant-aware scoring.
+    /// For single alignments, prefix with index (e.g., '0:file.vcf').
     #[arg(short, long, num_args = 0..ARG_MAX)]
-    pub(crate) sample_variants: Vec<PathBuf>,
+    pub(crate) sample_variants: Vec<String>,
 
+    /// Population variants used for variant-aware scoring.
+    /// For single alignments, prefix with index (e.g., '1:file.vcf').
     #[arg(short, long, num_args = 0..ARG_MAX)]
-    pub(crate) population_variants: Vec<PathBuf>,
+    pub(crate) population_variants: Vec<String>,
 
     /// Add an XF tag to the records.
     #[arg(short, long, default_value = "false")]
@@ -94,30 +98,68 @@ pub(crate) struct Config {
 
     #[arg(short, long)]
     pub(crate) is_paired: Option<bool>,
+
+    /// Required explicit flag to allow running with only a single alignment stream
+    /// using strain-specific variant profiles.
+    #[arg(long)]
+    pub(crate) single_alignment_mode: bool,
 }
 
 impl Config {
     pub(super) fn validate_and_init(&mut self) -> Result<()> {
+        let aln_count = self.alignment.len();
+
+        // 1. Guard against single-stream niche execution accidents
+        if aln_count == 1 {
+            ensure!(
+                self.single_alignment_mode,
+                "Single alignment stream detected. If this is intentional for within-species disambiguation, please pass --single-alignment-mode."
+            );
+            ensure!(
+                !self.read_from_stdin,
+                "Cannot use single alignment mode with stdin because the stream must be duplicated via file system access."
+            );
+        } else {
+            ensure!(
+                !self.single_alignment_mode,
+                "--single-alignment-mode can only be used with exactly 1 alignment stream."
+            );
+        }
+
+        // 2. Enforce Variant Assertions
+        let total_variants = self.sample_variants.len() + self.population_variants.len();
+        if aln_count == 1 {
+            ensure!(
+                total_variants >= 2,
+                "Single alignment mode requires at least two variant sets (sample or population) to differentiate strains."
+            );
+        }
+
+        // 3. Output bounds validation
+        // In single alignment mode, we treat it logically as 2 streams, so we bound check using 2
+        let effective_aln_len = if aln_count == 1 { 2 } else { aln_count };
+
         ensure!(
-            self.output.len() <= self.alignment.len(),
-            "More output than input specified"
+            self.output.len() <= effective_aln_len,
+            "More output paths than logical alignment processing streams specified"
         );
         ensure!(
-            self.filtered_output.len() <= self.alignment.len(),
-            "More filtered output than input specified"
+            self.filtered_output.len() <= effective_aln_len,
+            "More filtered output paths than logical alignment processing streams specified"
         );
-        ensure!(
-            self.ambiguous_output.len() <= self.alignment.len(),
-            "More ambiguous output than input specified"
-        );
-        ensure!(
-            self.alignment.len() >= 2,
-            "At least two alignments required"
-        );
-        ensure!(
-            !self.read_from_stdin || self.alignment.len() == 1,
-            "Cannot read from stdin with multiple input alignments"
-        );
+
+        // Strict requirement from prompt: There should be only one ambiguous output file in this case
+        if aln_count == 1 {
+            ensure!(
+                self.ambiguous_output.len() <= 1,
+                "Only one ambiguous output file is allowed when operating on a single alignment stream."
+            );
+        } else {
+            ensure!(
+                self.ambiguous_output.len() <= effective_aln_len,
+                "More ambiguous output paths than input specified"
+            );
+        }
         if self.gap_open > 0.0 {
             self.gap_open = -self.gap_open;
         }
@@ -131,6 +173,15 @@ impl Config {
             ));
         }
         Ok(())
+    }
+    /// Helper to parse the explicit prefix bindings if provided, otherwise defaults to index
+    pub(crate) fn parse_variant_arg(arg: &str, default_idx: usize) -> (usize, PathBuf) {
+        if let Some((idx_str, path_str)) = arg.split_once(':') {
+            if let Ok(idx) = idx_str.parse::<usize>() {
+                return (idx, PathBuf::from(path_str));
+            }
+        }
+        (default_idx, PathBuf::from(arg))
     }
     pub(super) fn to_penalties(&self) -> Penalty {
         let mut error_prob = [0.0_f64; MAX_Q];
