@@ -1,4 +1,4 @@
-use crate::alignment::MdCigFlags;
+use crate::alignment::{MdCigFlags, VariantWindow, weighted_ref_score, align_alt_to_read};
 use crate::alignment::{AlignmentError, BaseOp, ScoreOpIter};
 use crate::filter_algorithm::line_by_line::{Scratch, READ_CT};
 use crate::penalty::{Penalty, MAX_Q};
@@ -253,7 +253,6 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             current_seg_ori != other_seg_ori
         }
     }
-
     /// Score a variant's alt allele against read bases from a specific segment.
     /// `ref_start` and `ref_end` define the reference window to score within this segment.
     fn score_variant_in_seg<'v>(
@@ -266,103 +265,51 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         ref_start: usize,
         ref_end: usize,
     ) -> Result<Option<(f64, f64)>> {
-        // (weighted_ref_score, alt_score)
         let vnt_eval = &dvnt[dvnt_i][dvnt_j];
-        let vnt_start = vnt_eval.start();
+        let window = match VariantWindow::compute(ref_start, ref_end, vnt_eval.start(), vnt_eval.ref_end()) {
+            Some(w) => w,
+            None => return Ok(None),
+        };
 
-        // Clamp the ref window to the variant's ref span
-        let eff_ref_start = ref_start.max(vnt_start);
-        let eff_ref_end = ref_end.min(vnt_eval.ref_end());
-        let ref_len = eff_ref_end - eff_ref_start;
-
-        // Derive the alt slice from the ref offset (valid for MNPs; see caveat below)
-        let ref_consumed = eff_ref_start - vnt_eval.start();
         let vnt = vnt_eval.vnt();
         let alt = vnt.alt_allele();
-        let alt_slice = &alt[ref_consumed.min(alt.len())..(ref_consumed + ref_len).min(alt.len())];
-        if alt_slice.is_empty() && ref_len == 0 {
-            return Ok(None);
-        }
-
         let p_variant = vnt.p_variant();
         let seg_ref_start = self.seg_start[seg_i];
-        let nt_offset = eff_ref_start - seg_ref_start;
 
-        // Weighted ref score over the overlapping bases
-        let mut weighted_ref_score = 0.0;
-        for j in 0..(eff_ref_end - eff_ref_start) {
-            let q = self.q(seg_i, nt_offset + j)?;
-            let lm = self.pen.log_likelihood_match[q];
-            let lmm = self.pen.log_likelihood_mismatch[q];
-            // ref path: read matches ref, so weight by (1 - p_variant)
-            weighted_ref_score += (1.0 - p_variant) * lm + p_variant * lmm;
-        }
+        let weighted_ref = weighted_ref_score(window, seg_ref_start, p_variant, self.pen, |nt_i| {
+            self.q(seg_i, nt_i)
+        })?;
 
-        let n = alt.len();
-        let m = n.max(ref_len);
-
-        scratch.resize_nw(m + 1);
-
-        // Initialise first row: gaps in the read (deletions relative to alt)
-        scratch.prev[0].reinit(self.pen.gap_open, self.pen.gap_extend, 0);
-        for (j, p) in scratch.prev.iter_mut().enumerate().take(m + 1).skip(1) {
-            p.reinit(self.pen.gap_open, self.pen.gap_extend, -(j as i32));
-        }
-
-        let nt_i_base = eff_ref_start - seg_ref_start;
+        let read_offset = window.read_offset(seg_ref_start);
         let revcmp = self.requires_revcmp(seg_i);
         let seq = self.seg[seg_i].sequence();
         let seq_len = seq.len();
 
-        for i in 1..=n {
-            let alt_base = alt[i - 1];
-            scratch.curr[0].reinit(self.pen.gap_open, self.pen.gap_extend, i as i32);
-
-            for j in 1..=m {
-                let fwd_nt_i = nt_i_base + j - 1;
+        let alt_score = align_alt_to_read(
+            alt,
+            read_offset,
+            window.ref_len,
+            p_variant,
+            self.pen,
+            |fwd_nt_i| {
                 let (read_base, q_nt_i) = if revcmp {
                     let ri = seq_len - 1 - fwd_nt_i;
-                    let b = seq.get(ri).unwrap_or(b'N');
-                    (complement(b), ri)
+                    (complement(seq.get(ri).unwrap_or(b'N')), ri)
                 } else {
                     (seq.get(fwd_nt_i).unwrap_or(b'N'), fwd_nt_i)
                 };
-                let q = self.q(seg_i, q_nt_i)?;
+                Ok((read_base, self.q(seg_i, q_nt_i)?))
+            },
+            scratch,
+        )?;
 
-                let lm = self.pen.log_likelihood_match[q];
-                let lmm = self.pen.log_likelihood_mismatch[q];
+        #[cfg(test)]
+        eprintln!(
+            "[score_variant_in_seg] vnt=[{},{}) window={window:?} read_offset={read_offset} weighted_ref={weighted_ref} alt_score={alt_score}",
+            vnt_eval.start(), vnt_eval.ref_end()
+        );
 
-                // Weight match/mismatch score by variant probability,
-                // mirroring score_alt_match / score_ref_match
-                let per_base_score = if alt_base == read_base {
-                    p_variant * lm + (1.0 - p_variant) * lmm
-                } else {
-                    (1.0 - p_variant) * lm + p_variant * lmm
-                };
-
-                scratch.curr[j].m = per_base_score
-                    + scratch.prev[j - 1]
-                        .m
-                        .max(scratch.prev[j - 1].i)
-                        .max(scratch.prev[j - 1].d);
-
-                scratch.curr[j].i =
-                    (scratch.curr[j - 1].m + self.pen.gap_open + self.pen.gap_extend)
-                        .max(scratch.curr[j - 1].i + self.pen.gap_extend);
-
-                scratch.curr[j].d = (scratch.prev[j].m + self.pen.gap_open + self.pen.gap_extend)
-                    .max(scratch.prev[j].d + self.pen.gap_extend);
-            }
-
-            scratch.swap_nw();
-        }
-
-        let alt_score = scratch.prev[m]
-            .m
-            .max(scratch.prev[m].i)
-            .max(scratch.prev[m].d);
-
-        Ok(Some((weighted_ref_score, alt_score)))
+        Ok(Some((weighted_ref, alt_score)))
     }
 }
 

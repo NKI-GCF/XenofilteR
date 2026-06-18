@@ -3,12 +3,14 @@ mod fragment;
 mod fragment_state;
 mod md_cig_flags;
 mod ops;
+mod variant_window;
 
 pub(crate) use errors::AlignmentError;
 pub(crate) use fragment::{Fragment, SimpleRec};
 pub(crate) use fragment_state::FragmentState;
 pub(crate) use md_cig_flags::MdCigFlags;
 pub(crate) use ops::{BaseOp, ScoreOpIter};
+pub(crate) use variant_window::{VariantWindow, weighted_ref_score, align_alt_to_read};
 
 use noodles::sam::alignment::record::cigar::op::Kind;
 use noodles::sam::alignment::record::data::field::{Tag, Value};
