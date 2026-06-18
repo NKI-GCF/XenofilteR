@@ -83,14 +83,24 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         scratch: &mut Scratch,
         dvnt: &mut FragEvalVec<'v>,
     ) -> Result<f64, AlignmentError> {
-        let mut score = self.score_with_variant(scratch, dvnt, 0)?;
+        // Variants fully covered mid-scan get moved here (see
+        // score_variants_in_window) so they aren't re-processed/double-counted
+        // by later windows in the same segment, but still reach maximize_delta.
+        let mut finished: FragEvalVec<'v> = (0..dvnt.len()).map(|_| SmallVec::new()).collect();
+
+        let mut score = self.score_with_variant(scratch, dvnt, &mut finished, 0)?;
 
         for i in 1..self.seg.len() {
             self.seg_i = i;
             self.refpos = self.seg_start[i];
             self.nt_i = 0;
-            score += self.score_with_variant(scratch, dvnt, i)?;
+            score += self.score_with_variant(scratch, dvnt, &mut finished, i)?;
         }
+
+        for (d, f) in dvnt.iter_mut().zip(finished.iter_mut()) {
+            d.extend(f.drain(..));
+        }
+
         Ok(score + maximize_delta(dvnt, &mut scratch.dp))
     }
 
@@ -98,29 +108,21 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         &mut self,
         scratch: &mut Scratch,
         dvnt: &mut FragEvalVec<'v>,
+        finished: &mut FragEvalVec<'v>,
         i: usize,
     ) -> Result<f64> {
         let mut score = 0.0;
 
-        // Score variant bases that reach into segments before the current one.
         for prior_seg_i in 0..self.seg_i {
             if self.md_cig_flags[prior_seg_i].is_last_segment()
                 != self.md_cig_flags[self.seg_i].is_last_segment()
             {
-                continue; // skip read 1 read(s) when processing read 2
+                continue;
             }
             let seg_ref_start = self.seg_start[prior_seg_i];
             let seg_ref_end = seg_ref_start + self.seg[prior_seg_i].cigar().len();
-
-            // prior (or following) segment bases contribute to alt scoring only, no incurrence.
             self.score_variants_in_window(
-                scratch,
-                dvnt,
-                i,
-                prior_seg_i,
-                seg_ref_start,
-                seg_ref_end,
-                0.0,
+                scratch, dvnt, finished, i, prior_seg_i, seg_ref_start, seg_ref_end, 0.0,
             )?;
         }
 
@@ -181,13 +183,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             }
 
             self.score_variants_in_window(
-                scratch,
-                dvnt,
-                i,
-                self.seg_i,
-                ref_start,
-                self.refpos,
-                ref_score,
+                scratch, dvnt, finished, i, self.seg_i, ref_start, self.refpos, ref_score,
             )?;
             score += ref_score;
         }
@@ -196,45 +192,40 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             if self.md_cig_flags[next_seg_i].is_last_segment()
                 != self.md_cig_flags[self.seg_i].is_last_segment()
             {
-                break; // skip segments from read 2 when processing read 1
+                break;
             }
             let seg_ref_start = self.seg_start[next_seg_i];
             let seg_ref_end = seg_ref_start + self.seg[next_seg_i].sequence().len();
-
             self.score_variants_in_window(
-                scratch,
-                dvnt,
-                i,
-                next_seg_i,
-                seg_ref_start,
-                seg_ref_end,
-                0.0,
+                scratch, dvnt, finished, i, next_seg_i, seg_ref_start, seg_ref_end, 0.0,
             )?;
         }
 
         Ok(score)
     }
+
     fn score_variants_in_window<'v>(
         &self,
         scratch: &mut Scratch,
         dvnt: &mut FragEvalVec<'v>,
+        finished: &mut FragEvalVec<'v>,
         dvnt_i: usize,
         seg_i: usize,
         start: usize,
         end: usize,
-        ref_score: f64, // unweighted, for non-variant positions
+        ref_score: f64,
     ) -> Result<()> {
         let mut i = 0;
         while i < dvnt[dvnt_i].len() && dvnt[dvnt_i][i].start() < end {
             if let Some((weighted_ref_score, alt_score)) =
                 self.score_variant_in_seg(scratch, dvnt, dvnt_i, i, seg_i, start, end)?
             {
-                // Use weighted_ref_score instead of ref_score for variant positions
                 dvnt[dvnt_i][i].update(weighted_ref_score, alt_score);
                 let fully_processed =
                     dvnt[dvnt_i][i].ref_end() <= end && dvnt[dvnt_i][i].alt_end() <= end;
                 if fully_processed {
-                    dvnt[dvnt_i].remove(i);
+                    let done = dvnt[dvnt_i].remove(i);
+                    finished[dvnt_i].push(done);
                     continue;
                 }
             } else {
@@ -244,6 +235,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         }
         Ok(())
     }
+
     fn requires_revcmp(&self, seg_i: usize) -> bool {
         if seg_i == self.seg_i {
             false

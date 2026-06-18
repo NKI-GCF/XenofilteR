@@ -22,13 +22,15 @@ struct TestVariant {
     pos: usize,
     ref_a: Vec<u8>,
     alt_a: Vec<u8>,
+    p_variant: f64,
 }
 impl TestVariant {
-    fn new(pos: usize, len: usize) -> Self {
+    fn new(pos: usize, len: usize, p_variant: f64) -> Self {
         TestVariant {
             pos,
             ref_a: vec![b'A'; len],
             alt_a: vec![b'G'; len],
+            p_variant,
         }
     }
 }
@@ -43,7 +45,7 @@ impl Variant for TestVariant {
         &self.alt_a
     }
     fn p_variant(&self) -> f64 {
-        0.1
+        self.p_variant
     }
 }
 
@@ -102,6 +104,7 @@ fn mk_eval(pos: usize, ref_len: usize, alt_len: usize, delta: f64) -> Eval<'stat
         pos,
         ref_a: vec![b'A'; ref_len],
         alt_a: vec![b'A'; alt_len],
+        p_variant: 0.1,
     }));
     let mut eval = Eval::new();
     eval.set_variant(v);
@@ -214,29 +217,19 @@ fn maximize_delta_uses_max_ref_or_alt_end_for_insertions() {
 #[test]
 fn snp_alt_support_gives_positive_delta() -> Result<()> {
     let rec = create_record(b"read1", "5M", b"AAGAA", &[30; 5], "5", false)?;
-
     let flags = rec.flags();
-
     let p = setup_penalties();
+    let mut frag = Fragment::new(&p, smallvec![&rec], smallvec![MdCigFlags::try_from_record(&rec, &flags)?])?;
 
-    let mut frag = Fragment::new(
-        &p,
-        smallvec![&rec],
-        smallvec![MdCigFlags::try_from_record(&rec, &flags)?],
-    )?;
-
-    let v = TestVariant::new(3, 1);
+    // p_variant must exceed 0.5 for the current formula to ever favor alt
+    // over the weighted-reference baseline (delta = (2p-1)*(lm-lmm)).
+    let v = TestVariant::new(3, 1, 1.0);
 
     let mut dvnt = smallvec![smallvec![make_eval(&v)]];
     let mut scratch = Scratch::new();
-
     let score = frag.score(&mut scratch, &mut dvnt)?;
 
-    assert!(
-        score > 0.0,
-        "Expected positive score for read supporting alt allele, got {score}"
-    );
-
+    assert!(score > 0.0, "Expected positive score for read supporting alt allele, got {score}");
     Ok(())
 }
 
@@ -254,7 +247,7 @@ fn snp_ref_support_gives_no_bonus() -> Result<()> {
         smallvec![MdCigFlags::try_from_record(&rec, &flags)?],
     )?;
 
-    let v = TestVariant::new(3, 1);
+    let v = TestVariant::new(3, 1, 0.1);
 
     let mut dvnt = smallvec![smallvec![make_eval(&v)]];
     let mut scratch = Scratch::new();
@@ -276,7 +269,7 @@ fn test_maximize_delta_no_variants_is_zero() -> Result<()> {
 
 #[test]
 fn test_maximize_delta_ignores_non_positive_delta() -> Result<()> {
-    let v = TestVariant::new(0, 1);
+    let v = TestVariant::new(0, 1, 0.1);
     let mut e = Eval::new();
     e.set_variant(&v);
     e.update(5.0, 5.0); // delta == 0, filtered out
@@ -288,8 +281,8 @@ fn test_maximize_delta_ignores_non_positive_delta() -> Result<()> {
 
 #[test]
 fn test_maximize_delta_sums_non_overlapping_variants() -> Result<()> {
-    let v1 = TestVariant::new(0, 1); // end = 1
-    let v2 = TestVariant::new(10, 1); // end = 11
+    let v1 = TestVariant::new(0, 1, 0.1); // end = 1
+    let v2 = TestVariant::new(10, 1, 0.1); // end = 11
     let mut e1 = Eval::new();
     e1.set_variant(&v1);
     e1.update(0.0, 3.0); // delta 3
@@ -304,8 +297,8 @@ fn test_maximize_delta_sums_non_overlapping_variants() -> Result<()> {
 
 #[test]
 fn test_maximize_delta_picks_best_not_sum_for_overlapping_variants() -> Result<()> {
-    let v1 = TestVariant::new(0, 5); // [0,5)
-    let v2 = TestVariant::new(2, 5); // [2,7) overlaps v1
+    let v1 = TestVariant::new(0, 5, 0.1); // [0,5)
+    let v2 = TestVariant::new(2, 5, 0.1); // [2,7) overlaps v1
     let mut e1 = Eval::new();
     e1.set_variant(&v1);
     e1.update(0.0, 10.0); // delta 10
@@ -329,10 +322,46 @@ fn snp_no_alt_support_gives_nonpositive_delta() -> Result<()> {
         smallvec![&rec],
         smallvec![MdCigFlags::try_from_record(&rec, &flags)?],
     )?;
-    let v = TestVariant::new(3, 1);
+    let v = TestVariant::new(3, 1, 0.1);
     let mut dvnt = smallvec![smallvec![make_eval(&v)]];
     let mut scratch = Scratch::new();
     let score = frag.score(&mut scratch, &mut dvnt)?;
     assert!(score <= 0.0);
+    Ok(())
+}
+
+#[test]
+fn test_test_variant_p_variant_reflects_constructed_field() {
+    let v = TestVariant { pos: 0, ref_a: b"A".to_vec(), alt_a: b"G".to_vec(), p_variant: 1.0 };
+    assert_eq!(v.p_variant(), 1.0);
+    let v2 = TestVariant { pos: 0, ref_a: b"A".to_vec(), alt_a: b"G".to_vec(), p_variant: 0.25 };
+    assert_eq!(v2.p_variant(), 0.25);
+}
+
+#[test]
+fn snp_alt_support_with_low_prior_is_not_rescued() -> Result<()> {
+    let rec = create_record(b"read1", "5M", b"AAGAA", &[30; 5], "5", false)?;
+    let flags = rec.flags();
+    let p = setup_penalties();
+    let mut frag = Fragment::new(&p, smallvec![&rec], smallvec![MdCigFlags::try_from_record(&rec, &flags)?])?;
+    let v = TestVariant::new(3, 1, 0.1);
+    let mut dvnt = smallvec![smallvec![make_eval(&v)]];
+    let mut scratch = Scratch::new();
+    let score = frag.score(&mut scratch, &mut dvnt)?;
+    assert!(score <= 0.0, "expected no rescue at p_variant <= 0.5, got {score}");
+    Ok(())
+}
+
+#[test]
+fn snp_alt_support_boundary_p_variant_half_gives_zero_delta() -> Result<()> {
+    let rec = create_record(b"read1", "5M", b"AAGAA", &[30; 5], "5", false)?;
+    let flags = rec.flags();
+    let p = setup_penalties();
+    let mut frag = Fragment::new(&p, smallvec![&rec], smallvec![MdCigFlags::try_from_record(&rec, &flags)?])?;
+    let v = TestVariant::new(3, 1, 0.5);
+    let mut dvnt = smallvec![smallvec![make_eval(&v)]];
+    let mut scratch = Scratch::new();
+    let score = frag.score(&mut scratch, &mut dvnt)?;
+    assert!(score.abs() < 1e-9);
     Ok(())
 }
