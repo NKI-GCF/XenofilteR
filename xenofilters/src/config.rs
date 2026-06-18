@@ -88,17 +88,6 @@ pub(crate) struct Config {
     #[arg(short, long, default_value = "0", value_parser = clap::value_parser!(u32).range(..=0x8000))]
     pub(crate) ambiguous_threshold: u32,
 
-    /*/// Number of mismatches allowed in the second alignment
-    #[arg(short, long, default_value = "4")]
-    pub(crate) mismatch_threshold: u32,
-
-    /// Penalty given to unmapped reads in favor of the alternative alignment. Set to 0 to disable
-    #[arg(short, long, default_value = "8", value_parser = clap::value_parser!(u32).range(..0x8000))]
-    pub(crate) unmapped_penalty: u32,
-
-    /// Same, for mate. Defaults to same as first mapping penalty
-    #[arg(long, default_value = "32768", value_parser = clap::value_parser!(u32).range(..=0x8000))]
-    pub(crate) second_unmapped_penalty: u32,*/
     /// Skip secondary mappings even if the primary mapping is written
     #[arg(short, long, default_value = "false")]
     pub(crate) skip_secondary: bool,
