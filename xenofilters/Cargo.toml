@@ -1,5 +1,5 @@
 [package]
-name = "xenofilter"
+name = "xenofilters"
 version = "0.1.0"
 edition = "2024"
 description = "Fast alignment-based classifier / filter for xenograft (PDX) sequencing data — decides per read/fragment which species alignment is best"
@@ -22,7 +22,7 @@ thiserror = "2.0.18"
 noodles = { version = "0.111.0", features = ["bam", "cram", "async", "vcf", "sam", "bcf", "bgzf", "core"] }
 
 [[bin]]
-name = "xenofilter"
+name = "xenofilters"
 path = "src/main.rs"
 
 [[test]]
