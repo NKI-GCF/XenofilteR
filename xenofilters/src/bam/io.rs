@@ -16,7 +16,10 @@ fn add_pg_line(header: &mut Header) -> Result<()>{
     let program = Map::builder()
         .insert(tag::NAME, "xenofilter")
         .insert(tag::VERSION, env!("CARGO_PKG_VERSION"))
-        .insert(tag::COMMAND_LINE, std::env::args().collect::<Vec<_>>().join(" "))
+        .insert(
+            tag::COMMAND_LINE,
+            std::env::args().collect::<Vec<_>>().join(" "),
+        )
         .build()
         .expect("Failed to build PG record");
 
@@ -55,25 +58,39 @@ mod tests {
         assert!(path_unicode_ok("file with spaces.bam").is_ok());
         assert!(path_unicode_ok("file_with_üñîçødé.bam").is_ok());
     }
+
     #[test]
     fn test_add_pg_line() -> Result<()> {
         let mut header = Header::default();
         add_pg_line(&mut header)?;
         let pg = header.programs();
         let mut roots = pg.roots();
-        let (id, map): (&[u8], &_) = roots.next().map(|(id, map)| (id.as_ref(), map)).expect("No PG");
+        let (id, map): (&[u8], &_) = roots
+            .next()
+            .map(|(id, map)| (id.as_ref(), map))
+            .expect("No PG record written");
         assert_eq!(id, b"xenofilter");
 
         let of = map.other_fields();
-        let vn = of.get(&tag::VERSION).expect("VN").to_string();
-        let vn = vn.split('.').collect::<Vec<_>>();
-        let env_vn = env!("CARGO_PKG_VERSION").split('.').collect::<Vec<_>>();
-        assert_eq!(vn[0].parse::<u32>().expect("maj1"), env_vn[0].parse::<u32>().expect("maj2"));
-        assert_eq!(vn[1].parse::<u32>().expect("min1"), env_vn[1].parse::<u32>().expect("min2"));
-
-        let cl_value = of.get(&tag::COMMAND_LINE).expect("CL tag not found");
-        assert_eq!(cl_value.to_string(), std::env::args().collect::<Vec<_>>().join(" "));
-        assert_eq!(roots.next(), None);
+        let vn = of.get(&tag::VERSION).expect("VN tag missing").to_string();
+        let vn_parts = vn.split('.').collect::<Vec<_>>();
+        let env_vn_parts = env!("CARGO_PKG_VERSION").split('.').collect::<Vec<_>>();
+        assert_eq!(
+            vn_parts[0].parse::<u32>().unwrap(),
+            env_vn_parts[0].parse::<u32>().unwrap(),
+            "major version mismatch"
+        );
+        assert_eq!(
+            vn_parts[1].parse::<u32>().unwrap(),
+            env_vn_parts[1].parse::<u32>().unwrap(),
+            "minor version mismatch"
+        );
+        let cl = of.get(&tag::COMMAND_LINE).expect("CL tag missing");
+        assert_eq!(
+            cl.to_string(),
+            std::env::args().collect::<Vec<_>>().join(" ")
+        );
+        assert_eq!(roots.next(), None, "Unexpected second PG entry");
         Ok(())
     }
 }

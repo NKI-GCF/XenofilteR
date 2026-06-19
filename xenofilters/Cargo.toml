@@ -6,7 +6,7 @@ description = "Fast alignment-based classifier / filter for xenograft (PDX) sequ
 authors = ["Roel Kluin <r.kluin@nki.nl>"]
 homepage = "https://github.com/NKI-GCF/XenofilteR/tree/master"
 repository = "https://github.com/NKI-GCF/XenofilteR/tree/master"
-readme = "README_rust.md"
+readme = "README.md"
 license = "GPL-3.0"
 keywords = ["bioinformatics", "xenograft", "pdx", "bam", "read-filtering"]
 categories = ["science", "command-line-utilities"]
@@ -15,11 +15,11 @@ categories = ["science", "command-line-utilities"]
 MAX_ALN = "4"
 
 [dependencies]
-clap = { version = "4.6.1", features = ["derive"] }
-anyhow = "1.0.102"
-smallvec = "1.15.1"
-thiserror = "2.0.18"
-noodles = { version = "0.111.0", features = ["bam", "cram", "async", "vcf", "sam", "bcf", "bgzf", "core"] }
+clap       = { version = "4.6.1", features = ["derive"] }
+anyhow     = "1.0.102"
+smallvec   = "1.15.1"
+thiserror  = "2.0.18"
+noodles    = { version = "0.111.0", features = ["bam", "cram", "async", "vcf", "sam", "bcf", "bgzf", "core"] }
 
 [[bin]]
 name = "xenofilters"

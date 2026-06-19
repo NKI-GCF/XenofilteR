@@ -13,13 +13,12 @@ mod penalty;
 mod variant;
 
 use aln_stream::{AlignmentStream, AlnStream};
-use anyhow::{Result, ensure};
+use anyhow::{ensure, Result};
 use clap::Parser;
-use filter_algorithm::line_by_line::LineByLine;
-use smallvec::{SmallVec, smallvec};
 use config::Config;
+use filter_algorithm::line_by_line::LineByLine;
 use noodles::bam::record::Record as BamRecord;
-
+use smallvec::{smallvec, SmallVec};
 
 fn main() -> Result<()> {
     let mut config = Config::parse();
@@ -27,19 +26,22 @@ fn main() -> Result<()> {
 
     let mut aln: SmallVec<[Box<dyn AlignmentStream<BamRecord>>; 2]> = smallvec![];
 
-    // Determine the actual loop boundary
-    let logical_loops = if config.alignment.len() == 1 { 2 } else { config.alignment.len() };
+    let logical_loops = if config.alignment.len() == 1 {
+        2
+    } else {
+        config.alignment.len()
+    };
 
-    // first alignment to quick check readnames are in same name order
     for i in 0..logical_loops {
-        // If single_alignment_mode is active, both iteration 0 and 1 instantiate
-        // a reader pointing to config.alignment[0]
         let target_config_idx = if config.alignment.len() == 1 { 0 } else { i };
 
         aln.push(Box::new(AlnStream::new(&mut config, target_config_idx)?));
         ensure!(
             aln[i].next_qname() == aln[0].next_qname(),
-            "Input alignments must have the same read order."
+            "Input alignments must have the same read order. \
+             Stream 0 has '{}', stream {i} has '{}'.",
+            std::str::from_utf8(aln[0].next_qname()).unwrap_or("<invalid UTF-8>"),
+            std::str::from_utf8(aln[i].next_qname()).unwrap_or("<invalid UTF-8>"),
         );
     }
 

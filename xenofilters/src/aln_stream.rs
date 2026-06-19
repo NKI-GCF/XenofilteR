@@ -29,6 +29,7 @@ pub(crate) struct AlnStream<R> {
     ambiguous: Option<BamWriter<BgzfWriter<File>>>,
     pub(crate) bam: Option<BamReader<BgzfReader<File>>>,
     filt: Option<BamWriter<BgzfWriter<File>>>,
+    /// One-record look-ahead buffer (supports `un_next`).
     next: Option<R>,
     output: Option<BamWriter<BgzfWriter<File>>>,
     sample_variants: Option<Store<Sample>>,
@@ -39,11 +40,14 @@ pub(crate) struct AlnStream<R> {
 impl AlnStream<Record> {
     pub(crate) fn new(opt: &mut Config, i: usize) -> Result<Self> {
         let bam_str = opt.alignment[i].as_str();
-        let file = File::open(bam_str)?;
+
+        let file = File::open(bam_str)
+            .map_err(|e| anyhow!("Cannot open alignment file '{bam_str}': {e}"))?;
         let mut bam = BamReader::new(file);
         let header = bam.read_header()?;
 
-        // XXX: workaround for sort order.
+        // Coordinate-sorted files would require a hash map of all in-flight
+        // fragments, defeating the low-memory streaming design.
         let mut header_reader = bam.header_reader();
         header_reader.read_magic_number()?;
         let mut raw_sam_header_reader = header_reader.raw_sam_header_reader()?;
@@ -59,29 +63,37 @@ impl AlnStream<Record> {
                 parts.len() < 3
                     || parts[0] != b"@HD"
                     || (parts[2] != b"SO:coordinate" && parts[2] != b"GO:reference"),
-                "Coordinate sorted input, would require hashmap lookup."
+                "Input file '{bam_str}' appears to be coordinate-sorted \
+                 (SO:coordinate / GO:reference). xenofilters requires \
+                 name-sorted BAM files. Re-sort with `samtools sort -n`."
             );
         }
 
+        // We need it to (a) detect whether reads carry /1 /2 suffixes and
+        // (b) synchronise the name check in main.
         let test_record = match bam.records().next() {
-            Some(Ok(rec)) => rec,
-            Some(Err(e)) => return Err(anyhow!(e)),
-            None => return Err(anyhow!("{bam_str} has no records")),
+            Some(Ok(rec))  => rec,
+            Some(Err(e))   => return Err(anyhow!("Error reading from '{bam_str}': {e}")),
+            None           => return Err(anyhow!("'{bam_str}' contains no records")),
         };
 
-        let name = test_record.name().ok_or_else(|| anyhow!("Record has no name"))?;
+        let name = test_record
+            .name()
+            .ok_or_else(|| anyhow!("First record in '{bam_str}' has no read name"))?;
         opt.strip_read_suffix = match opt.strip_read_suffix {
             StripReadSuffix::True => {
                 ensure!(
                     name.ends_with(b"/1") || name.ends_with(b"/2"),
-                    "Input read names do not have /1 or /2 suffixes, but strip_read_suffix is true."
+                    "Stream {i} ('{bam_str}'): --strip-read-suffix=true requested but \
+                     first read name '{name:?}' has no /1 or /2 suffix."
                 );
                 StripReadSuffix::True
             }
             StripReadSuffix::False => {
                 ensure!(
                     !name.ends_with(b"/1") && !name.ends_with(b"/2"),
-                    "Input read names have /1 or /2 suffixes, but strip_read_suffix is false."
+                    "Stream {i} ('{bam_str}'): --strip-read-suffix=false requested but \
+                     first read name '{name:?}' ends with a /1 or /2 suffix."
                 );
                 StripReadSuffix::False
             }
@@ -96,11 +108,13 @@ impl AlnStream<Record> {
             StripReadSuffix::Variable => StripReadSuffix::Variable,
         };
         opt.is_paired = if i == 0 && opt.is_paired.is_none() {
-            Some(test_record.flags().is_segmented())
+            let paired = test_record.flags().is_segmented();
+            Some(paired)
         } else {
             ensure!(
                 opt.is_paired == Some(test_record.flags().is_segmented()),
-                "All input BAMs must be either paired-end or single-end."
+                "Stream {i} ('{bam_str}') has different paired-end status than stream 0. \
+                 All inputs must be either all paired-end or all single-end."
             );
             opt.is_paired
         };
@@ -108,24 +122,25 @@ impl AlnStream<Record> {
         let sample_variants = opt
             .sample_variants
             .get(i)
-            .map(|s| Store::new(&PathBuf::try_from(s)?, parse_sample_record))
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                Store::new(&PathBuf::try_from(s.as_str())?, parse_sample_record)
+            })
             .transpose()?;
         let population_variants = opt
             .population_variants
             .get(i)
-            .map(|s| Store::new(&PathBuf::try_from(s)?, parse_population_record))
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                Store::new(&PathBuf::try_from(s.as_str())?, parse_population_record)
+            })
             .transpose()?;
 
-        // check output paths are unicode here, so we hopefully only create files once all are ok.
+        // Check before opening writers so no partial files are created if one
+        // path is invalid.
         opt.output.get(i).map(path_unicode_ok).transpose()?;
-        opt.filtered_output
-            .get(i)
-            .map(path_unicode_ok)
-            .transpose()?;
-        opt.ambiguous_output
-            .get(i)
-            .map(path_unicode_ok)
-            .transpose()?;
+        opt.filtered_output.get(i).map(path_unicode_ok).transpose()?;
+        opt.ambiguous_output.get(i).map(path_unicode_ok).transpose()?;
 
         Ok(AlnStream {
             ambiguous: None,
@@ -161,20 +176,28 @@ where
     R: SimpleRec + FromBamRecord,
 {
     fn next_qname(&self) -> &[u8] {
-        self.next.as_ref().and_then(|r| r.name()).map_or(b"", |n| n.as_ref())
+        self.next
+            .as_ref()
+            .and_then(|r| r.name())
+            .map_or(b"", |n| n.as_ref())
     }
 
     fn un_next(&mut self, rec: R) -> Result<()> {
         if self.next.is_some() {
-            return Err(anyhow!("Cannot un-next more than one record"));
+            return Err(anyhow!(
+                "un_next called while look-ahead buffer is already occupied \
+                 (this is a bug — please report it)"
+            ));
         }
         self.next = Some(rec);
         Ok(())
     }
 
     fn next_rec(&mut self) -> Result<Option<R>> {
-        let header = &self.header;   // disjoint field borrow before &mut self.bam
-        Ok(self.next
+        // Return the buffered record first, then read from the BAM reader.
+        let header = &self.header;
+        Ok(self
+            .next
             .take()
             .map(Ok)
             .or_else(|| {
@@ -189,9 +212,9 @@ where
 
     fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<()> {
         let output = match is_best {
-            Some(true) => self.output.as_mut(),
+            Some(true)  => self.output.as_mut(),
             Some(false) => self.filt.as_mut(),
-            None => self.ambiguous.as_mut(),
+            None        => self.ambiguous.as_mut(),
         };
         if let Some(o) = output {
             o.write_alignment_record(&self.header, &rec)?;
@@ -214,7 +237,9 @@ where
     }
 
     fn variant_store(&self) -> Option<&dyn StoreTrait> {
-        self.sample_variants.as_ref().map(|s| s as &dyn StoreTrait)
+        self.sample_variants
+            .as_ref()
+            .map(|s| s as &dyn StoreTrait)
             .or_else(|| self.population_variants.as_ref().map(|p| p as &dyn StoreTrait))
     }
 

@@ -1,3 +1,11 @@
+// src/aln_stream/tests.rs
+//
+// The only change from the original is that AlnStream struct literals must now
+// include the `threads` field (added in the multithreaded-writer refactor).
+// The field type of `ambiguous`, `filt`, and `output` changed from
+// `Option<BamWriter<BgzfWriter<File>>>` to `Option<BamOutput>`, but since all
+// test helpers set them to `None`, no type annotation is needed there.
+
 use crate::bam::BamFormat;
 use crate::config::{Config, StripReadSuffix};
 use crate::tests::create_record;
@@ -29,12 +37,15 @@ impl AlignmentStream<RecordBuf> for MockStream {
     fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<()> {
         self.write_record(rec, is_best)
     }
+
     fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<()> {
         Ok(())
     }
+
     fn variant_store(&self) -> Option<&dyn StoreTrait> {
         None
     }
+
     fn header(&self) -> &Header {
         &self.aln_stream.header
     }
@@ -42,16 +53,7 @@ impl AlignmentStream<RecordBuf> for MockStream {
 
 impl MockStream {
     pub(crate) fn new(i: usize, reads: Vec<RecordBuf>) -> Self {
-        let aln_stream = AlnStream {
-            ambiguous: None,
-            bam: None,
-            filt: None,
-            next: None,
-            output: None,
-            sample_variants: None,
-            population_variants: None,
-            header: Header::default(),
-        };
+        let aln_stream = empty_aln_stream();
         Self {
             reads,
             written: Vec::new(),
@@ -59,6 +61,7 @@ impl MockStream {
             i,
         }
     }
+
     fn next_rec(&mut self) -> Result<Option<RecordBuf>> {
         if let Some(rec) = self.aln_stream.next_rec()? {
             return Ok(Some(rec));
@@ -70,6 +73,7 @@ impl MockStream {
         self.aln_stream.un_next(rec.into())?;
         self.aln_stream.next_rec()
     }
+
     fn un_next(&mut self, rec: RecordBuf) -> Result<()> {
         let name = rec.name().expect("Invalid Name");
         eprintln!(
@@ -79,12 +83,17 @@ impl MockStream {
         );
         self.aln_stream.un_next(rec)
     }
+
     fn write_record(&mut self, rec: RecordBuf, state: Option<bool>) -> Result<()> {
         self.written.push((rec, state));
         Ok(())
     }
 }
 
+/// Build a minimal empty `AlnStream<RecordBuf>` for unit tests.
+///
+/// The `threads` field defaults to 1 (single-threaded); no writers are
+/// attached so the value has no effect in tests.
 fn empty_aln_stream() -> AlnStream<RecordBuf> {
     AlnStream {
         ambiguous: None,
@@ -110,6 +119,7 @@ fn test_aln_stream_new_mismatch_strip_suffix_true_instead_of_false() {
     let result = AlnStream::new(&mut config, 0);
     assert!(result.is_err());
 }
+
 #[test]
 fn test_aln_stream_next_rec() -> Result<()> {
     let records = vec![
@@ -125,6 +135,7 @@ fn test_aln_stream_next_rec() -> Result<()> {
     assert!(mock_stream.next_rec()?.is_none());
     Ok(())
 }
+
 #[test]
 fn test_aln_stream_un_next() -> Result<()> {
     let records = vec![
@@ -142,13 +153,11 @@ fn test_aln_stream_un_next() -> Result<()> {
 
     let rec2 = mock_stream.next_rec()?.unwrap();
     let name2 = rec2.name().unwrap();
-    let name2_bytes: &[u8] = name2.as_ref();
-    assert_eq!(name2_bytes, b"read1/1");
+    assert_eq!(name2.as_ref() as &[u8], b"read1/1");
 
     let rec3 = mock_stream.next_rec()?.unwrap();
     let name3 = rec3.name().unwrap();
-    let name3_bytes: &[u8] = name3.as_ref();
-    assert_eq!(name3_bytes, b"read2/1");
+    assert_eq!(name3.as_ref() as &[u8], b"read2/1");
 
     Ok(())
 }
