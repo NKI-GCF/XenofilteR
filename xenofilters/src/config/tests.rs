@@ -137,10 +137,7 @@ fn test_read_from_stdin_constraints() {
     // Multi-alignment standard streaming is fine
     let mut c = base_config();
     c.read_from_stdin = true;
-    assert!(
-        c.validate_and_init().is_ok(),
-        "Standard multi-stream from stdin should pass validation"
-    );
+    assert!(c.validate_and_init().is_ok(), "Standard multi-stream from stdin should pass validation");
 
     // Single-alignment mode from stdin is strictly banned (cannot read twice)
     let mut c2 = base_config();
@@ -154,9 +151,7 @@ fn test_read_from_stdin_constraints() {
     let res = c2.validate_and_init();
     assert!(res.is_err(), "Single alignment mode must reject stdin");
     assert!(
-        res.unwrap_err()
-            .to_string()
-            .contains("Cannot use --single-alignment-mode with stdin"),
+        res.unwrap_err().to_string().contains("Cannot use single alignment mode with stdin"),
         "Error message should mention stdin restrictions"
     );
 }
@@ -170,9 +165,7 @@ fn test_single_alignment_mode_requires_flag() {
     let res = c.validate_and_init();
     assert!(res.is_err());
     assert!(
-        res.unwrap_err()
-            .to_string()
-            .contains("--single-alignment-mode"),
+        res.unwrap_err().to_string().contains("--single-alignment-mode"),
         "Should fail with explicit flag reminder string"
     );
 }
@@ -185,10 +178,7 @@ fn test_single_alignment_mode_variant_assertions() {
 
     let res = c.validate_and_init();
     assert!(res.is_err());
-    assert!(res
-        .unwrap_err()
-        .to_string()
-        .contains("requires both strain slots"));
+    assert!(res.unwrap_err().to_string().contains("requires both strain slots"));
 
     // Case B: Only 1 variant profile given (insufficient to differentiate strains)
     let mut c = base_config();
@@ -205,10 +195,7 @@ fn test_single_alignment_mode_variant_assertions() {
     c.sample_variants = vec!["0:strain_a.vcf".into()];
     c.population_variants = vec!["1:strain_b.vcf".into()];
 
-    assert!(
-        c.validate_and_init().is_ok(),
-        "1 sample + 1 population profile is fully valid"
-    );
+    assert!(c.validate_and_init().is_ok(), "1 sample + 1 population profile is fully valid");
 }
 
 #[test]
@@ -223,10 +210,7 @@ fn test_single_alignment_ambiguous_output_cap() {
 
     let res = c.validate_and_init();
     assert!(res.is_err());
-    assert!(res
-        .unwrap_err()
-        .to_string()
-        .contains("Only one --ambiguous-output file is allowed"));
+    assert!(res.unwrap_err().to_string().contains("Only one ambiguous output file is allowed"));
 }
 
 #[test]
@@ -236,11 +220,9 @@ fn test_flag_mismatch_on_multi_alignment() {
 
     let res = c.validate_and_init();
     assert!(res.is_err());
-    assert!(res
-        .unwrap_err()
-        .to_string()
-        .contains("can only be used with exactly 1 alignment stream"));
+    assert!(res.unwrap_err().to_string().contains("can only be used with exactly 1 alignment stream"));
 }
+
 
 #[test]
 fn test_invalid_variant_index_grouping_on_single_alignment() {
@@ -254,10 +236,7 @@ fn test_invalid_variant_index_grouping_on_single_alignment() {
 
     let res = c.validate_and_init();
     assert!(res.is_err());
-    assert!(res
-        .unwrap_err()
-        .to_string()
-        .contains("requires both strain slots (index 0 and 1) to have a variant profile"));
+    assert!(res.unwrap_err().to_string().contains("requires both strain slots (index 0 and 1) to have a variant profile"));
 }
 
 #[test]
