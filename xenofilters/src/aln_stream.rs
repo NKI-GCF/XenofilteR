@@ -44,7 +44,10 @@ pub(crate) struct AlnStream<R> {
     threads: usize,
 }
 
-impl AlnStream<Record> {
+impl<R> AlnStream<R>
+where
+    R: SimpleRec + FromBamRecord,
+{
     pub(crate) fn new(opt: &mut Config, i: usize) -> Result<Self> {
         let bam_str = opt.alignment[i].as_str();
         tracing::debug!(stream = i, path = bam_str, "Opening BAM reader");
@@ -169,11 +172,12 @@ impl AlnStream<Record> {
             .map(path_unicode_ok)
             .transpose()?;
 
+        let next_rec = R::from_bam_record(&header, test_record)?;
         Ok(AlnStream {
             ambiguous: None,
             bam: Some(bam),
             filt: None,
-            next: Some(test_record),
+            next: Some(next_rec),
             output: None,
             sample_variants,
             population_variants,
@@ -183,7 +187,7 @@ impl AlnStream<Record> {
     }
 }
 
-trait FromBamRecord: Sized {
+pub(crate) trait FromBamRecord: Sized {
     fn from_bam_record(header: &Header, rec: Record) -> std::io::Result<Self>;
 }
 

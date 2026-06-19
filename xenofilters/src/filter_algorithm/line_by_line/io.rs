@@ -6,6 +6,7 @@ use noodles::sam::alignment::record_buf::data::field::Value;
 use noodles::sam::alignment::record_buf::RecordBuf;
 
 impl<R: SimpleRec> LineByLine<R> {
+    /// Insert a single-byte aux tag into `rec`.
     pub(super) fn add_aux_tags(
         &mut self,
         rec: &mut RecordBuf,
@@ -18,6 +19,12 @@ impl<R: SimpleRec> LineByLine<R> {
         Ok(())
     }
 
+    /// Write `rec` through stream `i`.
+    ///
+    /// `best_state`:
+    /// - `Some(true)`  → winning alignment (→ `--output`)
+    /// - `Some(false)` → losing alignment  (→ `--filtered-output`)
+    /// - `None`        → ambiguous         (→ `--ambiguous-output`)
     pub(super) fn write_record(
         &mut self,
         i: usize,
@@ -25,9 +32,9 @@ impl<R: SimpleRec> LineByLine<R> {
         best_state: Option<bool>,
     ) -> Result<()> {
         match (i, best_state) {
-            (i, Some(false)) => self.branch_counters[i << 1] += 1,
-            (i, Some(true)) => self.branch_counters[1 + (i << 1)] += 1,
-            (i, None) => self.branch_counters[16 + i] += 1,
+            (i, Some(false)) => self.branch_counters[i << 1]      += 1,
+            (i, Some(true))  => self.branch_counters[1 + (i << 1)] += 1,
+            (i, None)        => self.branch_counters[16 + i]        += 1,
         }
         if let Some(aln) = self.aln.get_mut(i) {
             aln.write_record(rec, best_state)
@@ -36,26 +43,23 @@ impl<R: SimpleRec> LineByLine<R> {
         }
     }
 
+    /// Emit per-stream counters to the tracing backend (INFO level).
+    ///
+    /// Counter layout (index → meaning):
+    /// ```text
+    /// i*2+0  : filtered from alignment i
+    /// i*2+1  : assigned to alignment i
+    /// 16+i   : ambiguous for alignment i
+    /// 24+i   : unmapped-filtered for alignment i
+    /// ```
     pub(super) fn print_counters(&self, i: usize) {
-        eprintln!(
-            "[{}]: Filtered from alignment {i}: {}",
-            i << 1,
-            self.branch_counters[i << 1]
-        );
-        eprintln!(
-            "[{}]: Assigned to alignment {i}: {}",
-            1 + (i << 1),
-            self.branch_counters[1 + (i << 1)]
-        );
-        eprintln!(
-            "[{}]: Ambiguous for alignment {i}: {}",
-            16 + i,
-            self.branch_counters[16 + i]
-        );
-        eprintln!(
-            "[{}]: Unmapped filtered for alignment {i}: {}",
-            24 + i,
-            self.branch_counters[24 + i]
+        tracing::info!(
+            stream = i,
+            filtered  = self.branch_counters[i << 1],
+            assigned  = self.branch_counters[1 + (i << 1)],
+            ambiguous = self.branch_counters[16 + i],
+            unmapped_filtered = self.branch_counters[24 + i],
+            "Stream summary"
         );
     }
 }

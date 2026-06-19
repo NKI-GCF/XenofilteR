@@ -156,7 +156,7 @@ fn test_process_multi_stream_sync_r4() -> Result<()> {
 
     // R4 -> stream 1 (mismatch vs unmapped)
 
-    lbl.process()?;
+    lbl.process_sequential()?;
 
     assert_eq!(lbl.branch_counters[2], 0); // filter:1:
     assert_eq!(lbl.branch_counters[3], 1); // out:1: R4
@@ -192,7 +192,7 @@ fn test_process_multi_stream_sync() -> Result<()> {
     // R7 -> unmapped/unmapped -> ambiguity
     // R8 -> stream 0 (mismatch vs more mismatches, but stream 1 filtered)
 
-    lbl.process()?;
+    lbl.process_sequential()?;
     // this is the order of printing, first aln 1 then aln 0
     assert_eq!(lbl.branch_counters[2], 4); // filter:1: R0, R1, R3, R8
     assert_eq!(lbl.branch_counters[3], 2); // out:1: R2, R4
@@ -347,7 +347,7 @@ fn test_observed_pe_scoring1() -> Result<()> {
     let mut lbl: LineByLine<RecordBuf> =
         LineByLine::new(config, setup_mock_streams_observed_examples())?;
 
-    lbl.process()?;
+    lbl.process_sequential()?;
     assert_eq!(lbl.branch_counters[2], 2); // filter:1: both reads
     assert_eq!(lbl.branch_counters[3], 0); // out:1:
     assert_eq!(lbl.branch_counters[17], 0); // ambiguous:1:

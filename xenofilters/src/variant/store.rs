@@ -1,3 +1,4 @@
+// src/variant/store.rs  (diff: StoreTrait gains Send + Sync supertraits)
 use crate::variant::{Variant, Eval};
 use anyhow::{Result, anyhow};
 use noodles::bcf::{record::Record, io::reader::Builder};
@@ -10,14 +11,18 @@ pub(crate) const VNT_CT: usize = 4;
 
 pub(crate) type EvalVec<'s> = SmallVec<[Eval<'s>; VNT_CT]>;
 
-pub(crate) trait StoreTrait {
+/// Any object that can answer overlap queries for variant scoring.
+///
+/// `Send + Sync` are required so that stores can be placed behind `Arc` and
+/// shared across scoring worker threads.
+pub(crate) trait StoreTrait: Send + Sync {
     fn overlapping_multi<'s>(&'s self, rid: usize, start: usize, end: usize) -> EvalVec<'s>;
 }
 
 impl<V: Variant> StoreTrait for Store<V> {
     fn overlapping_multi<'s>(&'s self, id: usize, start: usize, end: usize) -> EvalVec<'s> {
         let mut hits = SmallVec::new();
-        for  v in self.overlapping(id, start, end) {
+        for v in self.overlapping(id, start, end) {
             let mut eval = Eval::new();
             eval.set_variant(v as &dyn Variant);
             hits.push(eval);
@@ -30,7 +35,7 @@ impl<V: Variant> StoreTrait for Store<V> {
 #[derive(Debug)]
 pub(crate) struct Store<V: Variant> {
     pub(crate) per_chr: HashMap<usize, Vec<V>>,
-    /// Maximum reference span of any variant
+    /// Maximum reference span of any variant in this store.
     pub(crate) max_variant_len: usize,
 }
 
@@ -43,7 +48,7 @@ impl<V: Variant> Store<V> {
             .map_err(|e| anyhow!("Failed to open VCF/BCF {}: {}", f.display(), e))?;
 
         let mut per_chr = HashMap::new();
-        let mut max_variant_len: usize = 1; // at least 1
+        let mut max_variant_len: usize = 1;
         let mut is_sorted = true;
         let header = bcf_reader.read_header()?;
 
@@ -59,7 +64,10 @@ impl<V: Variant> Store<V> {
                 if is_sorted {
                     if let Some(last) = last_pos
                         && pos < last {
-                            eprintln!("Variants in {} are not sorted by position.", f.display());
+                            tracing::warn!(
+                                path = %f.display(),
+                                "Variants are not sorted by position; sorting now."
+                            );
                             is_sorted = false;
                         }
                     last_pos = Some(pos);
@@ -72,18 +80,20 @@ impl<V: Variant> Store<V> {
             }
         }
         if !is_sorted {
-            // Sort each chromosome once, for binary search.
             for chr in per_chr.values_mut() {
                 chr.sort_by_key(|v| v.pos());
             }
         }
 
-        Ok(Store {
-            per_chr,
-            max_variant_len,
-        })
+        Ok(Store { per_chr, max_variant_len })
     }
-    pub(crate) fn overlapping(&self, id: usize, read_start: usize, read_end: usize) -> SmallVec<[&V; 0]> {
+
+    pub(crate) fn overlapping(
+        &self,
+        id: usize,
+        read_start: usize,
+        read_end: usize,
+    ) -> SmallVec<[&V; 0]> {
         let Some(chr_vars) = self.per_chr.get(&id) else {
             return SmallVec::new();
         };

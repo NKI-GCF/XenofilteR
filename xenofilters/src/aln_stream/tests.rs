@@ -117,7 +117,7 @@ fn test_aln_stream_new_mismatch_strip_suffix_true_instead_of_false() {
         ..Default::default()
     };
 
-    let result = AlnStream::new(&mut config, 0);
+    let result = AlnStream::<RecordBuf>::new(&mut config, 0);
     assert!(result.is_err());
 }
 

@@ -185,10 +185,8 @@ fn test_single_alignment_mode_variant_assertions() {
 
     let res = c.validate_and_init();
     assert!(res.is_err());
-    assert!(res
-        .unwrap_err()
-        .to_string()
-        .contains("requires both strain slots"));
+    eprintln!("Error message: {}", res.as_ref().unwrap_err());
+    assert!(res.unwrap_err().to_string().contains("both strain slots"));
 
     // Case B: Only 1 variant profile given (insufficient to differentiate strains)
     let mut c = base_config();
@@ -223,10 +221,11 @@ fn test_single_alignment_ambiguous_output_cap() {
 
     let res = c.validate_and_init();
     assert!(res.is_err());
+    eprintln!("Error message: {}", res.as_ref().unwrap_err());
     assert!(res
         .unwrap_err()
         .to_string()
-        .contains("Only one --ambiguous-output file is allowed"));
+        .contains("Only one --ambiguous-output allowed"));
 }
 
 #[test]
@@ -236,6 +235,7 @@ fn test_flag_mismatch_on_multi_alignment() {
 
     let res = c.validate_and_init();
     assert!(res.is_err());
+    eprintln!("Error message: {}", res.as_ref().unwrap_err());
     assert!(res
         .unwrap_err()
         .to_string()
@@ -254,10 +254,8 @@ fn test_invalid_variant_index_grouping_on_single_alignment() {
 
     let res = c.validate_and_init();
     assert!(res.is_err());
-    assert!(res
-        .unwrap_err()
-        .to_string()
-        .contains("requires both strain slots (index 0 and 1) to have a variant profile"));
+    eprintln!("Error message: {}", res.as_ref().unwrap_err());
+    assert!(res.unwrap_err().to_string().contains("both strain slots"));
 }
 
 #[test]

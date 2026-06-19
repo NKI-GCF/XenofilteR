@@ -1,4 +1,4 @@
-use crate::alignment::{MdCigFlags, VariantWindow, weighted_ref_score, align_alt_to_read};
+use crate::alignment::{align_alt_to_read, weighted_ref_score, MdCigFlags, VariantWindow};
 use crate::alignment::{AlignmentError, BaseOp, ScoreOpIter};
 use crate::filter_algorithm::line_by_line::{Scratch, READ_CT};
 use crate::penalty::{Penalty, MAX_Q};
@@ -122,7 +122,14 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             let seg_ref_start = self.seg_start[prior_seg_i];
             let seg_ref_end = seg_ref_start + self.seg[prior_seg_i].cigar().len();
             self.score_variants_in_window(
-                scratch, dvnt, finished, i, prior_seg_i, seg_ref_start, seg_ref_end, 0.0,
+                scratch,
+                dvnt,
+                finished,
+                i,
+                prior_seg_i,
+                seg_ref_start,
+                seg_ref_end,
+                0.0,
             )?;
         }
 
@@ -183,7 +190,14 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             }
 
             self.score_variants_in_window(
-                scratch, dvnt, finished, i, self.seg_i, ref_start, self.refpos, ref_score,
+                scratch,
+                dvnt,
+                finished,
+                i,
+                self.seg_i,
+                ref_start,
+                self.refpos,
+                ref_score,
             )?;
             score += ref_score;
         }
@@ -197,7 +211,14 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             let seg_ref_start = self.seg_start[next_seg_i];
             let seg_ref_end = seg_ref_start + self.seg[next_seg_i].sequence().len();
             self.score_variants_in_window(
-                scratch, dvnt, finished, i, next_seg_i, seg_ref_start, seg_ref_end, 0.0,
+                scratch,
+                dvnt,
+                finished,
+                i,
+                next_seg_i,
+                seg_ref_start,
+                seg_ref_end,
+                0.0,
             )?;
         }
 
@@ -258,7 +279,12 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         ref_end: usize,
     ) -> Result<Option<(f64, f64)>> {
         let vnt_eval = &dvnt[dvnt_i][dvnt_j];
-        let window = match VariantWindow::compute(ref_start, ref_end, vnt_eval.start(), vnt_eval.ref_end()) {
+        let window = match VariantWindow::compute(
+            ref_start,
+            ref_end,
+            vnt_eval.start(),
+            vnt_eval.ref_end(),
+        ) {
             Some(w) => w,
             None => return Ok(None),
         };
@@ -268,9 +294,10 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         let p_variant = vnt.p_variant();
         let seg_ref_start = self.seg_start[seg_i];
 
-        let weighted_ref = weighted_ref_score(window, seg_ref_start, p_variant, self.pen, |nt_i| {
-            self.q(seg_i, nt_i)
-        })?;
+        let weighted_ref =
+            weighted_ref_score(window, seg_ref_start, p_variant, self.pen, |nt_i| {
+                self.q(seg_i, nt_i)
+            })?;
 
         let read_offset = window.read_offset(seg_ref_start);
         let revcmp = self.requires_revcmp(seg_i);
