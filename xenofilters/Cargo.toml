@@ -1,6 +1,6 @@
 [package]
 name = "xenofilters"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Fast alignment-based classifier / filter for xenograft (PDX) sequencing data — decides per read/fragment which species alignment is best"
 authors = ["Roel Kluin <r.kluin@nki.nl>"]
