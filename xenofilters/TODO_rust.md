@@ -12,7 +12,7 @@
 - [✓] Optional BAM aux tag with decision phred score XF:C:
   → new flag `--add-decision-tag` (default off)
   → new flag `--ambiguous-threshold <phred-score>`
-- [ ] Implement variant rescue (-s / -p)
+- [✓] Implement variant rescue (-s / -p)
   → parse VCF → per-position alt match bonus in scoring
   → start with SNVs only
 - add config flag --variant-rescue-bonus f64 to control strength
@@ -29,7 +29,6 @@
 
 ## Later / nice-to-have
 
-- [ ] Progress bar (indicatif)
 - [ ] Final summary counters (fragments processed / % best / ambig / discard)
 - [ ] Publish to crates.io (once stable)
 - [ ] --help grouping / examples
