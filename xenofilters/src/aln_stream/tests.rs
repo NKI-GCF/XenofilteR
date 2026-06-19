@@ -104,6 +104,7 @@ fn empty_aln_stream() -> AlnStream<RecordBuf> {
         sample_variants: None,
         population_variants: None,
         header: Header::default(),
+        threads: 1,
     }
 }
 

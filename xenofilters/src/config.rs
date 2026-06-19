@@ -61,6 +61,14 @@ pub(crate) struct Config {
     #[arg(short = 'O', long, default_value = "sam")]
     pub(crate) stdout_format: BamFormat,
 
+    /// Number of threads for bgzf (de)compression.
+    /// Each BAM reader and writer gets this many worker threads.
+    #[arg(short = 't', long, default_value = "4")]
+    pub(crate) threads: usize,
+
+    /// Increase log verbosity. Pass once for INFO, twice for DEBUG.
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    pub(crate) verbose: u8,
 
     /// Read first alignment from stdin; enforced with only one input alignment.
     #[arg(short, long, default_value = "false")]
@@ -138,6 +146,7 @@ impl Config {
     pub(super) fn validate_and_init(&mut self) -> Result<()> {
         let aln_count = self.alignment.len();
 
+        // -- single-stream guard --------------------------------------------
         if aln_count == 1 {
             ensure!(
                 self.single_alignment_mode,
@@ -164,24 +173,29 @@ impl Config {
 
         let logical_len = if aln_count == 1 { 2 } else { aln_count };
 
-        let mut normalized_samples     = vec![PathBuf::new(); logical_len];
+        // -- variant normalisation ------------------------------------------
+        let mut normalized_samples = vec![PathBuf::new(); logical_len];
         let mut normalized_populations = vec![PathBuf::new(); logical_len];
-        let mut stream_has_variants    = vec![false; logical_len];
+        let mut stream_has_variants = vec![false; logical_len];
 
         for (i, arg) in self.sample_variants.iter().enumerate() {
             let (idx, path) = Self::parse_variant_string(arg, i)?;
-            ensure!(idx < logical_len,
+            ensure!(
+                idx < logical_len,
                 "Sample-variant stream index {idx} is out of bounds \
-                 (only {logical_len} streams configured).");
+                 (only {logical_len} streams configured)."
+            );
             normalized_samples[idx] = path;
             stream_has_variants[idx] = true;
         }
 
         for (i, arg) in self.population_variants.iter().enumerate() {
             let (idx, path) = Self::parse_variant_string(arg, i)?;
-            ensure!(idx < logical_len,
+            ensure!(
+                idx < logical_len,
                 "Population-variant stream index {idx} is out of bounds \
-                 (only {logical_len} streams configured).");
+                 (only {logical_len} streams configured)."
+            );
             normalized_populations[idx] = path;
             stream_has_variants[idx] = true;
         }
@@ -205,23 +219,33 @@ impl Config {
             .map(|p| p.to_string_lossy().into_owned())
             .collect();
 
-        ensure!(self.output.len() <= logical_len,
+        // -- output-path bounds ---------------------------------------------
+        ensure!(
+            self.output.len() <= logical_len,
             "More --output paths ({}) than alignment streams ({logical_len}).",
-            self.output.len());
-        ensure!(self.filtered_output.len() <= logical_len,
+            self.output.len()
+        );
+        ensure!(
+            self.filtered_output.len() <= logical_len,
             "More --filtered-output paths ({}) than alignment streams ({logical_len}).",
-            self.filtered_output.len());
+            self.filtered_output.len()
+        );
 
         if aln_count == 1 {
-            ensure!(self.ambiguous_output.len() <= 1,
+            ensure!(
+                self.ambiguous_output.len() <= 1,
                 "Only one --ambiguous-output file is allowed in \
-                 single-alignment-stream mode.");
+                 single-alignment-stream mode."
+            );
         } else {
-            ensure!(self.ambiguous_output.len() <= logical_len,
+            ensure!(
+                self.ambiguous_output.len() <= logical_len,
                 "More --ambiguous-output paths ({}) than alignment streams ({logical_len}).",
-                self.ambiguous_output.len());
+                self.ambiguous_output.len()
+            );
         }
 
+        // -- penalty sign normalisation -------------------------------------
         // clap accepts positive values for ergonomics; internally we need negatives.
         if self.gap_open > 0.0 {
             self.gap_open = -self.gap_open;
@@ -233,9 +257,19 @@ impl Config {
         if self.gap_open == 0.0 || self.mismatch_penalty <= 0.0 {
             return Err(anyhow::anyhow!(
                 "gap-open ({}) and mismatch-penalty ({}) must both be positive.",
-                self.gap_open.abs(), self.mismatch_penalty
+                self.gap_open.abs(),
+                self.mismatch_penalty
             ));
         }
+
+        tracing::debug!(
+            threads = self.threads,
+            alignments = aln_count,
+            gap_open = self.gap_open,
+            gap_extend = self.gap_extend,
+            mismatch_penalty = self.mismatch_penalty,
+            "Configuration validated"
+        );
 
         Ok(())
     }

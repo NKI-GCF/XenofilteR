@@ -1,19 +1,24 @@
-use crate::bam::{out_from_file, path_unicode_ok};
-use crate::variant::{
-    StoreTrait, Store, Population, Sample, parse_population_record, parse_sample_record
-};
-use crate::config::{Config, StripReadSuffix};
-use anyhow::{Result, anyhow, ensure};
-use noodles::bam::{io::{Reader as BamReader, Writer as BamWriter}, record::Record};
-use std::io::Read as ioRead;
-use noodles::bgzf::io::{Reader as BgzfReader, Writer as BgzfWriter};
-use std::fs::File;
-use noodles::sam::header::Header;
-use noodles::sam::alignment::io::Write;
-use crate::alignment::SimpleRec;
-use noodles::sam::alignment::record_buf::RecordBuf;
-use std::path::PathBuf;
+//! Alignment stream abstraction.
+//!
+//! [`AlnStream`] wraps a name-sorted BAM reader together with its optional
+//! output writers and variant stores. The [`AlignmentStream`] trait is the
+//! interface used by the filter algorithm so that tests can substitute a
+//! lightweight mock without touching any file I/O.
 
+use crate::alignment::SimpleRec;
+use crate::bam::{out_from_file, path_unicode_ok, BamOutput};
+use crate::config::{Config, StripReadSuffix};
+use crate::variant::{
+    parse_population_record, parse_sample_record, Population, Sample, Store, StoreTrait,
+};
+use anyhow::{anyhow, ensure, Result};
+use noodles::bam::{io::Reader as BamReader, record::Record};
+use noodles::bgzf::io::Reader as BgzfReader;
+use noodles::sam::alignment::record_buf::RecordBuf;
+use noodles::sam::header::Header;
+use std::fs::File;
+use std::io::Read as ioRead;
+use std::path::PathBuf;
 
 pub(crate) trait AlignmentStream<R: SimpleRec> {
     fn next_qname(&self) -> &[u8];
@@ -26,26 +31,30 @@ pub(crate) trait AlignmentStream<R: SimpleRec> {
 }
 
 pub(crate) struct AlnStream<R> {
-    ambiguous: Option<BamWriter<BgzfWriter<File>>>,
+    ambiguous: Option<BamOutput>,
     pub(crate) bam: Option<BamReader<BgzfReader<File>>>,
-    filt: Option<BamWriter<BgzfWriter<File>>>,
+    filt: Option<BamOutput>,
     /// One-record look-ahead buffer (supports `un_next`).
     next: Option<R>,
-    output: Option<BamWriter<BgzfWriter<File>>>,
+    output: Option<BamOutput>,
     sample_variants: Option<Store<Sample>>,
     population_variants: Option<Store<Population>>,
     header: Header,
+    /// Cached from config so writers can be opened later with the correct count.
+    threads: usize,
 }
 
 impl AlnStream<Record> {
     pub(crate) fn new(opt: &mut Config, i: usize) -> Result<Self> {
         let bam_str = opt.alignment[i].as_str();
+        tracing::debug!(stream = i, path = bam_str, "Opening BAM reader");
 
         let file = File::open(bam_str)
             .map_err(|e| anyhow!("Cannot open alignment file '{bam_str}': {e}"))?;
         let mut bam = BamReader::new(file);
         let header = bam.read_header()?;
 
+        // -- Reject coordinate-sorted input --------------------------------
         // Coordinate-sorted files would require a hash map of all in-flight
         // fragments, defeating the low-memory streaming design.
         let mut header_reader = bam.header_reader();
@@ -69,17 +78,20 @@ impl AlnStream<Record> {
             );
         }
 
+        // -- Peek at the first record --------------------------------------
         // We need it to (a) detect whether reads carry /1 /2 suffixes and
         // (b) synchronise the name check in main.
         let test_record = match bam.records().next() {
-            Some(Ok(rec))  => rec,
-            Some(Err(e))   => return Err(anyhow!("Error reading from '{bam_str}': {e}")),
-            None           => return Err(anyhow!("'{bam_str}' contains no records")),
+            Some(Ok(rec)) => rec,
+            Some(Err(e)) => return Err(anyhow!("Error reading from '{bam_str}': {e}")),
+            None => return Err(anyhow!("'{bam_str}' contains no records")),
         };
 
         let name = test_record
             .name()
             .ok_or_else(|| anyhow!("First record in '{bam_str}' has no read name"))?;
+
+        // -- Auto-detect / validate read-name suffix stripping -------------
         opt.strip_read_suffix = match opt.strip_read_suffix {
             StripReadSuffix::True => {
                 ensure!(
@@ -100,6 +112,7 @@ impl AlnStream<Record> {
             StripReadSuffix::Auto => {
                 // Auto-detect based on first read
                 if name.ends_with(b"/1") || name.ends_with(b"/2") {
+                    tracing::debug!(stream = i, "Auto-detected /1 /2 read-name suffixes");
                     StripReadSuffix::True
                 } else {
                     StripReadSuffix::False
@@ -107,8 +120,11 @@ impl AlnStream<Record> {
             }
             StripReadSuffix::Variable => StripReadSuffix::Variable,
         };
+
+        // -- Paired-end consistency check ----------------------------------
         opt.is_paired = if i == 0 && opt.is_paired.is_none() {
             let paired = test_record.flags().is_segmented();
+            tracing::debug!(paired, "Auto-detected paired-end status from stream 0");
             Some(paired)
         } else {
             ensure!(
@@ -119,28 +135,39 @@ impl AlnStream<Record> {
             opt.is_paired
         };
 
+        // -- Variant stores ------------------------------------------------
         let sample_variants = opt
             .sample_variants
             .get(i)
             .filter(|s| !s.is_empty())
             .map(|s| {
+                tracing::debug!(stream = i, path = s, "Loading sample variants");
                 Store::new(&PathBuf::try_from(s.as_str())?, parse_sample_record)
             })
             .transpose()?;
+
         let population_variants = opt
             .population_variants
             .get(i)
             .filter(|s| !s.is_empty())
             .map(|s| {
+                tracing::debug!(stream = i, path = s, "Loading population variants");
                 Store::new(&PathBuf::try_from(s.as_str())?, parse_population_record)
             })
             .transpose()?;
 
+        // -- Validate output paths early -----------------------------------
         // Check before opening writers so no partial files are created if one
         // path is invalid.
         opt.output.get(i).map(path_unicode_ok).transpose()?;
-        opt.filtered_output.get(i).map(path_unicode_ok).transpose()?;
-        opt.ambiguous_output.get(i).map(path_unicode_ok).transpose()?;
+        opt.filtered_output
+            .get(i)
+            .map(path_unicode_ok)
+            .transpose()?;
+        opt.ambiguous_output
+            .get(i)
+            .map(path_unicode_ok)
+            .transpose()?;
 
         Ok(AlnStream {
             ambiguous: None,
@@ -150,7 +177,8 @@ impl AlnStream<Record> {
             output: None,
             sample_variants,
             population_variants,
-            header
+            header,
+            threads: opt.threads,
         })
     }
 }
@@ -202,19 +230,19 @@ where
             .map(Ok)
             .or_else(|| {
                 self.bam.as_mut().and_then(|b| {
-                    b.records().next().map(|r| {
-                        r.and_then(|r| R::from_bam_record(header, r))
-                    })
+                    b.records()
+                        .next()
+                        .map(|r| r.and_then(|r| R::from_bam_record(header, r)))
                 })
             })
             .transpose()?)
     }
 
     fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<()> {
-        let output = match is_best {
-            Some(true)  => self.output.as_mut(),
+        let output: Option<&mut BamOutput> = match is_best {
+            Some(true) => self.output.as_mut(),
             Some(false) => self.filt.as_mut(),
-            None        => self.ambiguous.as_mut(),
+            None => self.ambiguous.as_mut(),
         };
         if let Some(o) = output {
             o.write_alignment_record(&self.header, &rec)?;
@@ -223,16 +251,33 @@ where
     }
 
     fn init_writers(&mut self, opt: &Config, i: usize) -> Result<()> {
-        let add_pg_line = !opt.no_program_line;
-        self.output = opt.output.get(i)
-            .map(|f| out_from_file(f, &self.header, add_pg_line))
+        let add_pg = !opt.no_program_line;
+        let threads = self.threads;
+
+        self.output = opt
+            .output
+            .get(i)
+            .map(|f| out_from_file(f, &self.header, add_pg, threads))
             .transpose()?;
-        self.filt = opt.filtered_output.get(i)
-            .map(|f| out_from_file(f, &self.header, add_pg_line))
+        self.filt = opt
+            .filtered_output
+            .get(i)
+            .map(|f| out_from_file(f, &self.header, add_pg, threads))
             .transpose()?;
-        self.ambiguous = opt.ambiguous_output.get(i)
-            .map(|f| out_from_file(f, &self.header, add_pg_line))
+        self.ambiguous = opt
+            .ambiguous_output
+            .get(i)
+            .map(|f| out_from_file(f, &self.header, add_pg, threads))
             .transpose()?;
+
+        tracing::debug!(
+            stream = i,
+            output = opt.output.get(i).map(|p| p.display().to_string()),
+            filtered = opt.filtered_output.get(i).map(|p| p.display().to_string()),
+            ambiguous = opt.ambiguous_output.get(i).map(|p| p.display().to_string()),
+            "Writers initialised"
+        );
+
         Ok(())
     }
 
@@ -240,7 +285,11 @@ where
         self.sample_variants
             .as_ref()
             .map(|s| s as &dyn StoreTrait)
-            .or_else(|| self.population_variants.as_ref().map(|p| p as &dyn StoreTrait))
+            .or_else(|| {
+                self.population_variants
+                    .as_ref()
+                    .map(|p| p as &dyn StoreTrait)
+            })
     }
 
     fn header(&self) -> &Header {
