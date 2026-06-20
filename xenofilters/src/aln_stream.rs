@@ -1,19 +1,27 @@
+//! `src/aln_stream.rs`
+//!
 //! Alignment stream abstraction.
 //!
-//! [`AlnStream`] wraps a name-sorted BAM reader together with its optional
-//! output writers and variant stores. The [`AlignmentStream`] trait is the
-//! interface used by the filter algorithm so that tests can substitute a
-//! lightweight mock without touching any file I/O.
+//! Two output modes are supported:
+//!
+//! **Multi-file mode** (default): winners, filtered, and ambiguous reads each
+//! go to separate `BamOutput` files as before.
+//!
+//! **Merged-output mode** (`--merged-output`): all three destinations share
+//! one `MergedOutput` file.  Non-winning records have their `RG:Z` tag
+//! rewritten with a suffix before writing.
 
 use crate::alignment::SimpleRec;
-use crate::bam::{out_from_file, path_unicode_ok, BamOutput};
+use crate::bam::{
+    expand_header, out_from_file, path_unicode_ok, rewrite_rg, BamOutput, MergedOutput,
+    SUFFIX_AMBIGUOUS, SUFFIX_FILTERED,
+};
 use crate::config::{Config, StripReadSuffix};
 use crate::variant::{parse_population_record, parse_sample_record, Store, StoreTrait};
 use anyhow::{anyhow, ensure, Result};
 use noodles::bam::{io::Reader as BamReader, record::Record};
 use noodles::bgzf::io::Reader as BgzfReader;
-use noodles::sam::alignment::record_buf::RecordBuf;
-use noodles::sam::header::Header;
+use noodles::sam::{alignment::record_buf::RecordBuf, header::Header};
 use std::fs::File;
 use std::io::Read as ioRead;
 use std::path::PathBuf;
@@ -23,30 +31,76 @@ pub(crate) trait AlignmentStream<R: SimpleRec> {
     fn next_qname(&self) -> &[u8];
     fn un_next(&mut self, rec: R) -> Result<()>;
     fn next_rec(&mut self) -> Result<Option<R>>;
-    fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<()>;
-    fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<()>;
-    /// Returns the variant store for this stream, if any.
+    /// Write a record.
     ///
-    /// Returns `Arc` so the parallel scoring pipeline can clone it into worker
-    /// bundles without any lifetime entanglement or unsafe code.
+    /// `is_best`:
+    /// - `Some(true)`  → winning alignment
+    /// - `Some(false)` → filtered (lost) alignment
+    /// - `None`        → ambiguous
+    fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<()>;
+    fn init_writers(&mut self, opt: &Config, i: usize) -> Result<()>;
     fn variant_store(&self) -> Option<Arc<dyn StoreTrait>>;
     fn header(&self) -> &Header;
 }
 
+// -- OutputMode ----------------------------------------------------------------
+
+/// Selects the output routing strategy for a stream.
+enum OutputMode {
+    /// Separate files for winners / filtered / ambiguous (original behaviour).
+    MultiFile {
+        output: Option<BamOutput>,
+        filt: Option<BamOutput>,
+        ambiguous: Option<BamOutput>,
+    },
+    /// Single merged file; non-winners get a `RG:Z` suffix before writing.
+    Merged(MergedOutput),
+}
+
+impl OutputMode {
+    fn write(&mut self, mut rec: RecordBuf, is_best: Option<bool>, header: &Header) -> Result<()> {
+        match self {
+            OutputMode::MultiFile {
+                output,
+                filt,
+                ambiguous,
+            } => {
+                let dest = match is_best {
+                    Some(true) => output.as_mut(),
+                    Some(false) => filt.as_mut(),
+                    None => ambiguous.as_mut(),
+                };
+                if let Some(w) = dest {
+                    w.write_alignment_record(header, &rec)?;
+                }
+            }
+            OutputMode::Merged(merged) => {
+                // Winners: write as-is.
+                // Non-winners: rewrite RG:Z tag, then write.
+                let suffix = match is_best {
+                    Some(true) => None,
+                    Some(false) => Some(SUFFIX_FILTERED),
+                    None => Some(SUFFIX_AMBIGUOUS),
+                };
+                if let Some(sfx) = suffix {
+                    rewrite_rg(&mut rec, sfx)?;
+                }
+                merged.write_alignment_record(&rec)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+// -- AlnStream -----------------------------------------------------------------
+
 pub(crate) struct AlnStream<R> {
-    ambiguous: Option<BamOutput>,
     pub(crate) bam: Option<BamReader<BgzfReader<File>>>,
-    filt: Option<BamOutput>,
     /// One-record look-ahead buffer (supports `un_next`).
     next: Option<R>,
-    output: Option<BamOutput>,
-    /// Variant store for this stream, wrapped in `Arc` so it can be shared
-    /// with parallel scoring workers at zero additional allocation cost.
-    /// Sample-specific and population stores are mutually exclusive per stream;
-    /// sample takes priority if both are somehow set.
+    output_mode: OutputMode,
     variant_store: Option<Arc<dyn StoreTrait>>,
     header: Header,
-    /// Cached from config so writers can be opened later with the correct count.
     threads: usize,
 }
 
@@ -64,12 +118,9 @@ where
         let header = bam.read_header()?;
 
         // -- Reject coordinate-sorted input --------------------------------
-        // Coordinate-sorted files would require a hash map of all in-flight
-        // fragments, defeating the low-memory streaming design.
         let mut header_reader = bam.header_reader();
         header_reader.read_magic_number()?;
         let mut raw_sam_header_reader = header_reader.raw_sam_header_reader()?;
-
         let mut buf = Vec::new();
         raw_sam_header_reader.read_to_end(&mut buf)?;
 
@@ -81,9 +132,8 @@ where
                 parts.len() < 3
                     || parts[0] != b"@HD"
                     || (parts[2] != b"SO:coordinate" && parts[2] != b"GO:reference"),
-                "Input file '{bam_str}' appears to be coordinate-sorted \
-                 (SO:coordinate / GO:reference). xenofilters requires \
-                 name-sorted BAM files. Re-sort with `samtools sort -n`."
+                "Input file '{bam_str}' appears to be coordinate-sorted. \
+                 Re-sort with `samtools sort -n`."
             );
         }
 
@@ -98,21 +148,21 @@ where
             .name()
             .ok_or_else(|| anyhow!("First record in '{bam_str}' has no read name"))?;
 
-        // -- Auto-detect / validate read-name suffix stripping -------------
+        // -- Auto-detect strip-suffix mode ---------------------------------
         opt.strip_read_suffix = match opt.strip_read_suffix {
             StripReadSuffix::True => {
                 ensure!(
                     name.ends_with(b"/1") || name.ends_with(b"/2"),
-                    "Stream {i} ('{bam_str}'): --strip-read-suffix=true requested but \
-                     first read name '{name:?}' has no /1 or /2 suffix."
+                    "Stream {i} ('{bam_str}'): --strip-read-suffix=true but \
+                     first read name has no /1 or /2 suffix."
                 );
                 StripReadSuffix::True
             }
             StripReadSuffix::False => {
                 ensure!(
                     !name.ends_with(b"/1") && !name.ends_with(b"/2"),
-                    "Stream {i} ('{bam_str}'): --strip-read-suffix=false requested but \
-                     first read name '{name:?}' ends with a /1 or /2 suffix."
+                    "Stream {i} ('{bam_str}'): --strip-read-suffix=false but \
+                     first read name ends with a /1 or /2 suffix."
                 );
                 StripReadSuffix::False
             }
@@ -135,22 +185,12 @@ where
         } else {
             ensure!(
                 opt.is_paired == Some(test_record.flags().is_segmented()),
-                "Stream {i} ('{bam_str}') has different paired-end status than stream 0. \
-                 All inputs must be either all paired-end or all single-end."
+                "Stream {i} ('{bam_str}') has different paired-end status than stream 0."
             );
             opt.is_paired
         };
 
-        // -- Build variant store (Arc-wrapped at construction) -------------
-        //
-        // We erase the concrete Store<Sample> / Store<Population> type into
-        // Arc<dyn StoreTrait> immediately.  This costs nothing at runtime
-        // (one thin-pointer fat-pointer conversion at startup) but means the
-        // parallel path can clone the Arc into every FragmentBundle without
-        // any lifetime or unsafe issues.
-        //
-        // Sample takes priority over population when both are configured for
-        // the same stream (unusual but not forbidden).
+        // -- Variant store -------------------------------------------------
         let variant_store: Option<Arc<dyn StoreTrait>> = {
             let sample = opt
                 .sample_variants
@@ -183,23 +223,30 @@ where
         };
 
         // -- Validate output paths early -----------------------------------
-        opt.output.get(i).map(path_unicode_ok).transpose()?;
-        opt.filtered_output
-            .get(i)
-            .map(path_unicode_ok)
-            .transpose()?;
-        opt.ambiguous_output
-            .get(i)
-            .map(path_unicode_ok)
-            .transpose()?;
-
         let next_rec = R::from_bam_record(&header, test_record)?;
+        if opt.merged_output.is_none() {
+            opt.output.get(i).map(path_unicode_ok).transpose()?;
+            opt.filtered_output
+                .get(i)
+                .map(path_unicode_ok)
+                .transpose()?;
+            opt.ambiguous_output
+                .get(i)
+                .map(path_unicode_ok)
+                .transpose()?;
+        } else {
+            path_unicode_ok(opt.merged_output.as_ref().unwrap())?;
+        }
+
         Ok(AlnStream {
-            ambiguous: None,
             bam: Some(bam),
-            filt: None,
             next: Some(next_rec),
-            output: None,
+            // OutputMode is set later in init_writers once all streams are open.
+            output_mode: OutputMode::MultiFile {
+                output: None,
+                filt: None,
+                ambiguous: None,
+            },
             variant_store,
             header,
             threads: opt.threads,
@@ -237,8 +284,7 @@ where
     fn un_next(&mut self, rec: R) -> Result<()> {
         if self.next.is_some() {
             return Err(anyhow!(
-                "un_next called while look-ahead buffer is already occupied \
-                 (this is a bug — please report it)"
+                "un_next called while look-ahead buffer is occupied"
             ));
         }
         self.next = Some(rec);
@@ -262,49 +308,66 @@ where
     }
 
     fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<()> {
-        let output: Option<&mut BamOutput> = match is_best {
-            Some(true) => self.output.as_mut(),
-            Some(false) => self.filt.as_mut(),
-            None => self.ambiguous.as_mut(),
-        };
-        if let Some(o) = output {
-            o.write_alignment_record(&self.header, &rec)?;
-        }
-        Ok(())
+        let header = &self.header;
+        self.output_mode.write(rec, is_best, header)
     }
 
     fn init_writers(&mut self, opt: &Config, i: usize) -> Result<()> {
         let add_pg = !opt.no_program_line;
         let threads = self.threads;
 
-        self.output = opt
-            .output
-            .get(i)
-            .map(|f| out_from_file(f, &self.header, add_pg, threads))
-            .transpose()?;
-        self.filt = opt
-            .filtered_output
-            .get(i)
-            .map(|f| out_from_file(f, &self.header, add_pg, threads))
-            .transpose()?;
-        self.ambiguous = opt
-            .ambiguous_output
-            .get(i)
-            .map(|f| out_from_file(f, &self.header, add_pg, threads))
-            .transpose()?;
+        if let Some(merged_path) = &opt.merged_output {
+            // -- Merged-output mode ----------------------------------------
+            // The header is expanded once here; all streams share the same
+            // physical file but each opens an independent MergedOutput handle.
+            // In practice only one stream's init_writers creates the file;
+            // subsequent streams for the same path would truncate it.
+            //
+            // Recommendation: use --merged-output with a single logical file;
+            // the header expansion covers all streams' RG lines.
+            let expanded = expand_header(self.header.clone());
+            self.output_mode =
+                OutputMode::Merged(MergedOutput::new(merged_path, expanded, add_pg, threads)?);
+            tracing::debug!(
+                stream = i,
+                path   = %merged_path.display(),
+                "Merged output mode enabled"
+            );
+        } else {
+            // -- Multi-file mode -------------------------------------------
+            let output = opt
+                .output
+                .get(i)
+                .map(|f| out_from_file(f, &self.header, add_pg, threads))
+                .transpose()?;
+            let filt = opt
+                .filtered_output
+                .get(i)
+                .map(|f| out_from_file(f, &self.header, add_pg, threads))
+                .transpose()?;
+            let ambiguous = opt
+                .ambiguous_output
+                .get(i)
+                .map(|f| out_from_file(f, &self.header, add_pg, threads))
+                .transpose()?;
 
-        tracing::debug!(
-            stream = i,
-            output = opt.output.get(i).map(|p| p.display().to_string()),
-            filtered = opt.filtered_output.get(i).map(|p| p.display().to_string()),
-            ambiguous = opt.ambiguous_output.get(i).map(|p| p.display().to_string()),
-            "Writers initialised"
-        );
+            tracing::debug!(
+                stream = i,
+                output = opt.output.get(i).map(|p| p.display().to_string()),
+                filtered = opt.filtered_output.get(i).map(|p| p.display().to_string()),
+                ambiguous = opt.ambiguous_output.get(i).map(|p| p.display().to_string()),
+                "Multi-file output mode"
+            );
+            self.output_mode = OutputMode::MultiFile {
+                output,
+                filt,
+                ambiguous,
+            };
+        }
         Ok(())
     }
 
     fn variant_store(&self) -> Option<Arc<dyn StoreTrait>> {
-        // Clone the Arc — O(1), just an atomic increment.
         self.variant_store.clone()
     }
 

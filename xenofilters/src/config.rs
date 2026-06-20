@@ -35,6 +35,11 @@ pub(crate) struct Config {
     #[arg(short, long, num_args = 1..ARG_MAX)]
     pub(crate) output: Vec<PathBuf>,
 
+    /// Output file for all alignments (winners, filtered, and ambiguous).
+    /// If set, overrides --output, --filtered-output, and --ambiguous-output.
+    #[arg(short, long)]
+    pub(crate) merged_output: Option<PathBuf>,
+
     /// Output file for the losing alignment, one per stream.
     #[arg(short, long, num_args = 0..ARG_MAX)]
     pub(crate) filtered_output: Vec<PathBuf>,
@@ -127,6 +132,13 @@ impl Config {
                 "--single-alignment-mode can only be used with exactly 1 alignment stream.");
             ensure!(aln_count >= 2,
                 "At least two alignments required outside single-alignment mode.");
+        }
+
+        if self.merged_output.is_some() {
+            ensure!(
+                self.output.is_empty() && self.filtered_output.is_empty() && self.ambiguous_output.is_empty(),
+                "Cannot use --merged-output in combination with --output, --filtered-output, or --ambiguous-output."
+            );
         }
 
         let logical_len = if aln_count == 1 { 2 } else { aln_count };

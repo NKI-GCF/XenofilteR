@@ -1,4 +1,5 @@
 // src/aln_stream/tests.rs
+use crate::aln_stream::OutputMode;
 use crate::bam::BamFormat;
 use crate::config::{Config, StripReadSuffix};
 use crate::tests::create_record;
@@ -16,32 +17,56 @@ pub(crate) struct MockStream {
 }
 
 impl AlignmentStream<RecordBuf> for MockStream {
-    fn next_qname(&self) -> &[u8] { self.aln_stream.next_qname() }
-    fn un_next(&mut self, rec: RecordBuf) -> Result<()> { self.un_next(rec) }
-    fn next_rec(&mut self) -> Result<Option<RecordBuf>> { self.next_rec() }
+    fn next_qname(&self) -> &[u8] {
+        self.aln_stream.next_qname()
+    }
+    fn un_next(&mut self, rec: RecordBuf) -> Result<()> {
+        self.un_next(rec)
+    }
+    fn next_rec(&mut self) -> Result<Option<RecordBuf>> {
+        self.next_rec()
+    }
     fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<()> {
         self.write_record(rec, is_best)
     }
-    fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<()> { Ok(()) }
-    fn variant_store(&self) -> Option<Arc<dyn StoreTrait>> { None }
-    fn header(&self) -> &Header { &self.aln_stream.header }
+    fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<()> {
+        Ok(())
+    }
+    fn variant_store(&self) -> Option<Arc<dyn StoreTrait>> {
+        None
+    }
+    fn header(&self) -> &Header {
+        &self.aln_stream.header
+    }
 }
 
 impl MockStream {
     pub(crate) fn new(i: usize, reads: Vec<RecordBuf>) -> Self {
-        Self { reads, written: Vec::new(), aln_stream: empty_aln_stream(), i }
+        Self {
+            reads,
+            written: Vec::new(),
+            aln_stream: empty_aln_stream(),
+            i,
+        }
     }
     fn next_rec(&mut self) -> Result<Option<RecordBuf>> {
-        if let Some(rec) = self.aln_stream.next_rec()? { return Ok(Some(rec)); }
-        if self.reads.is_empty() { return Ok(None); }
+        if let Some(rec) = self.aln_stream.next_rec()? {
+            return Ok(Some(rec));
+        }
+        if self.reads.is_empty() {
+            return Ok(None);
+        }
         let rec = self.reads.remove(0);
         self.aln_stream.un_next(rec.into())?;
         self.aln_stream.next_rec()
     }
     fn un_next(&mut self, rec: RecordBuf) -> Result<()> {
         let name = rec.name().expect("Invalid Name");
-        eprintln!("Un-next({}) read: {}",
-            self.i, std::str::from_utf8(name.as_ref()).unwrap_or("Invalid UTF-8"));
+        eprintln!(
+            "Un-next({}) read: {}",
+            self.i,
+            std::str::from_utf8(name.as_ref()).unwrap_or("Invalid UTF-8")
+        );
         self.aln_stream.un_next(rec)
     }
     fn write_record(&mut self, rec: RecordBuf, state: Option<bool>) -> Result<()> {
@@ -52,14 +77,16 @@ impl MockStream {
 
 fn empty_aln_stream() -> AlnStream<RecordBuf> {
     AlnStream {
-        ambiguous:     None,
-        bam:           None,
-        filt:          None,
-        next:          None,
-        output:        None,
+        bam: None,
+        output_mode: OutputMode::MultiFile {
+            ambiguous: None,
+            filt: None,
+            output: None,
+        },
+        next: None,
         variant_store: None,
-        header:        Header::default(),
-        threads:       1,
+        header: Header::default(),
+        threads: 1,
     }
 }
 
@@ -71,7 +98,7 @@ fn test_aln_stream_new_mismatch_strip_suffix_true_instead_of_false() {
         strip_read_suffix: StripReadSuffix::True,
         ..Default::default()
     };
-    assert!(AlnStream::new(&mut config, 0).is_err());
+    assert!(AlnStream::<RecordBuf>::new(&mut config, 0).is_err());
 }
 
 #[test]
@@ -126,7 +153,9 @@ fn test_next_qname_returns_pending_records_name() -> Result<()> {
 fn test_un_next_errors_when_already_occupied() -> Result<()> {
     let mut stream = empty_aln_stream();
     stream.un_next(create_record(b"r1", "5M", &[], &[30; 5], "5", false)?)?;
-    assert!(stream.un_next(create_record(b"r2", "5M", &[], &[30; 5], "5", false)?).is_err());
+    assert!(stream
+        .un_next(create_record(b"r2", "5M", &[], &[30; 5], "5", false)?)
+        .is_err());
     Ok(())
 }
 
