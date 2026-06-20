@@ -6,6 +6,7 @@ use crate::tests::create_record;
 use crate::variant::StoreTrait;
 use crate::{AlignmentStream, AlnStream};
 use anyhow::Result;
+use noodles::sam::header::record::value::{map::ReadGroup, Map};
 use noodles::sam::{alignment::record_buf::RecordBuf, header::Header};
 use std::sync::Arc;
 
@@ -178,4 +179,87 @@ fn test_write_record_is_noop_without_attached_writers() -> Result<()> {
 #[test]
 fn test_variant_store_none_when_unset() {
     assert!(empty_aln_stream().variant_store().is_none());
+}
+
+#[test]
+fn test_init_writers_configures_merged_mode() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let merged_path = temp_dir.path().join("merged.bam");
+
+    let mut config = Config::default();
+    config.merged_output = Some(merged_path.clone());
+    config.no_program_line = true; // simplify header checks
+
+    let mut stream = empty_aln_stream();
+
+    // Inject a dummy read group to test that header expansion is triggered
+    // during init_writers.
+    stream
+        .header
+        .read_groups_mut()
+        .insert("rg_test".parse()?, Map::<ReadGroup>::default());
+
+    // Initialize writers for stream 0
+    stream.init_writers(&config, 0)?;
+
+    // Verify the state transitioned to OutputMode::Merged
+    match &stream.output_mode {
+        OutputMode::Merged(merged_out) => {
+            let keys: Vec<String> = merged_out
+                .header()
+                .read_groups()
+                .keys()
+                .map(|k| k.to_string())
+                .collect();
+
+            // 1 original + 2 derived suffixes = 3 total Read Groups expected
+            assert_eq!(keys.len(), 3, "Header was not properly expanded");
+            assert!(keys.contains(&"rg_test".to_string()));
+            assert!(keys.contains(&format!("rg_test{}", crate::bam::SUFFIX_FILTERED)));
+            assert!(keys.contains(&format!("rg_test{}", crate::bam::SUFFIX_AMBIGUOUS)));
+        }
+        OutputMode::MultiFile { .. } => {
+            panic!("init_writers failed to set OutputMode::Merged when configured");
+        }
+    }
+
+    // Verify the file was physically created
+    assert!(merged_path.exists(), "Merged file was not created on disk");
+
+    Ok(())
+}
+
+#[test]
+fn test_init_writers_defaults_to_multi_file() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let out_path = temp_dir.path().join("out.bam");
+
+    let mut config = Config::default();
+    config.output = vec![out_path.clone()];
+    config.no_program_line = true;
+
+    let mut stream = empty_aln_stream();
+    stream.init_writers(&config, 0)?;
+
+    // Verify the state is MultiFile with the output writer populated
+    match &stream.output_mode {
+        OutputMode::MultiFile {
+            output,
+            filt,
+            ambiguous,
+        } => {
+            assert!(
+                output.is_some(),
+                "Standard output writer should be initialized"
+            );
+            assert!(filt.is_none(), "Filtered output should be None");
+            assert!(ambiguous.is_none(), "Ambiguous output should be None");
+        }
+        OutputMode::Merged(_) => {
+            panic!("init_writers incorrectly fell back to Merged mode");
+        }
+    }
+
+    assert!(out_path.exists());
+    Ok(())
 }

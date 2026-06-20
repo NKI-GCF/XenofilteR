@@ -1,14 +1,5 @@
 use super::*;
-
-/*fn base_config() -> Config {
-    Config {
-        alignment: vec!["a.bam".into(), "b.bam".into()],
-        gap_open: 6.0,
-        gap_extend: 1.0,
-        mismatch_penalty: 4.0,
-        ..Default::default()
-    }
-}*/
+use std::path::PathBuf;
 
 fn base_config() -> Config {
     Config {
@@ -278,4 +269,58 @@ fn test_variant_array_padding_normalization() {
     // Slot 0 pop variant must be empty string, slot 1 pop variant exists
     assert_eq!(c.population_variants[0], "");
     assert_eq!(c.population_variants[1], "varB.vcf");
+}
+
+fn valid_base_config() -> Config {
+    Config {
+        alignment: vec!["aln1.bam".to_string(), "aln2.bam".to_string()],
+        gap_open: 6.0,
+        mismatch_penalty: 4.0,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn test_merged_output_validation_success() {
+    let mut config = valid_base_config();
+    config.merged_output = Some(PathBuf::from("merged.bam"));
+
+    // Should pass validation cleanly
+    assert!(config.validate_and_init().is_ok());
+}
+
+#[test]
+fn test_merged_output_mutually_exclusive_with_output() {
+    let mut config = valid_base_config();
+    config.merged_output = Some(PathBuf::from("merged.bam"));
+    config.output = vec![PathBuf::from("out1.bam")];
+
+    let err = config.validate_and_init().unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("Cannot use --merged-output in combination"));
+}
+
+#[test]
+fn test_merged_output_mutually_exclusive_with_filtered() {
+    let mut config = valid_base_config();
+    config.merged_output = Some(PathBuf::from("merged.bam"));
+    config.filtered_output = vec![PathBuf::from("filtered.bam")];
+
+    let err = config.validate_and_init().unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("Cannot use --merged-output in combination"));
+}
+
+#[test]
+fn test_merged_output_mutually_exclusive_with_ambiguous() {
+    let mut config = valid_base_config();
+    config.merged_output = Some(PathBuf::from("merged.bam"));
+    config.ambiguous_output = vec![PathBuf::from("ambig.bam")];
+
+    let err = config.validate_and_init().unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("Cannot use --merged-output in combination"));
 }
