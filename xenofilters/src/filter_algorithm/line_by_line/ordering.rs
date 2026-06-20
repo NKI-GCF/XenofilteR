@@ -20,7 +20,7 @@
 //!  ---------------------------------------------                  |
 //!  <--------------------------------------------------------------'
 //!  own Scratch (DP tables)
-//!  read Arc<Penalty> + Arc<Store<V>>   (shared, immutable)
+//!  read Arc<Penalty> + Arc<dyn StoreTrait>  (shared, immutable)
 //!  compute score_delta + decision
 //!  send ScoredFragment back
 //! ```
@@ -28,6 +28,14 @@
 //! Writers stay on the IO thread so `BamOutput` needs no `Mutex`.
 //! Output order is nondeterministic across fragments when
 //! `score_threads > 1` (pass `--score-threads 1` to restore order).
+//!
+//! # No-variant fast path
+//!
+//! When no stream has a variant store (`stores` are all `None`), the inner
+//! per-segment `overlapping_multi` calls are skipped entirely.  The flag is
+//! computed once per bundle in `score_candidate_owned` before the mate loop,
+//! so the common no-variant case pays only one `Option::is_some()` check per
+//! candidate rather than one per read segment.
 
 use super::core::{AlnBuffer, LineByLine, Scratch};
 use crate::alignment::{FragmentState, MdCigFlags, SimpleRec};
@@ -53,21 +61,25 @@ pub(super) enum Decision {
 
 // -- Channel message types -----------------------------------------------------
 
-/// Everything a worker needs to score one fragment.  All fields are owned so
-/// the bundle can move across thread boundaries without any lifetime entanglement.
+/// Everything a worker needs to score one fragment.
+///
+/// All fields are owned/`Arc`-wrapped so the bundle moves across thread
+/// boundaries without any lifetime entanglement.
 struct FragmentBundle {
-    /// Collected alignments for this fragment, one entry per stream. Length ≥ 2.
+    /// Collected alignments, one [`FragmentState`] per stream. Length ≥ 2.
     best: AlnBuffer<RecordBuf>,
-    /// Per-stream variant stores shared via `Arc` (read-only during scoring).
-    /// `None` for streams that have no variant file.
+    /// Per-stream variant stores.  Each `Arc` is a cheap clone (atomic
+    /// increment) of the one held by [`AlnStream`].  `None` for streams with
+    /// no variant file.
     stores: SmallVec<[Option<Arc<dyn StoreTrait>>; 2]>,
-    /// Scoring parameters — cheaply cloned from the main `LineByLine` at startup.
+    /// Scoring parameters cloned from [`LineByLine`] once at pipeline startup.
     ctx: ScoringContext,
 }
 
 /// A scored fragment, ready to be written by the IO thread.
 struct ScoredFragment {
-    /// Only the winning stream(s) remain; losing entries are already stripped.
+    /// Only the winning stream(s) remain; losing entries are already stripped
+    /// by the worker so the IO thread only needs to route and write.
     best: AlnBuffer<RecordBuf>,
     decision: Option<Decision>,
 }
@@ -85,9 +97,9 @@ struct ScoringContext {
 /// Entry point for each scoring worker thread.
 ///
 /// Loops until the IO thread drops the work sender, which closes `rx` and
-/// causes `rx.recv()` to return `Err`, exiting the loop cleanly.
+/// causes `rx.recv()` to return `Err`, exiting cleanly.
 fn worker_loop(rx: Receiver<FragmentBundle>, tx: Sender<ScoredFragment>) {
-    // Each worker owns its Scratch; there is no contention on the DP tables.
+    // Each worker owns its own Scratch (NW DP tables); no contention.
     let mut scratch = Scratch::new();
 
     while let Ok(bundle) = rx.recv() {
@@ -97,12 +109,13 @@ fn worker_loop(rx: Receiver<FragmentBundle>, tx: Sender<ScoredFragment>) {
             ctx,
         } = bundle;
         let decision = score_bundle(&mut best, &stores, &ctx, &mut scratch);
-        // If send fails, the IO thread exited early (error); stop silently.
+        // Ignore send errors: the IO thread may have exited after an error.
         let _ = tx.send(ScoredFragment { best, decision });
     }
 }
 
 /// Score a fragment bundle and return the routing decision.
+///
 /// Mirrors `LineByLine::resolve` + `apply_delta` + `handle_ordering` but
 /// operates on owned data with no `&mut self`.
 fn score_bundle(
@@ -111,18 +124,18 @@ fn score_bundle(
     ctx: &ScoringContext,
     scratch: &mut Scratch,
 ) -> Option<Decision> {
-    // Fast-path: unmapped vs mapped.
+    // Fast path 1: unmapped vs mapped.
     let mut ord = best[0].partial_cmp(&best[best.len() - 1]);
 
     if ord.is_none() {
-        // Medium-path: perfect vs imperfect alignment.
+        // Fast path 2: perfect vs imperfect alignment.
         let (mcfs1, mcfs2) = match best[0].cmp_perfect(&best[best.len() - 1], &mut ord) {
             Ok(pair) => pair,
             Err(_) => return None,
         };
 
         if ord.is_none() {
-            // Slow path: full per-base log-likelihood scoring.
+            // Slow path: full per-base log-likelihood + optional variant scoring.
             let first = best.first().unwrap();
             let last = best.last().unwrap();
             let store1 = stores.get(first.get_nr()).and_then(|s| s.as_deref());
@@ -130,18 +143,23 @@ fn score_bundle(
 
             let s1 = score_candidate_owned(first, mcfs1, store1, ctx, scratch).ok()?;
             let s2 = score_candidate_owned(last, mcfs2, store2, ctx, scratch).ok()?;
-            let delta = s1 - s2;
-            return apply_delta_owned(best, delta, ctx);
+            return apply_delta_owned(best, s1 - s2, ctx);
         }
     }
 
     handle_ordering_owned(best, ord.unwrap(), ctx)
 }
 
-/// Score one candidate using its owned `RecordBuf`s.
+/// Score one candidate using its owned [`RecordBuf`]s.
 ///
-/// Functionally identical to `LineByLine::score_candidate` in `score.rs`, but
-/// takes owned/Arc data rather than borrowing from `&mut self`.
+/// Mirrors `LineByLine::score_candidate` in `score.rs` but takes owned/Arc
+/// data instead of borrowing from `&mut self`.
+///
+/// # No-variant fast path
+///
+/// When `store` is `None` the entire `overlapping_multi` call chain is
+/// skipped.  The check is a single `Option::is_some()` per candidate — not
+/// per segment — so the no-variant case is as lean as possible.
 fn score_candidate_owned(
     state: &FragmentState<RecordBuf>,
     mcfs: SmallVec<[MdCigFlags<'_>; READ_CT]>,
@@ -156,6 +174,11 @@ fn score_candidate_owned(
     let mut seg_mcfs: SmallVec<[MdCigFlags; READ_CT]> = SmallVec::new();
     let mut mcfs_opt: SmallVec<[Option<MdCigFlags>; READ_CT]> =
         mcfs.into_iter().map(Some).collect();
+
+    // Hoist the variant check out of the per-segment loop.
+    // `has_variants` is false for the vast majority of runs.
+    let has_variants = store.is_some();
+
     let mut dvnt: FragEvalVec<'_> = SmallVec::new();
 
     for idx in state.order_mates() {
@@ -164,7 +187,10 @@ fn score_candidate_owned(
             .flags(idx)
             .ok_or_else(|| anyhow!("No flags for record index {idx}"))?;
 
-        if flags.is_unmapped() {
+        if flags.is_unmapped() || !has_variants {
+            // No variant lookup: push an empty eval vec.
+            // When has_variants is false this branch is always taken, so the
+            // compiler can constant-fold the entire variant-lookup block away.
             dvnt.push(SmallVec::new());
         } else {
             let tid = rec
@@ -180,10 +206,11 @@ fn score_candidate_owned(
                 .ok_or_else(|| anyhow!("MdCigFlags missing for index {idx}"))?
                 .get_cigar()
                 .len();
+            // store is Some here (has_variants == true).
             dvnt.push(
                 store
-                    .map(|st| st.overlapping_multi(tid, start, start + cig_len))
-                    .unwrap_or_default(),
+                    .unwrap()
+                    .overlapping_multi(tid, start, start + cig_len),
             );
         }
 
@@ -433,52 +460,30 @@ impl<R: SimpleRec> LineByLine<R> {
 }
 
 // -- Parallel pipeline — only for LineByLine<RecordBuf> -----------------------
-//
-// RecordBuf owns all its data (no lifetime parameters), so bundles can move
-// across thread boundaries.  The generic R path always uses process_sequential.
 
 impl LineByLine<RecordBuf> {
     /// Parallel scoring pipeline.
     ///
-    /// Extracts variant stores from the alignment streams into `Arc`s before
-    /// spawning workers, so no unsafe lifetime transmutation is needed.
-    /// After all workers finish the stores are put back (or left as `None`
-    /// since they are not needed after processing).
+    /// Collects `Arc<dyn StoreTrait>` clones from each alignment stream (O(1)
+    /// atomic increment per stream) before spawning workers, giving every
+    /// worker full variant-rescue capability with zero unsafe code and zero
+    /// extra allocation.
     pub(crate) fn process_parallel(&mut self) -> Result<()> {
         let n = self.score_threads;
-        let cap = n * 2; // channel bound — backpressure without starving workers
+        let cap = n * 2; // bounded channel capacity — natural backpressure
 
-        // -- Extract stores into Arcs --------------------------------------
-        // AlignmentStream::variant_store() returns &dyn StoreTrait which borrows
-        // from self.aln.  We cannot move the store out of the stream generically.
-        //
-        // Solution: we call overlapping_multi through the Arc in workers via
-        // a thin wrapper that erases the concrete type.  Because we cannot move
-        // the store out of AlnStream without refactoring it (a v0.3 item in the
-        // roadmap), we clone the variant data from the store into a standalone
-        // Arc-wrapped copy.
-        //
-        // For now: if stores are absent (the common case for most streams),
-        // workers simply skip variant scoring.  When stores ARE present, the
-        // data was already loaded into memory at startup, so "cloning" the Arc
-        // is just a pointer increment.
-        //
-        // The AlnStream exposes variant_store() -> Option<&dyn StoreTrait>.
-        // We wrap each &dyn in a newtype that implements StoreTrait by
-        // forwarding — but that still has a lifetime.
-        //
-        // REAL SOLUTION (zero-cost, zero-unsafe): give AlnStream an
-        // `Arc<dyn StoreTrait>` field alongside the raw reference so it can
-        // hand out an Arc directly.  That refactor is listed in ROADMAP v0.3.
-        //
-        // For this PR we take the simpler route: pass `None` for stores when
-        // running in parallel (variant rescue still works in sequential mode).
-        // The branch_counters and all other logic are identical.
-        //
-        // TODO(v0.3): refactor AlnStream to hold Arc<dyn StoreTrait> and
-        //             enable variant rescue on the parallel path.
-        let stores: SmallVec<[Option<Arc<dyn StoreTrait>>; 2]> =
-            self.aln.iter().map(|_| None).collect();
+        // -- Collect stores (Arc clones, O(1) each) ------------------------
+        let stores: SmallVec<[Option<Arc<dyn StoreTrait>>; 2]> = self
+            .aln
+            .iter()
+            .map(|a| a.variant_store()) // returns Option<Arc<dyn StoreTrait>>
+            .collect();
+
+        let any_variants = stores.iter().any(|s| s.is_some());
+        tracing::debug!(
+            any_variants,
+            "Variant stores collected for parallel pipeline"
+        );
 
         let ctx = ScoringContext {
             penalties: Arc::new(self.penalties),
@@ -501,19 +506,19 @@ impl LineByLine<RecordBuf> {
             })
             .collect();
 
-        // The extra result_tx clone held by this thread is no longer needed;
-        // dropping it ensures result_rx closes when all workers have finished.
+        // Drop the extra result_tx held by the spawning thread so result_rx
+        // closes automatically when all workers have finished.
         drop(result_tx);
 
-        tracing::info!(workers = n, "Parallel scoring pipeline started");
+        tracing::info!(
+            workers = n,
+            any_variants,
+            "Parallel scoring pipeline started"
+        );
 
-        // -- IO loop -------------------------------------------------------
         let io_result = self.io_loop(work_tx, result_rx, ctx, stores);
 
-        // -- Join workers --------------------------------------------------
         for w in workers {
-            // Worker panics propagate as Err from join(); log but don't mask
-            // the real IO error.
             if let Err(e) = w.join() {
                 tracing::error!(?e, "Scorer worker thread panicked");
             }
@@ -522,7 +527,12 @@ impl LineByLine<RecordBuf> {
         io_result
     }
 
-    /// Core IO loop: assembles fragments, sends them for scoring, drains results.
+    /// IO loop: assembles fragments, sends them for scoring, drains results.
+    ///
+    /// Sending blocks naturally when workers are all busy (bounded channel),
+    /// preventing the IO thread from reading too far ahead of the workers.
+    /// We interleave result draining on the blocking path to keep the write
+    /// side flowing while waiting for channel capacity.
     fn io_loop(
         &mut self,
         work_tx: Sender<FragmentBundle>,
@@ -531,8 +541,8 @@ impl LineByLine<RecordBuf> {
         stores: SmallVec<[Option<Arc<dyn StoreTrait>>; 2]>,
     ) -> Result<()> {
         let mut best: AlnBuffer<RecordBuf> = smallvec![];
-
         let mut i = 0;
+
         while i != self.aln.len() {
             while let Some(rec) = self.aln[i].next_rec()? {
                 if self.handle_record_is_fragment_finished(i, rec, &mut best)? {
@@ -547,25 +557,25 @@ impl LineByLine<RecordBuf> {
                 }
 
                 if best.len() == 1 {
-                    // Single stream — no scoring needed; write immediately.
+                    // Single-stream fragment — no scoring needed.
                     self.write_scored(ScoredFragment {
                         best: best.drain(..).collect(),
                         decision: None,
                     })?;
                 } else {
+                    // Clone the Arc per bundle — O(1) per store.
                     let bundle = FragmentBundle {
                         best: best.drain(..).collect(),
-                        stores: stores.clone(),
+                        stores: stores.iter().cloned().collect(),
                         ctx: ctx.clone(),
                     };
-                    // Sending can block if the channel is full, which provides
-                    // natural backpressure: the IO thread slows down rather than
-                    // buffering unbounded fragments in memory.
-                    // Interleave result draining so the IO thread stays busy.
+
+                    // Try non-blocking send first.
                     match work_tx.try_send(bundle) {
                         Ok(()) => {}
                         Err(crossbeam_channel::TrySendError::Full(bundle)) => {
-                            // Drain one result to free a worker slot, then retry.
+                            // Workers are busy: drain one result to free a slot,
+                            // then block until the channel has space.
                             match result_rx.recv() {
                                 Ok(sf) => self.write_scored(sf)?,
                                 Err(_) => return Err(anyhow!("Scorer worker exited unexpectedly")),
@@ -595,15 +605,12 @@ impl LineByLine<RecordBuf> {
             }
         }
 
-        // Close the work channel; workers drain remaining bundles then exit.
+        // Signal workers to finish and drain remaining results.
         drop(work_tx);
-
-        // Drain remaining results.
         for sf in &result_rx {
             self.write_scored(sf)?;
         }
 
-        // Final accounting.
         let mut j = self.aln.len();
         while j > 0 {
             j -= 1;
@@ -616,10 +623,7 @@ impl LineByLine<RecordBuf> {
         Ok(())
     }
 
-    /// Write a scored fragment through the appropriate output stream(s).
-    ///
-    /// The winning/losing split has already been applied by the worker
-    /// (losing entries stripped from `best`), so this mirrors `handle_best`.
+    /// Write a pre-scored fragment through the appropriate output stream(s).
     fn write_scored(&mut self, sf: ScoredFragment) -> Result<()> {
         let ScoredFragment { mut best, decision } = sf;
         let best_state = (best.len() == 1).then_some(true);

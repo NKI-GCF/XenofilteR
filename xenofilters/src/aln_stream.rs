@@ -8,9 +8,7 @@
 use crate::alignment::SimpleRec;
 use crate::bam::{out_from_file, path_unicode_ok, BamOutput};
 use crate::config::{Config, StripReadSuffix};
-use crate::variant::{
-    parse_population_record, parse_sample_record, Population, Sample, Store, StoreTrait,
-};
+use crate::variant::{parse_population_record, parse_sample_record, Store, StoreTrait};
 use anyhow::{anyhow, ensure, Result};
 use noodles::bam::{io::Reader as BamReader, record::Record};
 use noodles::bgzf::io::Reader as BgzfReader;
@@ -19,6 +17,7 @@ use noodles::sam::header::Header;
 use std::fs::File;
 use std::io::Read as ioRead;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 pub(crate) trait AlignmentStream<R: SimpleRec> {
     fn next_qname(&self) -> &[u8];
@@ -26,7 +25,11 @@ pub(crate) trait AlignmentStream<R: SimpleRec> {
     fn next_rec(&mut self) -> Result<Option<R>>;
     fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<()>;
     fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<()>;
-    fn variant_store(&self) -> Option<&dyn StoreTrait>;
+    /// Returns the variant store for this stream, if any.
+    ///
+    /// Returns `Arc` so the parallel scoring pipeline can clone it into worker
+    /// bundles without any lifetime entanglement or unsafe code.
+    fn variant_store(&self) -> Option<Arc<dyn StoreTrait>>;
     fn header(&self) -> &Header;
 }
 
@@ -37,8 +40,11 @@ pub(crate) struct AlnStream<R> {
     /// One-record look-ahead buffer (supports `un_next`).
     next: Option<R>,
     output: Option<BamOutput>,
-    sample_variants: Option<Store<Sample>>,
-    population_variants: Option<Store<Population>>,
+    /// Variant store for this stream, wrapped in `Arc` so it can be shared
+    /// with parallel scoring workers at zero additional allocation cost.
+    /// Sample-specific and population stores are mutually exclusive per stream;
+    /// sample takes priority if both are somehow set.
+    variant_store: Option<Arc<dyn StoreTrait>>,
     header: Header,
     /// Cached from config so writers can be opened later with the correct count.
     threads: usize,
@@ -82,8 +88,6 @@ where
         }
 
         // -- Peek at the first record --------------------------------------
-        // We need it to (a) detect whether reads carry /1 /2 suffixes and
-        // (b) synchronise the name check in main.
         let test_record = match bam.records().next() {
             Some(Ok(rec)) => rec,
             Some(Err(e)) => return Err(anyhow!("Error reading from '{bam_str}': {e}")),
@@ -113,7 +117,6 @@ where
                 StripReadSuffix::False
             }
             StripReadSuffix::Auto => {
-                // Auto-detect based on first read
                 if name.ends_with(b"/1") || name.ends_with(b"/2") {
                     tracing::debug!(stream = i, "Auto-detected /1 /2 read-name suffixes");
                     StripReadSuffix::True
@@ -138,30 +141,48 @@ where
             opt.is_paired
         };
 
-        // -- Variant stores ------------------------------------------------
-        let sample_variants = opt
-            .sample_variants
-            .get(i)
-            .filter(|s| !s.is_empty())
-            .map(|s| {
-                tracing::debug!(stream = i, path = s, "Loading sample variants");
-                Store::new(&PathBuf::try_from(s.as_str())?, parse_sample_record)
-            })
-            .transpose()?;
+        // -- Build variant store (Arc-wrapped at construction) -------------
+        //
+        // We erase the concrete Store<Sample> / Store<Population> type into
+        // Arc<dyn StoreTrait> immediately.  This costs nothing at runtime
+        // (one thin-pointer fat-pointer conversion at startup) but means the
+        // parallel path can clone the Arc into every FragmentBundle without
+        // any lifetime or unsafe issues.
+        //
+        // Sample takes priority over population when both are configured for
+        // the same stream (unusual but not forbidden).
+        let variant_store: Option<Arc<dyn StoreTrait>> = {
+            let sample = opt
+                .sample_variants
+                .get(i)
+                .filter(|s| !s.is_empty())
+                .map(|s| -> Result<Arc<dyn StoreTrait>> {
+                    tracing::debug!(stream = i, path = s, "Loading sample variants");
+                    Ok(Arc::new(Store::new(
+                        &PathBuf::from(s.as_str()),
+                        parse_sample_record,
+                    )?))
+                })
+                .transpose()?;
 
-        let population_variants = opt
-            .population_variants
-            .get(i)
-            .filter(|s| !s.is_empty())
-            .map(|s| {
-                tracing::debug!(stream = i, path = s, "Loading population variants");
-                Store::new(&PathBuf::try_from(s.as_str())?, parse_population_record)
-            })
-            .transpose()?;
+            if sample.is_some() {
+                sample
+            } else {
+                opt.population_variants
+                    .get(i)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| -> Result<Arc<dyn StoreTrait>> {
+                        tracing::debug!(stream = i, path = s, "Loading population variants");
+                        Ok(Arc::new(Store::new(
+                            &PathBuf::from(s.as_str()),
+                            parse_population_record,
+                        )?))
+                    })
+                    .transpose()?
+            }
+        };
 
         // -- Validate output paths early -----------------------------------
-        // Check before opening writers so no partial files are created if one
-        // path is invalid.
         opt.output.get(i).map(path_unicode_ok).transpose()?;
         opt.filtered_output
             .get(i)
@@ -179,8 +200,7 @@ where
             filt: None,
             next: Some(next_rec),
             output: None,
-            sample_variants,
-            population_variants,
+            variant_store,
             header,
             threads: opt.threads,
         })
@@ -226,7 +246,6 @@ where
     }
 
     fn next_rec(&mut self) -> Result<Option<R>> {
-        // Return the buffered record first, then read from the BAM reader.
         let header = &self.header;
         Ok(self
             .next
@@ -281,19 +300,12 @@ where
             ambiguous = opt.ambiguous_output.get(i).map(|p| p.display().to_string()),
             "Writers initialised"
         );
-
         Ok(())
     }
 
-    fn variant_store(&self) -> Option<&dyn StoreTrait> {
-        self.sample_variants
-            .as_ref()
-            .map(|s| s as &dyn StoreTrait)
-            .or_else(|| {
-                self.population_variants
-                    .as_ref()
-                    .map(|p| p as &dyn StoreTrait)
-            })
+    fn variant_store(&self) -> Option<Arc<dyn StoreTrait>> {
+        // Clone the Arc — O(1), just an atomic increment.
+        self.variant_store.clone()
     }
 
     fn header(&self) -> &Header {

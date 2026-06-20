@@ -12,33 +12,34 @@ impl<R: SimpleRec> LineByLine<R> {
         mcfs: SmallVec<[MdCigFlags<'r>; READ_CT]>,
         aln_idx: usize,
     ) -> Result<f64> {
-        let mut segment: SmallVec<[&R; READ_CT]> = SmallVec::new();
-        let mut seg_mcfs: SmallVec<[MdCigFlags; READ_CT]> = SmallVec::new();
-        // mcfs is in raw record order; order_mates()/secondary-filtering below
-        // reorders, so pull entries out by index rather than assuming alignment.
+        let mut segment:  SmallVec<[&R; READ_CT]>              = SmallVec::new();
+        let mut seg_mcfs: SmallVec<[MdCigFlags; READ_CT]>      = SmallVec::new();
         let mut mcfs_opt: SmallVec<[Option<MdCigFlags>; READ_CT]> =
             mcfs.into_iter().map(Some).collect();
 
-        let aln = self
-            .aln
-            .get(aln_idx)
+        let aln = self.aln.get(aln_idx)
             .ok_or_else(|| anyhow!("No alignment for index {aln_idx}"))?;
+
+        // Clone the Arc<dyn StoreTrait> (atomic increment, O(1)).
+        // `None` when no variant file was supplied for this stream.
+        let store = aln.variant_store();
+        let has_variants = store.is_some();
+
         let mut dvnt: FragEvalVec<'_> = SmallVec::new();
 
         for idx in state.order_mates() {
-            let rec = &state.get_records()[idx];
-            let flags = state
-                .flags(idx)
+            let rec   = &state.get_records()[idx];
+            let flags = state.flags(idx)
                 .ok_or_else(|| anyhow!("No flags for record index {idx} in alignment {aln_idx}"))?;
-            if flags.is_unmapped() {
+
+            if flags.is_unmapped() || !has_variants {
+                // No variant lookup needed: push an empty eval vec.
                 dvnt.push(SmallVec::new());
             } else {
-                let tid = rec
-                    .ref_seq_id()
+                let tid = rec.ref_seq_id()
                     .transpose()?
                     .ok_or_else(|| anyhow!("Mapped record has no reference sequence ID"))?;
-                let start = rec
-                    .alignment_start()
+                let start = rec.alignment_start()
                     .transpose()?
                     .ok_or_else(|| anyhow!("Mapped record has no alignment start"))?
                     .get();
@@ -48,18 +49,14 @@ impl<R: SimpleRec> LineByLine<R> {
                     .get_cigar()
                     .len();
                 let end = start + cig_len;
-                let delta_vars = if let Some(store) = aln.variant_store() {
-                    store.overlapping_multi(tid, start, end)
-                } else {
-                    SmallVec::new()
-                };
-                dvnt.push(delta_vars);
+                // store is Some here (checked above via has_variants).
+                dvnt.push(store.as_ref().unwrap().overlapping_multi(tid, start, end));
             }
+
             if !flags.is_secondary() {
                 segment.push(rec);
-                seg_mcfs.push(mcfs_opt[idx].take().ok_or_else(|| {
-                    anyhow!("MdCigFlags already consumed for record index {idx}")
-                })?);
+                seg_mcfs.push(mcfs_opt[idx].take()
+                    .ok_or_else(|| anyhow!("MdCigFlags already consumed for index {idx}"))?);
             } else if flags.is_last_segment() {
                 break;
             }
@@ -67,13 +64,11 @@ impl<R: SimpleRec> LineByLine<R> {
 
         Fragment::new(&self.penalties, segment, seg_mcfs)?
             .score(&mut self.scratch, &mut dvnt)
-            .map_err(move |e| {
+            .map_err(|e| {
                 anyhow!(
                     "Error scoring fragment for alignment {aln_idx}: {}\n{}",
                     e,
-                    state
-                        .get_records()
-                        .iter()
+                    state.get_records().iter()
                         .map(stringify_record)
                         .collect::<Vec<String>>()
                         .join("\n")
