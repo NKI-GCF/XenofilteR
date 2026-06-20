@@ -202,11 +202,10 @@ impl Config {
     }
 
     fn parse_variant_string(arg: &str, default_idx: usize) -> Result<(usize, PathBuf)> {
-        if let Some((idx_str, path_str)) = arg.split_once(':') {
-            if let Ok(idx) = idx_str.parse::<usize>() {
+        if let Some((idx_str, path_str)) = arg.split_once(':')
+            && let Ok(idx) = idx_str.parse::<usize>() {
                 return Ok((idx, PathBuf::from(path_str)));
             }
-        }
         Ok((default_idx, PathBuf::from(arg)))
     }
 

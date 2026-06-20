@@ -481,7 +481,7 @@ impl LineByLine<RecordBuf> {
             self.aln.iter().map(|_| None).collect();
 
         let ctx = ScoringContext {
-            penalties: Arc::new(self.penalties.clone()),
+            penalties: Arc::new(self.penalties),
             ambiguous_log_threshold: self.ambiguous_log_threshold,
             add_decision_tag: self.add_decision_tag,
         };
