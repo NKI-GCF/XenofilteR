@@ -51,7 +51,7 @@ use std::thread;
 
 // -- Public decision type ------------------------------------------------------
 
-pub(super) enum Decision {
+pub(crate) enum Decision {
     First,
     Last,
     Ambiguous,
