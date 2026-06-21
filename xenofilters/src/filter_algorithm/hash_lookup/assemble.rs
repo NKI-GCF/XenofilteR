@@ -1,4 +1,3 @@
-//! Fragment accumulator for the two-pass HashLookup algorithm.
 //!
 //! Design principle: always accumulate `ScoringRecord`s during pass 1.
 //! Early-assignability is evaluated at fragment *completion* time, not on
@@ -54,13 +53,13 @@ impl ScoringRecord {
     }
     /// True iff single-op CIGAR (all-Match) and MD is all digits (no mismatches).
     pub(crate) fn is_perfect(&self) -> bool {
-        if self.is_unmapped() { return false; }
+        if self.is_unmapped() {
+            return false;
+        }
         // BAM CIGAR: each op is a u32le; low 4 bits = op code (0 = Match).
         // Single perfect op: exactly 4 bytes, op code 0.
-        let cigar_ok = self.cigar_bytes.len() == 4
-            && (self.cigar_bytes[0] & 0x0F) == 0;
-        let md_ok = !self.md.is_empty()
-            && self.md.iter().all(|&b| b.is_ascii_digit());
+        let cigar_ok = self.cigar_bytes.len() == 4 && (self.cigar_bytes[0] & 0x0F) == 0;
+        let md_ok = !self.md.is_empty() && self.md.iter().all(|&b| b.is_ascii_digit());
         cigar_ok && md_ok
     }
 }
@@ -77,7 +76,9 @@ struct StreamBuf {
 
 impl StreamBuf {
     fn push(&mut self, rec: ScoringRecord) {
-        if rec.is_primary() { self.primary_count += 1; }
+        if rec.is_primary() {
+            self.primary_count += 1;
+        }
         self.records.push(rec);
     }
 
@@ -89,24 +90,34 @@ impl StreamBuf {
         bed: Option<&AmbiguousRegions>,
         vcf: Option<&DiagnosticVariants>,
     ) -> StreamKind {
-        let all_assignable = self.records.iter()
-            .filter(|r| r.is_primary())
-            .all(|r| {
-                if !r.is_perfect() { return false; }
-                if let Some(b) = bed {
-                    if b.overlaps(r.ref_id, r.pos, r.pos + r.ref_len) { return false; }
+        let all_assignable = self.records.iter().filter(|r| r.is_primary()).all(|r| {
+            if !r.is_perfect() {
+                return false;
+            }
+            if let Some(b) = bed {
+                if b.overlaps(r.ref_id, r.pos, r.pos + r.ref_len) {
+                    return false;
                 }
-                if let Some(v) = vcf {
-                    if v.overlaps(r.ref_id, r.pos, r.pos + r.ref_len) { return false; }
+            }
+            if let Some(v) = vcf {
+                if v.overlaps(r.ref_id, r.pos, r.pos + r.ref_len) {
+                    return false;
                 }
-                true
-            });
+            }
+            true
+        });
 
         if all_assignable && self.primary_count > 0 {
             let offsets = self.records.iter().map(|r| r.virtual_offset).collect();
-            StreamKind::Early { virtual_offsets: offsets, primary_count: self.primary_count }
+            StreamKind::Early {
+                virtual_offsets: offsets,
+                primary_count: self.primary_count,
+            }
         } else {
-            StreamKind::Scoring { records: self.records, primary_count: self.primary_count }
+            StreamKind::Scoring {
+                records: self.records,
+                primary_count: self.primary_count,
+            }
         }
     }
 }
@@ -131,7 +142,9 @@ pub(crate) enum StreamKind {
 }
 
 impl Default for StreamKind {
-    fn default() -> Self { StreamKind::Empty }
+    fn default() -> Self {
+        StreamKind::Empty
+    }
 }
 
 impl StreamKind {
@@ -198,8 +211,11 @@ impl PendingFragment {
             self.supplementary_offsets[nr].push(rec.virtual_offset);
             return self.check_complete(bed, vcf);
         }
-        if nr == 0 { self.driving_buf.push(rec); }
-        else { self.lookup_buf.push(rec); }
+        if nr == 0 {
+            self.driving_buf.push(rec);
+        } else {
+            self.lookup_buf.push(rec);
+        }
         self.check_complete(bed, vcf)
     }
 
@@ -250,7 +266,7 @@ impl PendingFragment {
     pub(crate) fn can_early_assign(&self) -> bool {
         let exp = self.expected_primaries();
         matches!(&self.driving, StreamKind::Early { primary_count, .. } if *primary_count >= exp)
-        || matches!(&self.lookup, StreamKind::Early { primary_count, .. } if *primary_count >= exp)
+            || matches!(&self.lookup, StreamKind::Early { primary_count, .. } if *primary_count >= exp)
     }
 }
 
@@ -299,7 +315,11 @@ mod tests {
             // 5M5S: two ops
             vec![0x50u8, 0x00, 0x00, 0x00, 0x54u8, 0x00, 0x00, 0x00]
         };
-        let md = if perfect { b"10".to_vec() } else { b"5".to_vec() };
+        let md = if perfect {
+            b"10".to_vec()
+        } else {
+            b"5".to_vec()
+        };
         ScoringRecord {
             flags: Flags::from_bits(flags_bits).unwrap(),
             ref_id,
@@ -357,8 +377,8 @@ mod tests {
         assert!(!complete); // only 1 of 2 primaries for stream 0
         let complete = frag.push(rec(0x81, true, 0, 200), 0, None, None);
         assert!(!complete); // stream 0 complete but stream 1 empty
-        // Actually with paired exp=2, driving now has 2 → classified.
-        // lookup still empty → can_early_assign = true (driving Early).
+                            // Actually with paired exp=2, driving now has 2 → classified.
+                            // lookup still empty → can_early_assign = true (driving Early).
         assert!(frag.can_early_assign());
     }
 
@@ -377,7 +397,13 @@ mod tests {
         use std::collections::HashMap;
 
         let mut per_ref = HashMap::new();
-        per_ref.insert(0usize, vec![Region { start: 90, end: 110 }]);
+        per_ref.insert(
+            0usize,
+            vec![Region {
+                start: 90,
+                end: 110,
+            }],
+        );
         let bed = AmbiguousRegions::from_test(per_ref);
 
         let mut frag = PendingFragment::new(0);
