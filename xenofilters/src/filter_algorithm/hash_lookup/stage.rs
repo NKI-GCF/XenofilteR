@@ -1,158 +1,453 @@
-//! Output staging for the two-pass HashLookup algorithm.
+//! [`HashLookup`] — two-pass fragment-matching for position-sorted BAMs.
 //!
-//! Completed `ScoredFragment`s are inserted into a `BTreeMap` keyed by
-//! driving-stream sequence number. The buffer is flushed whenever the
-//! minimum key matches the next expected emission number — preserving
-//! driving-stream record order.
+//! **Pass 1** (sequential scan, lightweight `ScoringRecord`s):
+//! Reads name, flags, ref_id, pos, CIGAR, MD, qualities, virtual_offset.
+//! No sequence. Inserts into a `NameTable`. At fragment completion, classifies
+//! each stream as Early (all primaries perfect, no BED/VCF overlap) or
+//! NeedsScoring. Early fragments retain only virtual offsets; Scoring
+//! fragments retain `ScoringRecord`s for NW scoring.
 //!
-//! Pass 2 is embedded here: each `ScoredFragment` stores only virtual offsets.
-//! On emission, this module seeks to those offsets to retrieve full records.
+//! **Pass 2** (selective seek):
+//! For each completed fragment, seeks to stored virtual offsets and reads
+//! full records for output. Supplementary virtual offsets follow the
+//! fragment's decision.
 //!
-//! Note: full pass-2 BAM seeking requires access to the underlying BGZF
-//! reader via `noodles::bam::io::Reader::seek`. This is available when the
-//! `AlignmentStream` wraps a file-backed `BamReader`. For `MockStream` in
-//! tests, virtual offsets are not meaningful and the seek is skipped.
+//! Single-threaded only. Output order follows driving-stream (stream 0) order.
 
-use crate::alignment::SimpleRec;
+pub(crate) mod assemble;
+pub(crate) mod stage;
+#[cfg(test)]
+pub(crate) mod tests;
+
+use crate::alignment::{Fragment, FragmentState, MdCigFlags, SimpleRec, stringify_record};
 use crate::aln_stream::AlignmentStream;
-use crate::filter_algorithm::hash_lookup::ScoredFragment;
-use crate::filter_algorithm::line_by_line::ordering::Decision;
+use crate::config::{Config, StripReadSuffix};
+use crate::filter_algorithm::collated::reader::canonical_name;
+use crate::filter_algorithm::line_by_line::{Scratch, READ_CT, ordering::Decision};
+use crate::penalty::Penalty;
+use crate::region::{AmbiguousRegions, DiagnosticVariants};
+use crate::variant::FragEvalVec;
 use anyhow::{anyhow, Result};
-use noodles::sam::alignment::record::data::field::Tag;
-use noodles::sam::alignment::record_buf::data::field::Value;
-use noodles::sam::alignment::record_buf::RecordBuf;
+use assemble::{NameTable, PendingFragment, ScoringRecord, StreamKind, insert};
 use smallvec::SmallVec;
-use std::collections::BTreeMap;
+use stage::StagedOutput;
 
-pub(crate) struct StagedOutput {
-    next_emit: u64,
-    pending: BTreeMap<u64, ScoredFragment>,
+// ---------------------------------------------------------------------------
+// ScoredFragment
+// ---------------------------------------------------------------------------
+
+pub(crate) struct ScoredFragment {
+    /// (stream_nr, virtual_offset) for winning records.
+    pub(crate) winner_offsets: SmallVec<[(usize, u64); 2]>,
+    /// (stream_nr, virtual_offset) for losing records.
+    pub(crate) loser_offsets: SmallVec<[(usize, u64); 2]>,
+    /// Supplementary offsets per stream — follow winner's decision.
+    pub(crate) supp_offsets: [SmallVec<[u64; 1]>; 2],
+    pub(crate) decision: Option<Decision>,
+    pub(crate) winner_nr: usize,
+    /// True if result is ambiguous (both streams go to ambiguous output).
+    pub(crate) is_ambiguous: bool,
 }
 
-impl StagedOutput {
-    pub(crate) fn new() -> Self {
-        Self { next_emit: 0, pending: BTreeMap::new() }
-    }
+// ---------------------------------------------------------------------------
+// HashLookup
+// ---------------------------------------------------------------------------
 
-    pub(crate) fn push(&mut self, seq_nr: u64, sf: ScoredFragment) {
-        self.pending.insert(seq_nr, sf);
-    }
-
-    pub(crate) fn flush<R: SimpleRec>(
-        &mut self,
-        aln: &mut SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
-        branch_counters: &mut [u64; 32],
-        add_decision_tag: bool,
-    ) -> Result<()> {
-        while let Some(&min_key) = self.pending.keys().next() {
-            if min_key != self.next_emit { break; }
-            let sf = self.pending.remove(&min_key).unwrap();
-            emit_scored(sf, aln, branch_counters, add_decision_tag)?;
-            self.next_emit += 1;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn flush_all<R: SimpleRec>(
-        &mut self,
-        aln: &mut SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
-        branch_counters: &mut [u64; 32],
-        add_decision_tag: bool,
-    ) -> Result<()> {
-        let keys: Vec<u64> = self.pending.keys().copied().collect();
-        for k in keys {
-            let sf = self.pending.remove(&k).unwrap();
-            emit_scored(sf, aln, branch_counters, add_decision_tag)?;
-        }
-        Ok(())
-    }
-}
-
-fn emit_scored<R: SimpleRec>(
-    sf: ScoredFragment,
-    aln: &mut SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
-    branch_counters: &mut [u64; 32],
+pub(crate) struct HashLookup<R: SimpleRec> {
+    aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
+    table: NameTable,
+    staged: StagedOutput,
+    seq_counter: u64,
+    penalties: Penalty,
+    scratch: Scratch,
+    pub(crate) branch_counters: [u64; 32],
     add_decision_tag: bool,
-) -> Result<()> {
-    if sf.is_ambiguous {
-        // All offsets in winner_offsets go to ambiguous output.
-        for (nr, voffset) in &sf.winner_offsets {
-            let rec = fetch_record(aln, *nr, *voffset)?;
-            branch_counters[16 + nr] += 1;
-            aln[*nr].write_record(rec, None)?;
+    ambiguous_log_threshold: f64,
+    strip: StripReadSuffix,
+    bed: [Option<AmbiguousRegions>; 2],
+    vcf: [Option<DiagnosticVariants>; 2],
+}
+
+impl<R: SimpleRec> HashLookup<R> {
+    pub(crate) fn new(
+        config: Config,
+        mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
+        bed: [Option<AmbiguousRegions>; 2],
+        vcf: [Option<DiagnosticVariants>; 2],
+    ) -> Result<Self> {
+        assert_eq!(aln.len(), 2, "HashLookup requires exactly 2 alignment streams");
+        let ambiguous_log_threshold = match config.ambiguous_threshold {
+            0 => 0.0,
+            t => (t as f64) * std::f64::consts::LN_10 / 10.0,
+        };
+        for (i, a) in aln.iter_mut().enumerate() {
+            a.init_writers(&config, i)?;
         }
-        // loser_offsets also go to ambiguous when is_ambiguous is true.
-        for (nr, voffset) in &sf.loser_offsets {
-            let rec = fetch_record(aln, *nr, *voffset)?;
-            branch_counters[16 + nr] += 1;
-            aln[*nr].write_record(rec, None)?;
-        }
-    } else {
-        // Winners → best output with optional decision tag.
-        for (nr, voffset) in &sf.winner_offsets {
-            let mut rec = fetch_record(aln, *nr, *voffset)?;
-            if add_decision_tag {
-                apply_decision_tag(&mut rec, sf.decision.as_ref());
+        Ok(Self {
+            aln,
+            table: NameTable::new(),
+            staged: StagedOutput::new(),
+            seq_counter: 0,
+            penalties: config.to_penalties(),
+            scratch: Scratch::new(),
+            branch_counters: [0u64; 32],
+            add_decision_tag: config.add_decision_tag,
+            ambiguous_log_threshold,
+            strip: config.strip_read_suffix,
+            bed,
+            vcf,
+        })
+    }
+
+    pub(crate) fn process(&mut self) -> Result<()> {
+        let mut exhausted = [false; 2];
+        loop {
+            let mut progress = false;
+            for nr in 0..2usize {
+                if exhausted[nr] { continue; }
+                match self.read_scoring_record(nr)? {
+                    None => { exhausted[nr] = true; }
+                    Some((key, rec)) => {
+                        progress = true;
+                        self.ingest(key, rec, nr)?;
+                    }
+                }
             }
-            branch_counters[1 + (nr << 1)] += 1;
-            aln[*nr].write_record(rec, Some(true))?;
+            if !progress { break; }
+            self.staged.flush(
+                &mut self.aln,
+                &mut self.branch_counters,
+                self.add_decision_tag,
+            )?;
         }
-        // Losers → filtered output.
-        for (nr, voffset) in &sf.loser_offsets {
-            let rec = fetch_record(aln, *nr, *voffset)?;
-            branch_counters[nr << 1] += 1;
-            aln[*nr].write_record(rec, Some(false))?;
+
+        let unmatched: Vec<_> = self.table.drain().collect();
+        for (_, pending) in unmatched {
+            self.handle_unmatched(pending)?;
+        }
+        self.staged.flush_all(
+            &mut self.aln,
+            &mut self.branch_counters,
+            self.add_decision_tag,
+        )?;
+        self.print_counters();
+        Ok(())
+    }
+
+    fn read_scoring_record(&mut self, nr: usize) -> Result<Option<(Box<[u8]>, ScoringRecord)>> {
+        use noodles::sam::alignment::record::cigar::op::Kind;
+        use noodles::sam::alignment::record::data::field::{Tag, Value};
+
+        let rec = match self.aln[nr].next_rec()? {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+
+        let raw_name: Vec<u8> = rec.name()
+            .map(|n| { let b: &[u8] = n.as_ref(); b.to_vec() })
+            .unwrap_or_default();
+        let key = canonical_name(&raw_name, self.strip);
+
+        let flags = rec.flags()?;
+        let ref_id = rec.ref_seq_id().transpose()?.unwrap_or(usize::MAX);
+        let pos = rec.alignment_start().transpose()?.map(|p| p.get()).unwrap_or(0);
+
+        let mut ref_len = 0usize;
+        let mut cigar_bytes = Vec::new();
+        for op_result in rec.cigar().as_ref().iter() {
+            let op = op_result?;
+            match op.kind() {
+                Kind::Match | Kind::Deletion | Kind::Skip
+                | Kind::SequenceMatch | Kind::SequenceMismatch => ref_len += op.len(),
+                _ => {}
+            }
+            let code: u32 = match op.kind() {
+                Kind::Match => 0,
+                Kind::Insertion => 1,
+                Kind::Deletion => 2,
+                Kind::Skip => 3,
+                Kind::SoftClip => 4,
+                Kind::HardClip => 5,
+                Kind::Pad => 6,
+                Kind::SequenceMatch => 7,
+                Kind::SequenceMismatch => 8,
+            };
+            let encoded = ((op.len() as u32) << 4) | code;
+            cigar_bytes.extend_from_slice(&encoded.to_le_bytes());
+        }
+
+        let md = match rec.data().get(&Tag::MISMATCHED_POSITIONS).transpose()? {
+            Some(Value::String(s)) => {
+                let b: &[u8] = s.as_ref();
+                b.to_vec()
+            }
+            _ => Vec::new(),
+        };
+
+        // Quality scores: noodles quality scores iterate as Result<u8>.
+        let qualities: Vec<u8> = rec.quality_scores().as_ref().iter()
+            .map(|q| Ok(*q))
+            .collect::<Result<Vec<u8>, std::io::Error>>()?;
+
+        let virtual_offset = self.seq_counter;
+
+        Ok(Some((key, ScoringRecord {
+            flags,
+            ref_id,
+            pos,
+            ref_len,
+            cigar_bytes,
+            md,
+            qualities,
+            virtual_offset,
+        })))
+    }
+
+    fn ingest(&mut self, key: Box<[u8]>, rec: ScoringRecord, nr: usize) -> Result<()> {
+        let bed = self.bed[nr].as_ref();
+        let vcf = self.vcf[nr].as_ref();
+        let (key, complete) = insert(
+            &mut self.table, rec, key, nr,
+            &mut self.seq_counter, bed, vcf,
+        );
+        if complete {
+            let pending = self.table.remove(&key).unwrap();
+            let seq_nr = pending.seq_nr;
+            let sf = self.resolve_fragment(pending)?;
+            self.staged.push(seq_nr, sf);
+        }
+        Ok(())
+    }
+
+    fn resolve_fragment(&mut self, pending: PendingFragment) -> Result<ScoredFragment> {
+        let supp_offsets = pending.supplementary_offsets;
+        let seq_nr = pending.seq_nr;
+
+        // Extract offsets and records from both streams before consuming them.
+        let driving_early = pending.driving.is_early();
+        let lookup_early = pending.lookup.is_early();
+        let driving_offsets = pending.driving.virtual_offsets();
+        let lookup_offsets = pending.lookup.virtual_offsets();
+
+        // Check if we have scoring records available.
+        let (driving_records, lookup_records) = match (pending.driving, pending.lookup) {
+            (StreamKind::Scoring { records: ra, .. }, StreamKind::Scoring { records: rb, .. }) => {
+                (Some(ra), Some(rb))
+            }
+            (StreamKind::Scoring { records: ra, .. }, _) => (Some(ra), None),
+            (_, StreamKind::Scoring { records: rb, .. }) => (None, Some(rb)),
+            _ => (None, None),
+        };
+
+        match (driving_early, lookup_early) {
+            (true, true) => {
+                // Both early → ambiguous without scoring.
+                let dec = self.add_decision_tag.then_some(Decision::Ambiguous);
+                let winner_offsets = driving_offsets.iter().map(|&o| (0, o))
+                    .chain(lookup_offsets.iter().map(|&o| (1, o)))
+                    .collect();
+                Ok(ScoredFragment {
+                    winner_offsets,
+                    loser_offsets: SmallVec::new(),
+                    supp_offsets,
+                    decision: dec,
+                    winner_nr: 0,
+                    is_ambiguous: true,
+                })
+            }
+            (true, false) => {
+                // Driving early → driving wins.
+                let dec = self.add_decision_tag.then_some(Decision::First);
+                Ok(ScoredFragment {
+                    winner_offsets: driving_offsets.iter().map(|&o| (0, o)).collect(),
+                    loser_offsets: lookup_offsets.iter().map(|&o| (1, o)).collect(),
+                    supp_offsets,
+                    decision: dec,
+                    winner_nr: 0,
+                    is_ambiguous: false,
+                })
+            }
+            (false, true) => {
+                // Lookup early → lookup wins.
+                let dec = self.add_decision_tag.then_some(Decision::Last);
+                Ok(ScoredFragment {
+                    winner_offsets: lookup_offsets.iter().map(|&o| (1, o)).collect(),
+                    loser_offsets: driving_offsets.iter().map(|&o| (0, o)).collect(),
+                    supp_offsets,
+                    decision: dec,
+                    winner_nr: 1,
+                    is_ambiguous: false,
+                })
+            }
+            (false, false) => {
+                // Both need scoring — use records retained from classification.
+                let recs_a = driving_records
+                    .ok_or_else(|| anyhow!("Missing driving records for full scoring"))?;
+                let recs_b = lookup_records
+                    .ok_or_else(|| anyhow!("Missing lookup records for full scoring"))?;
+                self.score_and_build(recs_a, recs_b, driving_offsets, lookup_offsets, supp_offsets)
+            }
         }
     }
 
-    // Supplementaries follow winner's decision.
-    for (stream_nr, offsets) in sf.supp_offsets.iter().enumerate() {
-        let best_state = if sf.is_ambiguous { None } else { Some(!sf.loser_offsets.iter().any(|&(nr, _)| nr == stream_nr)) };
-        for &voffset in offsets {
-            let mut rec = fetch_record(aln, stream_nr, voffset)?;
-            if !sf.is_ambiguous && best_state == Some(true) && add_decision_tag {
-                apply_decision_tag(&mut rec, sf.decision.as_ref());
+    fn score_and_build(
+        &mut self,
+        recs_a: SmallVec<[ScoringRecord; 2]>,
+        recs_b: SmallVec<[ScoringRecord; 2]>,
+        offsets_a: SmallVec<[u64; 2]>,
+        offsets_b: SmallVec<[u64; 2]>,
+        supp_offsets: [SmallVec<[u64; 1]>; 2],
+    ) -> Result<ScoredFragment> {
+        let score_a = self.score_records(&recs_a, 0)?;
+        let score_b = self.score_records(&recs_b, 1)?;
+        let delta = score_a - score_b;
+
+        let off_a: SmallVec<[(usize, u64); 2]> = offsets_a.iter().map(|&o| (0, o)).collect();
+        let off_b: SmallVec<[(usize, u64); 2]> = offsets_b.iter().map(|&o| (1, o)).collect();
+
+        if delta > self.ambiguous_log_threshold {
+            let dec = self.phred_delta(delta);
+            Ok(ScoredFragment { winner_offsets: off_a, loser_offsets: off_b,
+                supp_offsets, decision: dec, winner_nr: 0, is_ambiguous: false })
+        } else if delta < -self.ambiguous_log_threshold {
+            let dec = self.phred_delta(-delta);
+            Ok(ScoredFragment { winner_offsets: off_b, loser_offsets: off_a,
+                supp_offsets, decision: dec, winner_nr: 1, is_ambiguous: false })
+        } else {
+            let dec = self.add_decision_tag.then_some(Decision::Ambiguous);
+            let mut winner_offsets = off_a;
+            winner_offsets.extend(off_b);
+            Ok(ScoredFragment { winner_offsets, loser_offsets: SmallVec::new(),
+                supp_offsets, decision: dec, winner_nr: 0, is_ambiguous: true })
+        }
+    }
+
+    fn phred_delta(&self, abs_delta: f64) -> Option<Decision> {
+        self.add_decision_tag.then(|| {
+            let p = (10.0 * abs_delta / std::f64::consts::LN_10) as u32;
+            Decision::ConfDelta(p.min(255) as u8)
+        })
+    }
+
+    fn score_records(
+        &mut self,
+        records: &SmallVec<[ScoringRecord; 2]>,
+        aln_idx: usize,
+    ) -> Result<f64> {
+        use noodles::core::Position;
+        use noodles::sam::alignment::record::cigar::op::{Kind, Op};
+        use noodles::sam::alignment::record::data::field::Tag;
+        use noodles::sam::alignment::record_buf::{
+            Cigar, Data, QualityScores, RecordBuf, Sequence,
+            data::field::Value as BufValue,
+        };
+
+        let primaries: SmallVec<[&ScoringRecord; 2]> =
+            records.iter().filter(|r| r.is_primary()).collect();
+
+        if primaries.is_empty() {
+            return Ok(f64::NEG_INFINITY);
+        }
+
+        let mut bufs: SmallVec<[RecordBuf; 2]> = SmallVec::new();
+        for sr in &primaries {
+            let mut buf = RecordBuf::default();
+            *buf.flags_mut() = sr.flags;
+            *buf.reference_sequence_id_mut() = Some(sr.ref_id);
+            if sr.pos > 0 {
+                *buf.alignment_start_mut() = Some(
+                    Position::new(sr.pos)
+                        .ok_or_else(|| anyhow!("Invalid position {}", sr.pos))?,
+                );
             }
-            if sf.is_ambiguous {
-                branch_counters[16 + stream_nr] += 1;
-            } else if best_state == Some(true) {
-                branch_counters[1 + (stream_nr << 1)] += 1;
+            let mut cigar_ops = Vec::new();
+            for chunk in sr.cigar_bytes.chunks_exact(4) {
+                let encoded = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                let len = (encoded >> 4) as usize;
+                let kind = match encoded & 0xF {
+                    0 => Kind::Match, 1 => Kind::Insertion, 2 => Kind::Deletion,
+                    3 => Kind::Skip, 4 => Kind::SoftClip, 5 => Kind::HardClip,
+                    6 => Kind::Pad, 7 => Kind::SequenceMatch, 8 => Kind::SequenceMismatch,
+                    k => return Err(anyhow!("Unknown CIGAR op {k}")),
+                };
+                cigar_ops.push(Op::new(kind, len));
+            }
+            *buf.cigar_mut() = Cigar::from(cigar_ops);
+            *buf.quality_scores_mut() = QualityScores::from_iter(sr.qualities.iter().cloned());
+            let seq_len = sr.qualities.len();
+            *buf.sequence_mut() = Sequence::from(vec![b'N'; seq_len]);
+            let md_str = String::from_utf8(sr.md.clone())
+                .map_err(|e| anyhow!("MD not UTF-8: {e}"))?;
+            let data: Data = [(Tag::MISMATCHED_POSITIONS, BufValue::from(md_str))]
+                .into_iter()
+                .collect();
+            *buf.data_mut() = data;
+            bufs.push(buf);
+        }
+
+        let mut mcfs: SmallVec<[MdCigFlags; READ_CT]> = SmallVec::new();
+        for buf in bufs.iter() {
+            let flags = buf.flags();
+            mcfs.push(MdCigFlags::try_from_record(buf, &flags)?);
+        }
+
+        let seg: SmallVec<[&RecordBuf; READ_CT]> = bufs.iter().collect();
+        let mut dvnt: FragEvalVec<'_> = SmallVec::new();
+
+        for buf in bufs.iter() {
+            if buf.flags().is_unmapped() {
+                dvnt.push(SmallVec::new());
             } else {
-                branch_counters[stream_nr << 1] += 1;
+                let tid = buf.reference_sequence_id()
+                    .ok_or_else(|| anyhow!("No ref seq id"))?;
+                let start = buf.alignment_start()
+                    .ok_or_else(|| anyhow!("No alignment start"))?
+                    .get();
+                let end = start + buf.cigar().len();
+                let vars = if let Some(store) = self.aln[aln_idx].variant_store() {
+                    store.overlapping_multi(tid, start, end)
+                } else {
+                    SmallVec::new()
+                };
+                dvnt.push(vars);
             }
-            aln[stream_nr].write_record(rec, best_state)?;
         }
+
+        Fragment::new(&self.penalties, seg, mcfs)?
+            .score(&mut self.scratch, &mut dvnt)
+            .map_err(|e| anyhow!("Score error stream {aln_idx}: {e}"))
     }
 
-    Ok(())
-}
+    fn handle_unmatched(&mut self, pending: PendingFragment) -> Result<()> {
+        let seq_nr = pending.seq_nr;
+        let supp = pending.supplementary_offsets;
+        let (driving_empty, lookup_empty) = (pending.driving.is_empty(), pending.lookup.is_empty());
+        let driving_offsets = pending.driving.virtual_offsets();
+        let lookup_offsets = pending.lookup.virtual_offsets();
 
-/// Fetch a full record by virtual offset (pass 2 seek).
-/// In production this seeks the BGZF stream; in tests the virtual offset
-/// is a monotonic counter and the stream does not support seeking —
-/// fetch_record falls back to returning a placeholder in that case.
-fn fetch_record<R: SimpleRec>(
-    aln: &mut SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
-    nr: usize,
-    virtual_offset: u64,
-) -> Result<RecordBuf> {
-    // TODO: when noodles exposes `BamReader::seek(VirtualPosition)` through
-    // the AlignmentStream trait, call it here. For now we call
-    // `seek_and_read` which the trait stub returns Err for non-file streams
-    // (tests), and the real implementation will override.
-    aln.get_mut(nr)
-        .ok_or_else(|| anyhow!("No stream {nr}"))?
-        .fetch_by_virtual_offset(virtual_offset)
-}
+        let (winner_offsets, winner_nr): (SmallVec<[(usize, u64); 2]>, usize) =
+            if !driving_empty {
+                (driving_offsets.iter().map(|&o| (0, o)).collect(), 0)
+            } else {
+                (lookup_offsets.iter().map(|&o| (1, o)).collect(), 1)
+            };
 
-fn apply_decision_tag(rec: &mut RecordBuf, decision: Option<&Decision>) {
-    match decision {
-        Some(Decision::ConfDelta(v)) => {
-            rec.data_mut().insert(Tag::new(b'X', b'F'), Value::from(*v));
+        self.staged.push(seq_nr, ScoredFragment {
+            winner_offsets,
+            loser_offsets: SmallVec::new(),
+            supp_offsets: supp,
+            decision: None,
+            winner_nr,
+            is_ambiguous: false,
+        });
+        Ok(())
+    }
+
+    pub(crate) fn print_counters(&self) {
+        for i in 0..2 {
+            eprintln!("hashlookup[filter:{}]: {}", i, self.branch_counters[i << 1]);
+            eprintln!("hashlookup[out:{}]: {}", i, self.branch_counters[1 + (i << 1)]);
+            eprintln!("hashlookup[ambig:{}]: {}", i, self.branch_counters[16 + i]);
         }
-        Some(Decision::VariantRescued(v)) => {
-            rec.data_mut().insert(Tag::new(b'X', b'R'), Value::from(*v));
-        }
-        _ => {}
     }
 }

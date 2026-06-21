@@ -1,32 +1,33 @@
-//! [`CollatedMatcher`] — fragment-matching backend for individually-collated
-//! BAM streams whose inter-stream name order may differ.
+//! [`CollatedMatcher`] — fragment-matching for individually-collated BAM streams
+//! whose inter-stream name order may differ.
 //!
-//! Each input stream must have all records for a given read name contiguous
-//! (collated / query-name-grouped), but the two streams need not present
-//! fragments in the same order. A `HashMap` on each side buffers fragments
-//! that have been read from one stream but not yet seen in the other.
+//! Each input stream must have all records for a given read name contiguous,
+//! but the two streams need not present fragments in the same order.
+//! A `HashMap` on each side buffers unmatched fragments.
 //!
-//! Memory usage is proportional to the maximum name-order skew between the
-//! two files — O(1) in the common case, O(N) worst-case.
+//! BED ambiguous regions and diagnostic VCF positions are queried via tabix
+//! for early-assignment decisions (random access needed because the BAM is
+//! name-ordered, not position-ordered).
 //!
-//! Output order is not guaranteed.
+//! Memory usage: O(name-order skew). Output order: not guaranteed.
 //! Single-threaded only.
 
 pub(crate) mod reader;
 #[cfg(test)]
 pub(crate) mod tests;
 
-use crate::alignment::{stringify_record, Fragment, FragmentState, MdCigFlags, SimpleRec};
+use crate::alignment::{Fragment, FragmentState, MdCigFlags, SimpleRec, stringify_record};
 use crate::aln_stream::AlignmentStream;
 use crate::config::{Config, StripReadSuffix};
-use crate::filter_algorithm::line_by_line::{ordering::Decision, Scratch, READ_CT};
+use crate::filter_algorithm::line_by_line::{Scratch, READ_CT, ordering::Decision};
 use crate::penalty::Penalty;
+use crate::region::tabix_query::{TabixBed, TabixVcf};
 use crate::variant::FragEvalVec;
 use anyhow::{anyhow, Result};
 use noodles::sam::alignment::record::data::field::Tag;
 use noodles::sam::alignment::record_buf::data::field::Value;
 use noodles::sam::alignment::record_buf::RecordBuf;
-use reader::{canonical_name, CollatedReader};
+use reader::{CollatedReader, canonical_name};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
@@ -41,19 +42,20 @@ pub(crate) struct CollatedMatcher<R: SimpleRec> {
     add_decision_tag: bool,
     ambiguous_log_threshold: f64,
     strip: StripReadSuffix,
+    /// Optional tabix-indexed BED for early-assignment checks, per stream.
+    bed: [Option<TabixBed>; 2],
+    /// Optional tabix-indexed VCF for early-assignment checks, per stream.
+    vcf: [Option<TabixVcf>; 2],
 }
 
 impl<R: SimpleRec> CollatedMatcher<R> {
     pub(crate) fn new(
         config: Config,
         mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
+        bed: [Option<TabixBed>; 2],
+        vcf: [Option<TabixVcf>; 2],
     ) -> Result<Self> {
-        assert_eq!(
-            aln.len(),
-            2,
-            "CollatedMatcher requires exactly 2 alignment streams"
-        );
-
+        assert_eq!(aln.len(), 2, "CollatedMatcher requires exactly 2 alignment streams");
         let ambiguous_log_threshold = match config.ambiguous_threshold {
             0 => 0.0,
             t => (t as f64) * std::f64::consts::LN_10 / 10.0,
@@ -81,7 +83,17 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             add_decision_tag,
             ambiguous_log_threshold,
             strip,
+            bed,
+            vcf,
         })
+    }
+
+    /// Convenience constructor with no BED/VCF (tests and namesorted-only paths).
+    pub(crate) fn new_no_regions(
+        config: Config,
+        aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
+    ) -> Result<Self> {
+        Self::new(config, aln, [None, None], [None, None])
     }
 
     pub(crate) fn process(&mut self) -> Result<()> {
@@ -98,15 +110,11 @@ impl<R: SimpleRec> CollatedMatcher<R> {
                 (None, Some(fb)) => self.handle_fragment(fb)?,
             }
         }
-        // Safety net: valid input should leave both maps empty.
+        // Safety net: valid input leaves both maps empty.
         let drain_a: Vec<_> = self.waiting_a.drain().map(|(_, v)| v).collect();
         let drain_b: Vec<_> = self.waiting_b.drain().map(|(_, v)| v).collect();
-        for frag in drain_a {
-            self.emit_records_owned(frag, None, Some(true))?;
-        }
-        for frag in drain_b {
-            self.emit_records_owned(frag, None, Some(true))?;
-        }
+        for frag in drain_a { self.emit_records_owned(frag, None, Some(true))?; }
+        for frag in drain_b { self.emit_records_owned(frag, None, Some(true))?; }
         self.print_counters();
         Ok(())
     }
@@ -120,27 +128,20 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             } else {
                 self.waiting_a.insert(key, frag);
             }
+        } else if let Some(other) = self.waiting_a.remove(key.as_ref()) {
+            self.score_pair(other, frag)?;
         } else {
-            if let Some(other) = self.waiting_a.remove(key.as_ref()) {
-                self.score_pair(other, frag)?;
-            } else {
-                self.waiting_b.insert(key, frag);
-            }
+            self.waiting_b.insert(key, frag);
         }
         Ok(())
     }
 
-    /// Score a matched pair and emit records to appropriate outputs.
-    /// `a` is always stream-0, `b` is always stream-1.
     fn score_pair(&mut self, a: FragmentState<R>, b: FragmentState<R>) -> Result<()> {
         let mut ord = a.partial_cmp(&b);
 
-        enum Res {
-            Ordered(std::cmp::Ordering),
-            Scored(f64),
-        }
-
-        // By nesting this, mcfs1 and mcfs2 are dropped before `res` is matched
+        // By nesting this block, mcfs1 and mcfs2 are dropped before `res` is matched,
+        // avoiding borrow-of-moved-value errors on a and b.
+        enum Res { Ordered(std::cmp::Ordering), Scored(f64) }
         let res = if ord.is_none() {
             let (mcfs1, mcfs2) = a.cmp_perfect(&b, &mut ord)?;
             if ord.is_none() {
@@ -207,50 +208,35 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         let mut seg_mcfs: SmallVec<[MdCigFlags; READ_CT]> = SmallVec::new();
         let mut mcfs_opt: SmallVec<[Option<MdCigFlags>; READ_CT]> =
             mcfs.into_iter().map(Some).collect();
-
         let mut dvnt: FragEvalVec<'_> = SmallVec::new();
 
         for idx in state.order_mates() {
             let rec = &state.get_records()[idx];
-            let flags = state
-                .flags(idx)
+            let flags = state.flags(idx)
                 .ok_or_else(|| anyhow!("No flags for record {idx}"))?;
             if flags.is_unmapped() {
                 dvnt.push(SmallVec::new());
             } else {
-                let tid = rec
-                    .ref_seq_id()
-                    .transpose()?
+                let tid = rec.ref_seq_id().transpose()?
                     .ok_or_else(|| anyhow!("No reference sequence ID"))?;
-                let start = rec
-                    .alignment_start()
-                    .transpose()?
-                    .ok_or_else(|| anyhow!("No alignment start"))?
-                    .get();
-                let cig_len = mcfs_opt[idx]
-                    .as_ref()
-                    .ok_or_else(|| anyhow!("MdCigFlags missing for {idx}"))?
-                    .get_cigar()
-                    .len();
+                let start = rec.alignment_start().transpose()?
+                    .ok_or_else(|| anyhow!("No alignment start"))?.get();
+                let cig_len = mcfs_opt[idx].as_ref()
+                    .ok_or_else(|| anyhow!("MdCigFlags missing for {idx}"))?.get_cigar().len();
                 let end = start + cig_len;
-                // Borrow the correct stream for variant lookup.
                 let delta_vars = {
                     let stream = if aln_idx == 0 { &self.a } else { &self.b };
-                    if let Some(store) = stream.variant_store() {
-                        store.overlapping_multi(tid, start, end)
-                    } else {
-                        SmallVec::new()
+                    match stream.variant_store() {
+                        Some(store) => store.overlapping_multi(tid, start, end),
+                        None => SmallVec::new(),
                     }
                 };
                 dvnt.push(delta_vars);
             }
             if !flags.is_secondary() {
                 segment.push(rec);
-                seg_mcfs.push(
-                    mcfs_opt[idx]
-                        .take()
-                        .ok_or_else(|| anyhow!("MdCigFlags consumed for {idx}"))?,
-                );
+                seg_mcfs.push(mcfs_opt[idx].take()
+                    .ok_or_else(|| anyhow!("MdCigFlags consumed for {idx}"))?);
             } else if flags.is_last_segment() {
                 break;
             }
@@ -258,18 +244,11 @@ impl<R: SimpleRec> CollatedMatcher<R> {
 
         Fragment::new(&self.penalties, segment, seg_mcfs)?
             .score(&mut self.scratch, &mut dvnt)
-            .map_err(|e| {
-                anyhow!(
-                    "Error scoring fragment for alignment {aln_idx}: {}\n{}",
-                    e,
-                    state
-                        .get_records()
-                        .iter()
-                        .map(stringify_record)
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                )
-            })
+            .map_err(|e| anyhow!(
+                "Error scoring fragment for alignment {aln_idx}: {}\n{}",
+                e,
+                state.get_records().iter().map(stringify_record).collect::<Vec<_>>().join("\n")
+            ))
     }
 
     fn emit_filtered(&mut self, mut frag: FragmentState<R>) -> Result<()> {
@@ -316,15 +295,8 @@ impl<R: SimpleRec> CollatedMatcher<R> {
     pub(crate) fn print_counters(&self) {
         for i in 0..2 {
             eprintln!("collated[filter:{}]: {}", i, self.branch_counters[i << 1]);
-            eprintln!(
-                "collated[out:{}]: {}",
-                i,
-                self.branch_counters[1 + (i << 1)]
-            );
+            eprintln!("collated[out:{}]: {}", i, self.branch_counters[1 + (i << 1)]);
             eprintln!("collated[ambig:{}]: {}", i, self.branch_counters[16 + i]);
         }
     }
 }
-
-#[cfg(test)]
-mod tests;
