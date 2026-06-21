@@ -39,11 +39,25 @@ pub(crate) enum MatchingAlgorithm {
 }
 
 #[derive(Parser, Debug, Default, Clone)]
-#[command(author, version, about, long_about=None)]
+#[command(
+    author, version,
+    about = "Fast alignment-based read classifier for xenograft / PDX sequencing data",
+    long_about = None,
+)]
 pub(crate) struct Config {
+    /// Input alignments to compare. If the same readnames are consecutive and in the same order for
+    /// all inputs, a low memory non-hashing strategy is adopted.
+    #[arg(required = true, num_args = 1..ARG_MAX)]
+    pub(crate) alignment: Vec<String>,
+
     /// Assign fragments matching alignment to these respective files. Writes first alignment to stdout when omitted
     #[arg(short, long, num_args = 1..ARG_MAX)]
     pub(crate) output: Vec<PathBuf>,
+
+    /// Output file for all alignments (winners, filtered, and ambiguous).
+    /// If set, overrides --output, --filtered-output, and --ambiguous-output.
+    #[arg(short, long)]
+    pub(crate) merged_output: Option<PathBuf>,
 
     /// Discard fragments distancing more in alignment to these files. Default: do not discard
     #[arg(short, long, num_args = 0..ARG_MAX)]
@@ -57,10 +71,25 @@ pub(crate) struct Config {
     #[arg(short = 'O', long, default_value = "sam")]
     pub(crate) stdout_format: BamFormat,
 
-    /// Input alignments to compare. If the same readnames are consecutive and in the same order for
-    /// all inputs, a low memory non-hashing strategy is adopted.
-    #[arg(required = true, num_args = 1..ARG_MAX)]
-    pub(crate) alignment: Vec<String>,
+    /// Number of bgzf (de)compression threads per reader/writer.
+    #[arg(short = 't', long, default_value = "4")]
+    pub(crate) threads: usize,
+
+    /// Number of parallel scoring worker threads.
+    ///
+    /// Each worker owns its own DP scratch space and scores fragments
+    /// independently.  The IO thread (reading + writing) is always single-
+    /// threaded; only the log-likelihood and variant-aware scoring is
+    /// parallelised.
+    ///
+    /// Set to 1 (the default) for deterministic output order.
+    /// Set to 0 to use all available logical CPUs.
+    #[arg(short = 'S', long, default_value = "1")]
+    pub(crate) score_threads: usize,
+
+    /// Increase log verbosity (-v = INFO, -vv = DEBUG). Overridden by RUST_LOG.
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    pub(crate) verbose: u8,
 
     /// Read first alignment from stdin; enforced with only one input alignment
     #[arg(short, long, default_value = "false")]
@@ -147,6 +176,7 @@ impl Config {
 
         // Reject multi-threaded modes for non-namesorted algorithms.
         if self.matching_algorithm != MatchingAlgorithm::Namesorted {
+            // FIXME
             // No --threads flag currently, but guard here for future addition.
             // Document the constraint.
         }
@@ -175,7 +205,12 @@ impl Config {
                 "At least two alignments required when not running in single alignment mode."
             );
         }
-
+        if self.merged_output.is_some() {
+            ensure!(
+                self.output.is_empty() && self.filtered_output.is_empty() && self.ambiguous_output.is_empty(),
+                "Cannot use --merged-output in combination with --output, --filtered-output, or --ambiguous-output."
+            );
+        }
         // Determine effective dimensions (logical comparisons)
         let logical_len = if aln_count == 1 { 2 } else { aln_count };
 
@@ -256,18 +291,41 @@ impl Config {
                 "Gap open/mismatch penalties must be positive"
             ));
         }
+
+        // Resolve score_threads = 0 → all available logical CPUs.
+        if self.score_threads == 0 {
+            self.score_threads = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1);
+            tracing::info!(
+                score_threads = self.score_threads,
+                "score_threads=0: using all available logical CPUs"
+            );
+        }
+
+        tracing::debug!(
+            threads = self.threads,
+            score_threads = self.score_threads,
+            alignments = aln_count,
+            gap_open = self.gap_open,
+            gap_extend = self.gap_extend,
+            mismatch = self.mismatch_penalty,
+            "Configuration validated"
+        );
+
         Ok(())
     }
 
+    /// Parse `"<idx>:<path>"` or fall back to `(default_idx, path)`.
     fn parse_variant_string(arg: &str, default_idx: usize) -> Result<(usize, PathBuf)> {
-        if let Some((idx_str, path_str)) = arg.split_once(':') {
-            if let Ok(idx) = idx_str.parse::<usize>() {
+        if let Some((idx_str, path_str)) = arg.split_once(':')
+            && let Ok(idx) = idx_str.parse::<usize>() {
                 return Ok((idx, PathBuf::from(path_str)));
-            }
         }
         Ok((default_idx, PathBuf::from(arg)))
     }
 
+    /// Build a [`Penalty`] from the current penalty parameters.
     pub(super) fn to_penalties(&self) -> Penalty {
         let mut error_prob = [0.0_f64; MAX_Q];
         for (q, item) in error_prob.iter_mut().enumerate() {

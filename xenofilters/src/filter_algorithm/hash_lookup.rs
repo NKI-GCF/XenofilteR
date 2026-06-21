@@ -34,7 +34,7 @@ use crate::region::{AmbiguousRegions, DiagnosticVariants};
 use crate::variant::FragEvalVec;
 use anyhow::{anyhow, Result};
 use assemble::{insert, NameTable, PendingFragment, ScoringRecord, StreamKind};
-use noodles::sam::alignment::record_buf::RecordBuf;
+use noodles::sam::alignment::{record::Cigar, record_buf::RecordBuf};
 use smallvec::SmallVec;
 use stage::StagedOutput;
 use std::cmp::Ordering;
@@ -166,7 +166,13 @@ impl<R: SimpleRec> HashLookup<R> {
             Some(r) => r,
             None => return Ok(None),
         };
-        let raw_name = rec.name().map(|n| n.as_ref().to_vec()).unwrap_or_default();
+        let raw_name = rec
+            .name()
+            .map(|n| {
+                let bytes: &[u8] = n.as_ref();
+                bytes.to_vec()
+            })
+            .unwrap_or_default();
         let key = canonical_name(&raw_name, self.strip);
 
         let flags = rec.flags()?;
@@ -227,7 +233,11 @@ impl<R: SimpleRec> HashLookup<R> {
             bytes
         };
 
-        let qualities: Vec<u8> = rec.quality_scores().as_ref().iter().copied().collect();
+        let qualities: Vec<u8> = rec
+            .quality_scores()
+            .as_ref()
+            .iter()
+            .collect::<Result<Vec<u8>, _>>()?;
 
         // Virtual offset: not directly available from AlignmentStream trait.
         // We store a monotonic counter as a proxy; actual BGZF seek in pass 2
@@ -480,10 +490,12 @@ impl<R: SimpleRec> HashLookup<R> {
             let seq_len = sr.qualities.len();
             *buf.sequence_mut() = Sequence::from(vec![b'N'; seq_len]);
             // MD tag.
-            let data: noodles::sam::alignment::record_buf::Data =
-                [(Tag::MISMATCHED_POSITIONS, Value::from(sr.md.as_slice()))]
-                    .into_iter()
-                    .collect();
+            let data: noodles::sam::alignment::record_buf::Data = [(
+                Tag::MISMATCHED_POSITIONS,
+                Value::from(String::from_utf8(sr.md)?.into()),
+            )]
+            .into_iter()
+            .collect();
             *buf.data_mut() = data;
             bufs.push(buf);
         }
@@ -495,14 +507,14 @@ impl<R: SimpleRec> HashLookup<R> {
         // Build MdCigFlags for each buf.
         let mut mcfs: SmallVec<[MdCigFlags; READ_CT]> = SmallVec::new();
         for buf in bufs.iter() {
-            let flags = buf.flags()?;
+            let flags = buf.flags();
             mcfs.push(MdCigFlags::try_from_record(buf, &flags)?);
         }
 
         let seg: SmallVec<[&RecordBuf; READ_CT]> = bufs.iter().collect();
         let mut dvnt: FragEvalVec<'_> = SmallVec::new();
         for buf in bufs.iter() {
-            if buf.flags()?.is_unmapped() {
+            if buf.flags().is_unmapped() {
                 dvnt.push(SmallVec::new());
             } else {
                 let tid = buf
@@ -510,7 +522,6 @@ impl<R: SimpleRec> HashLookup<R> {
                     .ok_or_else(|| anyhow!("No ref seq id"))?;
                 let start = buf
                     .alignment_start()
-                    .transpose()?
                     .ok_or_else(|| anyhow!("No alignment start"))?
                     .get();
                 let end = start + buf.cigar().len();
@@ -532,13 +543,7 @@ impl<R: SimpleRec> HashLookup<R> {
         let seq_nr = pending.seq_nr;
         let supp = pending.supplementary_offsets;
         let (winner_offsets, winner_nr) = match (pending.driving, pending.lookup) {
-            (
-                StreamKind::Early {
-                    virtual_offsets, ..
-                },
-                _,
-            )
-            | (StreamKind::Scoring { records: _, .. }, StreamKind::Empty) => {
+            (StreamKind::Early { .. }, _) | (StreamKind::Scoring { .. }, StreamKind::Empty) => {
                 // driving has something, lookup empty
                 // get offsets from driving
                 match pending.driving {

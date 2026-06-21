@@ -11,19 +11,19 @@ use anyhow::{anyhow, Result};
 use noodles::bgzf;
 use noodles::core::Region;
 use noodles::tabix;
-use noodles::{bed, bcf, vcf};
+use noodles::{bcf, bed, vcf};
 use std::fs::File;
 use std::path::Path;
 
 /// Tabix-indexed BED file for random-access ambiguous-region queries.
 pub(crate) struct TabixBed {
-    reader: bed::io::IndexedReader<bgzf::Reader<File>>,
+    reader: noodles::tabix::io::Reader<bgzf::io::Reader<File>>,
 }
 
 impl TabixBed {
     pub(crate) fn open(path: &Path) -> Result<Self> {
-        let reader = bed::io::IndexedReader::new(
-            bgzf::Reader::new(
+        let reader = noodles::tabix::io::Reader::new(
+            bgzf::io::Reader::new(
                 File::open(path)
                     .map_err(|e| anyhow!("Cannot open BED {}: {}", path.display(), e))?,
             ),
@@ -44,8 +44,8 @@ impl TabixBed {
             .query(&region)
             .map_err(|e| anyhow!("Tabix BED query failed: {e}"))?;
         for result in query {
-            let _record: bed::Record<3> = result
-                .map_err(|e| anyhow!("BED record parse error: {e}"))?;
+            let _record: bed::Record<3> =
+                result.map_err(|e| anyhow!("BED record parse error: {e}"))?;
             return Ok(true); // any overlap suffices
         }
         Ok(false)
@@ -54,7 +54,7 @@ impl TabixBed {
 
 /// Tabix-indexed VCF/BCF file for random-access diagnostic-variant queries.
 pub(crate) struct TabixVcf {
-    reader: vcf::io::IndexedReader<bgzf::Reader<File>>,
+    reader: vcf::io::IndexedReader<bgzf::io::Reader<File>>,
     header: vcf::Header,
 }
 
@@ -64,7 +64,7 @@ impl TabixVcf {
             .or_else(|_| tabix::read(path.with_extension("tbi")))
             .map_err(|e| anyhow!("Cannot read tabix index for {}: {}", path.display(), e))?;
         let mut reader = vcf::io::IndexedReader::new(
-            bgzf::Reader::new(
+            bgzf::io::Reader::new(
                 File::open(path)
                     .map_err(|e| anyhow!("Cannot open VCF {}: {}", path.display(), e))?,
             ),

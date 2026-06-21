@@ -135,22 +135,21 @@ impl<R: SimpleRec> CollatedMatcher<R> {
     fn score_pair(&mut self, a: FragmentState<R>, b: FragmentState<R>) -> Result<()> {
         let mut ord = a.partial_cmp(&b);
 
-        // If partial_cmp is None, try perfect-match comparison.
-        let (mcfs1, mcfs2) = if ord.is_none() {
-            a.cmp_perfect(&b, &mut ord)?
-        } else {
-            (SmallVec::new(), SmallVec::new())
-        };
-
         enum Res {
             Ordered(std::cmp::Ordering),
             Scored(f64),
         }
 
+        // By nesting this, mcfs1 and mcfs2 are dropped before `res` is matched
         let res = if ord.is_none() {
-            let s1 = self.score_one(&a, mcfs1, 0)?;
-            let s2 = self.score_one(&b, mcfs2, 1)?;
-            Res::Scored(s1 - s2)
+            let (mcfs1, mcfs2) = a.cmp_perfect(&b, &mut ord)?;
+            if ord.is_none() {
+                let s1 = self.score_one(&a, mcfs1, 0)?;
+                let s2 = self.score_one(&b, mcfs2, 1)?;
+                Res::Scored(s1 - s2)
+            } else {
+                Res::Ordered(ord.unwrap())
+            }
         } else {
             Res::Ordered(ord.unwrap())
         };

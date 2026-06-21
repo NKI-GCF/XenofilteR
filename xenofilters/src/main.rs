@@ -10,6 +10,7 @@ mod bam;
 mod config;
 mod filter_algorithm;
 mod penalty;
+mod region;
 mod variant;
 
 use aln_stream::{AlignmentStream, AlnStream};
