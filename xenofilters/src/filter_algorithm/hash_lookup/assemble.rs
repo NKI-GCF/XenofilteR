@@ -1,40 +1,44 @@
 //! Fragment accumulator for the two-pass HashLookup algorithm.
 //!
-//! Pass 1 reads lightweight `ScoringRecord`s. Each record is either:
-//! - **EarlyAssigned**: perfect alignment, no BED/VCF overlap → only the
-//!   BGZF virtual offset is retained for pass-2 retrieval.
-//! - **NeedsScoring**: imperfect or overlaps ambiguous/diagnostic region →
-//!   the full `ScoringRecord` is retained for NW scoring.
+//! Design principle: always accumulate `ScoringRecord`s during pass 1.
+//! Early-assignability is evaluated at fragment *completion* time, not on
+//! each individual record arrival. This avoids the downgrade problem (a
+//! stream that looked assignable until its second primary arrived imperfect).
 //!
-//! A fragment becomes complete for early assignment the moment one stream's
-//! `StreamState` is `EarlyAssigned` and its primary count matches expectations
-//! (1 for single-end, 2 for paired-end). The other stream need not have
-//! arrived — it will be looked up by read name and written to filtered output.
+//! At completion:
+//! - If one stream's primaries are all perfect with no BED/VCF overlap →
+//!   `StreamKind::Early`: only virtual offsets are kept; `ScoringRecord`s
+//!   are dropped to free memory.
+//! - Otherwise → `StreamKind::Scoring`: records retained for NW scoring.
 //!
-//! A fragment requires full scoring when either stream contains a
-//! `NeedsScoring` record and both streams have contributed primaries.
+//! Supplementary records never affect assignment; their virtual offsets are
+//! always stored separately for pass-2 retrieval.
 
-use crate::alignment::MdCigFlags;
-use crate::filter_algorithm::line_by_line::READ_CT;
-use crate::region::{AmbiguousRegions, DiagnosticVariants, EarlyCheck, check_early};
-use anyhow::{anyhow, Result};
+use crate::region::{AmbiguousRegions, DiagnosticVariants};
+use anyhow::Result;
 use noodles::sam::alignment::record::Flags;
 use smallvec::SmallVec;
 
-/// Minimum fields needed for scoring and early-assignment in pass 1.
-/// No sequence — CIGAR + MD + qualities suffice.
+// ---------------------------------------------------------------------------
+// ScoringRecord
+// ---------------------------------------------------------------------------
+
+/// Minimum fields needed for pass-1 scoring and early-assignment checks.
+/// No sequence field — CIGAR + MD + qualities suffice for NW scoring
+/// and for deriving the reference/read base at diagnostic positions.
+#[derive(Debug)]
 pub(crate) struct ScoringRecord {
     pub(crate) flags: Flags,
     pub(crate) ref_id: usize,
-    /// 1-based alignment start (matching BAM convention).
+    /// 1-based alignment start (BAM convention).
     pub(crate) pos: usize,
-    /// Reference span (from CIGAR).
+    /// Reference span derived from CIGAR.
     pub(crate) ref_len: usize,
-    pub(crate) cigar: Vec<u8>,   // raw CIGAR bytes; parsed on demand
+    /// Raw BAM-encoded CIGAR bytes (4 bytes per op, little-endian u32).
+    pub(crate) cigar_bytes: Vec<u8>,
     pub(crate) md: Vec<u8>,
     pub(crate) qualities: Vec<u8>,
-    /// BGZF virtual offset of this record in the BAM file.
-    /// Used in pass 2 to seek directly to the full record.
+    /// BGZF virtual offset — used in pass 2 for direct seek.
     pub(crate) virtual_offset: u64,
 }
 
@@ -48,83 +52,138 @@ impl ScoringRecord {
     pub(crate) fn is_unmapped(&self) -> bool {
         self.flags.is_unmapped()
     }
+    /// True iff single-op CIGAR (all-Match) and MD is all digits (no mismatches).
+    pub(crate) fn is_perfect(&self) -> bool {
+        if self.is_unmapped() { return false; }
+        // BAM CIGAR: each op is a u32le; low 4 bits = op code (0 = Match).
+        // Single perfect op: exactly 4 bytes, op code 0.
+        let cigar_ok = self.cigar_bytes.len() == 4
+            && (self.cigar_bytes[0] & 0x0F) == 0;
+        let md_ok = !self.md.is_empty()
+            && self.md.iter().all(|&b| b.is_ascii_digit());
+        cigar_ok && md_ok
+    }
 }
 
-/// Per-stream accumulation state.
-pub(crate) enum StreamState {
-    /// All primaries perfect, no ambiguous/diagnostic overlap.
-    /// Virtual offsets retained for pass-2 full-record retrieval.
-    EarlyAssigned {
+// ---------------------------------------------------------------------------
+// StreamBuf — accumulates records for one stream before classification
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct StreamBuf {
+    records: SmallVec<[ScoringRecord; 2]>,
+    primary_count: usize,
+}
+
+impl StreamBuf {
+    fn push(&mut self, rec: ScoringRecord) {
+        if rec.is_primary() { self.primary_count += 1; }
+        self.records.push(rec);
+    }
+
+    /// Evaluate early-assignability once all primaries have arrived.
+    /// Returns `StreamKind::Early` only if every primary is perfect and
+    /// none overlaps an ambiguous BED or diagnostic VCF region.
+    fn classify(
+        mut self,
+        bed: Option<&AmbiguousRegions>,
+        vcf: Option<&DiagnosticVariants>,
+    ) -> StreamKind {
+        let all_assignable = self.records.iter()
+            .filter(|r| r.is_primary())
+            .all(|r| {
+                if !r.is_perfect() { return false; }
+                if let Some(b) = bed {
+                    if b.overlaps(r.ref_id, r.pos, r.pos + r.ref_len) { return false; }
+                }
+                if let Some(v) = vcf {
+                    if v.overlaps(r.ref_id, r.pos, r.pos + r.ref_len) { return false; }
+                }
+                true
+            });
+
+        if all_assignable && self.primary_count > 0 {
+            let offsets = self.records.iter().map(|r| r.virtual_offset).collect();
+            StreamKind::Early { virtual_offsets: offsets, primary_count: self.primary_count }
+        } else {
+            StreamKind::Scoring { records: self.records, primary_count: self.primary_count }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// StreamKind — post-classification state
+// ---------------------------------------------------------------------------
+
+pub(crate) enum StreamKind {
+    /// All primaries perfect, no region overlap.
+    Early {
         virtual_offsets: SmallVec<[u64; 2]>,
         primary_count: usize,
     },
-    /// Full scoring required for at least one primary.
-    NeedsScoring {
+    /// At least one primary needs NW scoring.
+    Scoring {
         records: SmallVec<[ScoringRecord; 2]>,
         primary_count: usize,
     },
-    /// No records yet.
+    /// No records received yet.
     Empty,
 }
 
-impl Default for StreamState {
-    fn default() -> Self {
-        StreamState::Empty
-    }
+impl Default for StreamKind {
+    fn default() -> Self { StreamKind::Empty }
 }
 
-impl StreamState {
+impl StreamKind {
     pub(crate) fn primary_count(&self) -> usize {
         match self {
-            StreamState::EarlyAssigned { primary_count, .. } => *primary_count,
-            StreamState::NeedsScoring { primary_count, .. } => *primary_count,
-            StreamState::Empty => 0,
+            StreamKind::Early { primary_count, .. } => *primary_count,
+            StreamKind::Scoring { primary_count, .. } => *primary_count,
+            StreamKind::Empty => 0,
         }
     }
-
     pub(crate) fn is_early(&self) -> bool {
-        matches!(self, StreamState::EarlyAssigned { .. })
+        matches!(self, StreamKind::Early { .. })
     }
-
-    pub(crate) fn has_any(&self) -> bool {
-        !matches!(self, StreamState::Empty)
+    pub(crate) fn is_empty(&self) -> bool {
+        matches!(self, StreamKind::Empty)
     }
 }
 
-/// A fragment being assembled from both streams.
+// ---------------------------------------------------------------------------
+// PendingFragment
+// ---------------------------------------------------------------------------
+
+/// A fragment being assembled across both streams.
 pub(crate) struct PendingFragment {
-    pub(crate) driving: StreamState,   // stream 0
-    pub(crate) lookup: StreamState,    // stream 1
+    /// Accumulation buffers — used until `classify()` is called.
+    driving_buf: StreamBuf,
+    lookup_buf: StreamBuf,
+    /// Post-classification states — set after `classify()`.
+    pub(crate) driving: StreamKind,
+    pub(crate) lookup: StreamKind,
     /// Virtual offsets of supplementary records, per stream.
-    /// Supplementaries are not scored but follow the fragment's decision.
     pub(crate) supplementary_offsets: [SmallVec<[u64; 1]>; 2],
-    /// Driving-stream insertion order — used for staged output ordering.
+    /// Driving-stream insertion-order sequence number for staged output.
     pub(crate) seq_nr: u64,
-    /// True once we know this is paired-end (first paired record seen).
     pub(crate) is_paired: Option<bool>,
 }
 
 impl PendingFragment {
     pub(crate) fn new(seq_nr: u64) -> Self {
         Self {
-            driving: StreamState::Empty,
-            lookup: StreamState::Empty,
+            driving_buf: StreamBuf::default(),
+            lookup_buf: StreamBuf::default(),
+            driving: StreamKind::Empty,
+            lookup: StreamKind::Empty,
             supplementary_offsets: [SmallVec::new(), SmallVec::new()],
             seq_nr,
             is_paired: None,
         }
     }
 
-    /// Expected primary count: 2 if paired-end, 1 if single-end, None if unknown.
-    fn expected_primaries(&self) -> Option<usize> {
-        self.is_paired.map(|p| if p { 2 } else { 1 })
-    }
-
-    /// Push a record from stream `nr` into the fragment.
-    /// Returns `true` if the fragment is now complete for early assignment
-    /// (one stream all-perfect, other stream worse or not yet arrived).
-    /// Returns `true` also if full scoring is possible (both streams have
-    /// all expected primaries and at least one needs scoring).
+    /// Push a record from stream `nr`. Returns `true` when the fragment is
+    /// complete and ready for scoring or early assignment.
     pub(crate) fn push(
         &mut self,
         rec: ScoringRecord,
@@ -132,168 +191,204 @@ impl PendingFragment {
         bed: Option<&AmbiguousRegions>,
         vcf: Option<&DiagnosticVariants>,
     ) -> bool {
-        // Track paired-end status.
         if self.is_paired.is_none() {
             self.is_paired = Some(rec.flags.is_segmented());
         }
-
         if rec.is_supplementary() {
             self.supplementary_offsets[nr].push(rec.virtual_offset);
-            return self.is_complete();
+            return self.check_complete(bed, vcf);
         }
-
-        let state = if nr == 0 { &mut self.driving } else { &mut self.lookup };
-        let voffset = rec.virtual_offset;
-        let is_primary = rec.is_primary();
-
-        // Determine early-assignability for this record.
-        let early = if is_primary && !rec.is_unmapped() {
-            check_early(
-                std::iter::once((
-                    rec.ref_id,
-                    rec.pos,
-                    rec.pos + rec.ref_len,
-                    // We cannot build MdCigFlags here without a full record.
-                    // Conservatively treat as NeedsScoring when we cannot check.
-                    // The actual perfect-check is done via is_perfect_scoring_rec.
-                    &dummy_mcf_always_needs_scoring(),
-                )),
-                bed,
-                vcf,
-            )
-        } else {
-            EarlyCheck::NeedsScoring
-        };
-
-        // Actually: is_perfect check on ScoringRecord directly.
-        let is_perf = is_perfect_scoring_rec(&rec);
-        let no_region_overlap = if !rec.is_unmapped() {
-            let bed_ok = bed.map_or(true, |b| !b.overlaps(rec.ref_id, rec.pos, rec.pos + rec.ref_len));
-            let vcf_ok = vcf.map_or(true, |v| !v.overlaps(rec.ref_id, rec.pos, rec.pos + rec.ref_len));
-            bed_ok && vcf_ok
-        } else {
-            false // unmapped is never early-assignable
-        };
-
-        let assignable = is_perf && no_region_overlap;
-
-        match state {
-            StreamState::Empty => {
-                if assignable && is_primary {
-                    *state = StreamState::EarlyAssigned {
-                        virtual_offsets: SmallVec::from_slice(&[voffset]),
-                        primary_count: 1,
-                    };
-                } else {
-                    let pc = if is_primary { 1 } else { 0 };
-                    *state = StreamState::NeedsScoring {
-                        records: SmallVec::from_vec(vec![rec]),
-                        primary_count: pc,
-                    };
-                }
-            }
-            StreamState::EarlyAssigned { virtual_offsets, primary_count } => {
-                if assignable && is_primary {
-                    virtual_offsets.push(voffset);
-                    *primary_count += 1;
-                } else {
-                    // Downgrade to NeedsScoring — reconstruct with only offsets
-                    // (we cannot retrieve records we already discarded, but we
-                    // stored their virtual offsets, so pass 2 can load them).
-                    // For scoring we need the actual ScoringRecords. Since we
-                    // discarded them, we must re-read them in pass 1 here.
-                    // Practical solution: once we hit a NeedsScoring record,
-                    // we mark the whole stream as NeedsScoring but keep offsets
-                    // for records already seen. The scorer will read them via
-                    // the virtual offsets — effectively a mini pass-2.
-                    // Simpler: accumulate all primaries as NeedsScoring from
-                    // the start if any is imperfect. We cannot retroactively
-                    // downgrade without re-reading, so we instead always
-                    // accumulate ScoringRecords and mark early only at
-                    // completion time. See below.
-                    //
-                    // Revised approach: always accumulate ScoringRecords.
-                    // Determine EarlyAssigned vs NeedsScoring at completion.
-                    // This avoids the downgrade problem entirely.
-                    let offsets = std::mem::take(virtual_offsets);
-                    let pc = *primary_count + if is_primary { 1 } else { 0 };
-                    *state = StreamState::NeedsScoring {
-                        records: SmallVec::from_vec(vec![rec]),
-                        primary_count: pc,
-                    };
-                    // Note: offsets of prior early records are lost here.
-                    // See module-level note: accumulate all, classify at end.
-                    let _ = offsets;
-                }
-            }
-            StreamState::NeedsScoring { records, primary_count } => {
-                if is_primary { *primary_count += 1; }
-                records.push(rec);
-            }
-        }
-
-        self.is_complete()
+        if nr == 0 { self.driving_buf.push(rec); }
+        else { self.lookup_buf.push(rec); }
+        self.check_complete(bed, vcf)
     }
 
-    /// True if the fragment is ready for scoring or early assignment.
+    fn expected_primaries(&self) -> usize {
+        self.is_paired.map_or(1, |p| if p { 2 } else { 1 })
+    }
+
+    /// Check completion and classify streams that have enough primaries.
+    fn check_complete(
+        &mut self,
+        bed: Option<&AmbiguousRegions>,
+        vcf: Option<&DiagnosticVariants>,
+    ) -> bool {
+        let exp = self.expected_primaries();
+
+        // Classify driving stream if it has enough primaries and not yet classified.
+        if self.driving.is_empty() && self.driving_buf.primary_count >= exp {
+            let buf = std::mem::take(&mut self.driving_buf);
+            self.driving = buf.classify(bed, vcf);
+        }
+        // Classify lookup stream similarly.
+        if self.lookup.is_empty() && self.lookup_buf.primary_count >= exp {
+            let buf = std::mem::take(&mut self.lookup_buf);
+            self.lookup = buf.classify(bed, vcf);
+        }
+
+        self.is_complete_inner(exp)
+    }
+
+    fn is_complete_inner(&self, exp: usize) -> bool {
+        // Early assignment: one stream classified as Early.
+        let driving_early = matches!(&self.driving,
+            StreamKind::Early { primary_count, .. } if *primary_count >= exp);
+        let lookup_early = matches!(&self.lookup,
+            StreamKind::Early { primary_count, .. } if *primary_count >= exp);
+        // Full scoring: both streams classified (Early or Scoring).
+        let both_classified = !self.driving.is_empty() && !self.lookup.is_empty();
+
+        driving_early || lookup_early || both_classified
+    }
+
     pub(crate) fn is_complete(&self) -> bool {
-        let exp = match self.expected_primaries() {
-            Some(e) => e,
-            None => 1, // default to 1 until we know
-        };
-        // Early assignment: one stream fully assignable with enough primaries.
-        let driving_early = matches!(
-            &self.driving,
-            StreamState::EarlyAssigned { primary_count, .. } if *primary_count >= exp
-        );
-        let lookup_early = matches!(
-            &self.lookup,
-            StreamState::EarlyAssigned { primary_count, .. } if *primary_count >= exp
-        );
-        // Full scoring: both streams have enough primaries.
-        let driving_ready = self.driving.primary_count() >= exp;
-        let lookup_ready = self.lookup.primary_count() >= exp;
-
-        driving_early || lookup_early || (driving_ready && lookup_ready)
+        self.is_complete_inner(self.expected_primaries())
     }
 
-    /// True if this fragment can be resolved without scoring the other stream.
+    /// True if at least one stream is Early-classified and complete.
+    /// When true, the other stream need not have arrived.
     pub(crate) fn can_early_assign(&self) -> bool {
-        let exp = self.expected_primaries().unwrap_or(1);
-        let driving_early = matches!(
-            &self.driving,
-            StreamState::EarlyAssigned { primary_count, .. } if *primary_count >= exp
-        );
-        let lookup_early = matches!(
-            &self.lookup,
-            StreamState::EarlyAssigned { primary_count, .. } if *primary_count >= exp
-        );
-        // Both early → also qualifies (ambiguous, no scoring needed).
-        driving_early || lookup_early
+        let exp = self.expected_primaries();
+        matches!(&self.driving, StreamKind::Early { primary_count, .. } if *primary_count >= exp)
+        || matches!(&self.lookup, StreamKind::Early { primary_count, .. } if *primary_count >= exp)
     }
 }
 
-/// Check if a `ScoringRecord` represents a perfect alignment:
-/// single-span alignment (CIGAR has one M op) and MD is all digits.
-fn is_perfect_scoring_rec(rec: &ScoringRecord) -> bool {
-    if rec.is_unmapped() { return false; }
-    // MD all digits → no mismatches.
-    let md_perfect = !rec.md.is_empty() && rec.md.iter().all(|&b| b.is_ascii_digit());
-    // CIGAR single op: encoded as (len << 4 | op_code); 4 bytes per op.
-    // Single M op: cigar.len() == 4 and low nibble == 0 (Match).
-    let cigar_perfect = rec.cigar.len() == 4 && (rec.cigar[0] & 0x0F) == 0;
-    md_perfect && cigar_perfect
-}
-
-/// Placeholder — real check is done via is_perfect_scoring_rec.
-/// This exists only to satisfy the type system in the push() early-check path
-/// above (which is superseded by the direct check).
-fn dummy_mcf_always_needs_scoring<'a>() -> MdCigFlags<'a> {
-    // This function is never actually called in the revised push() logic
-    // (the EarlyCheck call was replaced by direct is_perfect_scoring_rec).
-    // It is retained only to keep the compiler happy during refactoring.
-    // TODO: remove once push() is fully cleaned up.
-    panic!("dummy_mcf_always_needs_scoring should never be called")
-}
+// ---------------------------------------------------------------------------
+// NameTable
+// ---------------------------------------------------------------------------
 
 pub(crate) type NameTable = std::collections::HashMap<Box<[u8]>, PendingFragment>;
+
+/// Insert `rec` from stream `nr` into `table`.
+/// Returns the canonical key and `true` if the fragment is now complete.
+pub(crate) fn insert(
+    table: &mut NameTable,
+    rec: ScoringRecord,
+    canonical_name: Box<[u8]>,
+    nr: usize,
+    seq_counter: &mut u64,
+    bed: Option<&AmbiguousRegions>,
+    vcf: Option<&DiagnosticVariants>,
+) -> (Box<[u8]>, bool) {
+    let entry = table.entry(canonical_name.clone()).or_insert_with(|| {
+        let sn = *seq_counter;
+        *seq_counter += 1;
+        PendingFragment::new(sn)
+    });
+    let complete = entry.push(rec, nr, bed, vcf);
+    (canonical_name, complete)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use noodles::sam::alignment::record::Flags;
+
+    fn rec(flags_bits: u16, perfect: bool, ref_id: usize, pos: usize) -> ScoringRecord {
+        // Perfect: single 10M op (BAM encoding: len=10, op=0 → 10<<4|0 = 0xA0 as u32le)
+        // Imperfect: two ops (5M5S)
+        let cigar_bytes = if perfect {
+            // 10M: u32le = (10 << 4) | 0 = 160 = 0x000000A0
+            vec![0xA0u8, 0x00, 0x00, 0x00]
+        } else {
+            // 5M5S: two ops
+            vec![0x50u8, 0x00, 0x00, 0x00, 0x54u8, 0x00, 0x00, 0x00]
+        };
+        let md = if perfect { b"10".to_vec() } else { b"5".to_vec() };
+        ScoringRecord {
+            flags: Flags::from_bits(flags_bits).unwrap(),
+            ref_id,
+            pos,
+            ref_len: 10,
+            cigar_bytes,
+            md,
+            qualities: vec![30; 10],
+            virtual_offset: pos as u64 * 1000,
+        }
+    }
+
+    #[test]
+    fn test_single_end_perfect_both_streams_classified() {
+        let mut frag = PendingFragment::new(0);
+        // Single-end: flags 0 (not segmented)
+        let complete = frag.push(rec(0, true, 0, 100), 0, None, None);
+        assert!(!complete); // only driving arrived
+        let complete = frag.push(rec(0, true, 0, 200), 1, None, None);
+        assert!(complete);
+        assert!(matches!(frag.driving, StreamKind::Early { .. }));
+        assert!(matches!(frag.lookup, StreamKind::Early { .. }));
+        assert!(frag.can_early_assign());
+    }
+
+    #[test]
+    fn test_single_end_driving_perfect_lookup_imperfect() {
+        let mut frag = PendingFragment::new(0);
+        let complete = frag.push(rec(0, true, 0, 100), 0, None, None);
+        assert!(!complete);
+        let complete = frag.push(rec(0, false, 0, 200), 1, None, None);
+        assert!(complete);
+        assert!(matches!(frag.driving, StreamKind::Early { .. }));
+        assert!(matches!(frag.lookup, StreamKind::Scoring { .. }));
+        assert!(frag.can_early_assign());
+    }
+
+    #[test]
+    fn test_driving_early_without_lookup() {
+        // Driving arrives as perfect; lookup not yet seen.
+        // Fragment should be complete for early assignment.
+        let mut frag = PendingFragment::new(0);
+        let complete = frag.push(rec(0, true, 0, 100), 0, None, None);
+        // Single-end: exp=1, driving has 1 primary → classified as Early.
+        assert!(complete);
+        assert!(frag.can_early_assign());
+        assert!(frag.lookup.is_empty());
+    }
+
+    #[test]
+    fn test_paired_end_requires_two_primaries() {
+        let mut frag = PendingFragment::new(0);
+        // Paired: flags 0x41 = first in pair, paired
+        let complete = frag.push(rec(0x41, true, 0, 100), 0, None, None);
+        assert!(!complete); // only 1 of 2 primaries for stream 0
+        let complete = frag.push(rec(0x81, true, 0, 200), 0, None, None);
+        assert!(!complete); // stream 0 complete but stream 1 empty
+        // Actually with paired exp=2, driving now has 2 → classified.
+        // lookup still empty → can_early_assign = true (driving Early).
+        assert!(frag.can_early_assign());
+    }
+
+    #[test]
+    fn test_supplementary_does_not_count_as_primary() {
+        let mut frag = PendingFragment::new(0);
+        // Supplementary: flags 0x800
+        let complete = frag.push(rec(0x800, true, 0, 500), 0, None, None);
+        assert!(!complete);
+        assert_eq!(frag.driving_buf.primary_count, 0);
+    }
+
+    #[test]
+    fn test_ambiguous_region_forces_scoring() {
+        use crate::region::ambiguous::{AmbiguousRegions, Region};
+        use std::collections::HashMap;
+
+        let mut per_ref = HashMap::new();
+        per_ref.insert(0usize, vec![Region { start: 90, end: 110 }]);
+        let bed = AmbiguousRegions::from_test(per_ref);
+
+        let mut frag = PendingFragment::new(0);
+        // pos=100, ref_len=10 → [100,110) overlaps [90,110)
+        let complete = frag.push(rec(0, true, 0, 100), 0, Some(&bed), None);
+        assert!(!complete);
+        // push lookup imperfect
+        let complete = frag.push(rec(0, false, 0, 200), 1, Some(&bed), None);
+        assert!(complete);
+        // Driving overlaps ambiguous region → NeedsScoring despite being perfect.
+        assert!(matches!(frag.driving, StreamKind::Scoring { .. }));
+        assert!(!frag.can_early_assign());
+    }
+}

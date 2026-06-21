@@ -1,4 +1,3 @@
-//! In-memory store of ambiguous genomic regions loaded from a BED file.
 //!
 //! A read whose alignment overlaps any region in this store cannot be
 //! early-assigned — it must go through full scoring regardless of whether
@@ -81,6 +80,12 @@ impl AmbiguousRegions {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.per_ref.is_empty()
+    }
+
+    /// Test-only constructor from a pre-built map.
+    #[cfg(test)]
+    pub(crate) fn from_test(per_ref: std::collections::HashMap<usize, Vec<Region>>) -> Self {
+        Self { per_ref }
     }
 }
 
