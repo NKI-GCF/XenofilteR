@@ -59,13 +59,21 @@ impl TabixBed {
         let index = read_tabix_index(path)?;
         let ref_names: Vec<Vec<u8>> = index
             .header()
-            .map(|h| h.reference_sequence_names().iter().map(|n| n.to_vec()).collect())
+            .map(|h| {
+                h.reference_sequence_names()
+                    .iter()
+                    .map(|n| n.to_vec())
+                    .collect()
+            })
             .unwrap_or_default();
         let reader = bgzf::io::Reader::new(
-            File::open(path)
-                .map_err(|e| anyhow!("Cannot open BED {}: {e}", path.display()))?,
+            File::open(path).map_err(|e| anyhow!("Cannot open BED {}: {e}", path.display()))?,
         );
-        Ok(Self { reader, index, ref_names })
+        Ok(Self {
+            reader,
+            index,
+            ref_names,
+        })
     }
 
     /// Returns `true` if any BED record overlaps `[start, end)` (0-based).
@@ -77,7 +85,7 @@ impl TabixBed {
             .map_err(|e| anyhow!("Invalid region {region_str}: {e}"))?;
         let chunks = self
             .index
-            .query(&region)
+            .query(region.name(), region.interval())
             .map_err(|e| anyhow!("Tabix BED query failed: {e}"))?;
         Ok(!chunks.is_empty())
     }
@@ -97,8 +105,7 @@ impl TabixVcf {
     pub(crate) fn open(path: &Path) -> Result<Self> {
         let index = read_tabix_index(path)?;
         let bgzf_reader = bgzf::io::Reader::new(
-            File::open(path)
-                .map_err(|e| anyhow!("Cannot open VCF {}: {e}", path.display()))?,
+            File::open(path).map_err(|e| anyhow!("Cannot open VCF {}: {e}", path.display()))?,
         );
         let mut reader = vcf::io::IndexedReader::new(bgzf_reader, index);
         let header = reader

@@ -1,13 +1,13 @@
 //! [`CollatedMatcher`] — fragment-matching for individually-collated BAM streams
 //! whose inter-stream name order may differ.
 //!
-//! Each input stream must have all records for a given read name contiguous,
-//! but the two streams need not present fragments in the same order.
-//! A `HashMap` on each side buffers unmatched fragments.
+//! Each input stream must have all records for a given read name contiguous
+//! (collated / query-name-grouped), but the two streams need not present
+//! fragments in the same order. A `HashMap` on each side buffers unmatched
+//! fragments until their counterpart arrives.
 //!
 //! BED ambiguous regions and diagnostic VCF positions are queried via tabix
-//! for early-assignment decisions (random access needed because the BAM is
-//! name-ordered, not position-ordered).
+//! for early-assignment decisions.
 //!
 //! Memory usage: O(name-order skew). Output order: not guaranteed.
 //! Single-threaded only.
@@ -42,9 +42,7 @@ pub(crate) struct CollatedMatcher<R: SimpleRec> {
     add_decision_tag: bool,
     ambiguous_log_threshold: f64,
     strip: StripReadSuffix,
-    /// Optional tabix-indexed BED for early-assignment checks, per stream.
     bed: [Option<TabixBed>; 2],
-    /// Optional tabix-indexed VCF for early-assignment checks, per stream.
     vcf: [Option<TabixVcf>; 2],
 }
 
@@ -88,12 +86,16 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         })
     }
 
-    /// Convenience constructor with no BED/VCF (tests and namesorted-only paths).
+    /// Convenience constructor with no BED/VCF acceleration (tests and default path).
     pub(crate) fn new_no_regions(
         config: Config,
         aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
     ) -> Result<Self> {
-        Self::new(config, aln, [None, None], [None, None])
+        // TabixBed/TabixVcf are not Default, so we use None directly.
+        // The array [None, None] needs explicit typing.
+        let bed: [Option<TabixBed>; 2] = [None, None];
+        let vcf: [Option<TabixVcf>; 2] = [None, None];
+        Self::new(config, aln, bed, vcf)
     }
 
     pub(crate) fn process(&mut self) -> Result<()> {
@@ -139,8 +141,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
     fn score_pair(&mut self, a: FragmentState<R>, b: FragmentState<R>) -> Result<()> {
         let mut ord = a.partial_cmp(&b);
 
-        // By nesting this block, mcfs1 and mcfs2 are dropped before `res` is matched,
-        // avoiding borrow-of-moved-value errors on a and b.
+        // Nest cmp_perfect so mcfs are dropped before a/b are consumed below.
         enum Res { Ordered(std::cmp::Ordering), Scored(f64) }
         let res = if ord.is_none() {
             let (mcfs1, mcfs2) = a.cmp_perfect(&b, &mut ord)?;
@@ -210,33 +211,49 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             mcfs.into_iter().map(Some).collect();
         let mut dvnt: FragEvalVec<'_> = SmallVec::new();
 
+        // Get the variant store Arc before the loop to avoid repeated borrow.
+        let store = if aln_idx == 0 {
+            self.a.variant_store()
+        } else {
+            self.b.variant_store()
+        };
+
         for idx in state.order_mates() {
             let rec = &state.get_records()[idx];
-            let flags = state.flags(idx)
+            let flags = state
+                .flags(idx)
                 .ok_or_else(|| anyhow!("No flags for record {idx}"))?;
             if flags.is_unmapped() {
                 dvnt.push(SmallVec::new());
             } else {
-                let tid = rec.ref_seq_id().transpose()?
+                let tid = rec
+                    .ref_seq_id()
+                    .transpose()?
                     .ok_or_else(|| anyhow!("No reference sequence ID"))?;
-                let start = rec.alignment_start().transpose()?
-                    .ok_or_else(|| anyhow!("No alignment start"))?.get();
-                let cig_len = mcfs_opt[idx].as_ref()
-                    .ok_or_else(|| anyhow!("MdCigFlags missing for {idx}"))?.get_cigar().len();
+                let start = rec
+                    .alignment_start()
+                    .transpose()?
+                    .ok_or_else(|| anyhow!("No alignment start"))?
+                    .get();
+                let cig_len = mcfs_opt[idx]
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("MdCigFlags missing for {idx}"))?
+                    .get_cigar()
+                    .len();
                 let end = start + cig_len;
-                let delta_vars = {
-                    let stream = if aln_idx == 0 { &self.a } else { &self.b };
-                    match stream.variant_store() {
-                        Some(store) => store.overlapping_multi(tid, start, end),
-                        None => SmallVec::new(),
-                    }
+                let delta_vars = match &store {
+                    Some(s) => s.overlapping_multi(tid, start, end),
+                    None => SmallVec::new(),
                 };
                 dvnt.push(delta_vars);
             }
             if !flags.is_secondary() {
                 segment.push(rec);
-                seg_mcfs.push(mcfs_opt[idx].take()
-                    .ok_or_else(|| anyhow!("MdCigFlags consumed for {idx}"))?);
+                seg_mcfs.push(
+                    mcfs_opt[idx]
+                        .take()
+                        .ok_or_else(|| anyhow!("MdCigFlags consumed for {idx}"))?,
+                );
             } else if flags.is_last_segment() {
                 break;
             }
@@ -244,11 +261,18 @@ impl<R: SimpleRec> CollatedMatcher<R> {
 
         Fragment::new(&self.penalties, segment, seg_mcfs)?
             .score(&mut self.scratch, &mut dvnt)
-            .map_err(|e| anyhow!(
-                "Error scoring fragment for alignment {aln_idx}: {}\n{}",
-                e,
-                state.get_records().iter().map(stringify_record).collect::<Vec<_>>().join("\n")
-            ))
+            .map_err(|e| {
+                anyhow!(
+                    "Error scoring fragment for alignment {aln_idx}: {}\n{}",
+                    e,
+                    state
+                        .get_records()
+                        .iter()
+                        .map(stringify_record)
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            })
     }
 
     fn emit_filtered(&mut self, mut frag: FragmentState<R>) -> Result<()> {

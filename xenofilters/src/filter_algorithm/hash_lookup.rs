@@ -19,16 +19,17 @@ pub(crate) mod stage;
 #[cfg(test)]
 pub(crate) mod tests;
 
-use crate::alignment::{Fragment, FragmentState, MdCigFlags, SimpleRec, stringify_record};
+use crate::alignment::{Fragment, MdCigFlags, SimpleRec};
 use crate::aln_stream::AlignmentStream;
 use crate::config::{Config, StripReadSuffix};
 use crate::filter_algorithm::collated::reader::canonical_name;
-use crate::filter_algorithm::line_by_line::{Scratch, READ_CT, ordering::Decision};
+use crate::filter_algorithm::line_by_line::{ordering::Decision, Scratch, READ_CT};
 use crate::penalty::Penalty;
 use crate::region::{AmbiguousRegions, DiagnosticVariants};
 use crate::variant::FragEvalVec;
 use anyhow::{anyhow, Result};
-use assemble::{NameTable, PendingFragment, ScoringRecord, StreamKind, insert};
+use assemble::{insert, NameTable, PendingFragment, ScoringRecord, StreamKind};
+use noodles::sam::alignment::record::Cigar;
 use smallvec::SmallVec;
 use stage::StagedOutput;
 
@@ -75,7 +76,11 @@ impl<R: SimpleRec> HashLookup<R> {
         bed: [Option<AmbiguousRegions>; 2],
         vcf: [Option<DiagnosticVariants>; 2],
     ) -> Result<Self> {
-        assert_eq!(aln.len(), 2, "HashLookup requires exactly 2 alignment streams");
+        assert_eq!(
+            aln.len(),
+            2,
+            "HashLookup requires exactly 2 alignment streams"
+        );
         let ambiguous_log_threshold = match config.ambiguous_threshold {
             0 => 0.0,
             t => (t as f64) * std::f64::consts::LN_10 / 10.0,
@@ -104,16 +109,22 @@ impl<R: SimpleRec> HashLookup<R> {
         loop {
             let mut progress = false;
             for nr in 0..2usize {
-                if exhausted[nr] { continue; }
+                if exhausted[nr] {
+                    continue;
+                }
                 match self.read_scoring_record(nr)? {
-                    None => { exhausted[nr] = true; }
+                    None => {
+                        exhausted[nr] = true;
+                    }
                     Some((key, rec)) => {
                         progress = true;
                         self.ingest(key, rec, nr)?;
                     }
                 }
             }
-            if !progress { break; }
+            if !progress {
+                break;
+            }
             self.staged.flush(
                 &mut self.aln,
                 &mut self.branch_counters,
@@ -143,22 +154,33 @@ impl<R: SimpleRec> HashLookup<R> {
             None => return Ok(None),
         };
 
-        let raw_name: Vec<u8> = rec.name()
-            .map(|n| { let b: &[u8] = n.as_ref(); b.to_vec() })
+        let raw_name: Vec<u8> = rec
+            .name()
+            .map(|n| {
+                let b: &[u8] = n.as_ref();
+                b.to_vec()
+            })
             .unwrap_or_default();
         let key = canonical_name(&raw_name, self.strip);
 
         let flags = rec.flags()?;
         let ref_id = rec.ref_seq_id().transpose()?.unwrap_or(usize::MAX);
-        let pos = rec.alignment_start().transpose()?.map(|p| p.get()).unwrap_or(0);
+        let pos = rec
+            .alignment_start()
+            .transpose()?
+            .map(|p| p.get())
+            .unwrap_or(0);
 
         let mut ref_len = 0usize;
         let mut cigar_bytes = Vec::new();
         for op_result in rec.cigar().as_ref().iter() {
             let op = op_result?;
             match op.kind() {
-                Kind::Match | Kind::Deletion | Kind::Skip
-                | Kind::SequenceMatch | Kind::SequenceMismatch => ref_len += op.len(),
+                Kind::Match
+                | Kind::Deletion
+                | Kind::Skip
+                | Kind::SequenceMatch
+                | Kind::SequenceMismatch => ref_len += op.len(),
                 _ => {}
             }
             let code: u32 = match op.kind() {
@@ -185,30 +207,40 @@ impl<R: SimpleRec> HashLookup<R> {
         };
 
         // Quality scores: noodles quality scores iterate as Result<u8>.
-        let qualities: Vec<u8> = rec.quality_scores().as_ref().iter()
-            .map(|q| Ok(*q))
+        let qualities: Vec<u8> = rec
+            .quality_scores()
+            .as_ref()
+            .iter()
             .collect::<Result<Vec<u8>, std::io::Error>>()?;
 
         let virtual_offset = self.seq_counter;
 
-        Ok(Some((key, ScoringRecord {
-            flags,
-            ref_id,
-            pos,
-            ref_len,
-            cigar_bytes,
-            md,
-            qualities,
-            virtual_offset,
-        })))
+        Ok(Some((
+            key,
+            ScoringRecord {
+                flags,
+                ref_id,
+                pos,
+                ref_len,
+                cigar_bytes,
+                md,
+                qualities,
+                virtual_offset,
+            },
+        )))
     }
 
     fn ingest(&mut self, key: Box<[u8]>, rec: ScoringRecord, nr: usize) -> Result<()> {
         let bed = self.bed[nr].as_ref();
         let vcf = self.vcf[nr].as_ref();
         let (key, complete) = insert(
-            &mut self.table, rec, key, nr,
-            &mut self.seq_counter, bed, vcf,
+            &mut self.table,
+            rec,
+            key,
+            nr,
+            &mut self.seq_counter,
+            bed,
+            vcf,
         );
         if complete {
             let pending = self.table.remove(&key).unwrap();
@@ -243,7 +275,9 @@ impl<R: SimpleRec> HashLookup<R> {
             (true, true) => {
                 // Both early → ambiguous without scoring.
                 let dec = self.add_decision_tag.then_some(Decision::Ambiguous);
-                let winner_offsets = driving_offsets.iter().map(|&o| (0, o))
+                let winner_offsets = driving_offsets
+                    .iter()
+                    .map(|&o| (0, o))
                     .chain(lookup_offsets.iter().map(|&o| (1, o)))
                     .collect();
                 Ok(ScoredFragment {
@@ -285,7 +319,13 @@ impl<R: SimpleRec> HashLookup<R> {
                     .ok_or_else(|| anyhow!("Missing driving records for full scoring"))?;
                 let recs_b = lookup_records
                     .ok_or_else(|| anyhow!("Missing lookup records for full scoring"))?;
-                self.score_and_build(recs_a, recs_b, driving_offsets, lookup_offsets, supp_offsets)
+                self.score_and_build(
+                    recs_a,
+                    recs_b,
+                    driving_offsets,
+                    lookup_offsets,
+                    supp_offsets,
+                )
             }
         }
     }
@@ -307,18 +347,36 @@ impl<R: SimpleRec> HashLookup<R> {
 
         if delta > self.ambiguous_log_threshold {
             let dec = self.phred_delta(delta);
-            Ok(ScoredFragment { winner_offsets: off_a, loser_offsets: off_b,
-                supp_offsets, decision: dec, winner_nr: 0, is_ambiguous: false })
+            Ok(ScoredFragment {
+                winner_offsets: off_a,
+                loser_offsets: off_b,
+                supp_offsets,
+                decision: dec,
+                winner_nr: 0,
+                is_ambiguous: false,
+            })
         } else if delta < -self.ambiguous_log_threshold {
             let dec = self.phred_delta(-delta);
-            Ok(ScoredFragment { winner_offsets: off_b, loser_offsets: off_a,
-                supp_offsets, decision: dec, winner_nr: 1, is_ambiguous: false })
+            Ok(ScoredFragment {
+                winner_offsets: off_b,
+                loser_offsets: off_a,
+                supp_offsets,
+                decision: dec,
+                winner_nr: 1,
+                is_ambiguous: false,
+            })
         } else {
             let dec = self.add_decision_tag.then_some(Decision::Ambiguous);
             let mut winner_offsets = off_a;
             winner_offsets.extend(off_b);
-            Ok(ScoredFragment { winner_offsets, loser_offsets: SmallVec::new(),
-                supp_offsets, decision: dec, winner_nr: 0, is_ambiguous: true })
+            Ok(ScoredFragment {
+                winner_offsets,
+                loser_offsets: SmallVec::new(),
+                supp_offsets,
+                decision: dec,
+                winner_nr: 0,
+                is_ambiguous: true,
+            })
         }
     }
 
@@ -338,8 +396,7 @@ impl<R: SimpleRec> HashLookup<R> {
         use noodles::sam::alignment::record::cigar::op::{Kind, Op};
         use noodles::sam::alignment::record::data::field::Tag;
         use noodles::sam::alignment::record_buf::{
-            Cigar, Data, QualityScores, RecordBuf, Sequence,
-            data::field::Value as BufValue,
+            data::field::Value as BufValue, Cigar, Data, QualityScores, RecordBuf, Sequence,
         };
 
         let primaries: SmallVec<[&ScoringRecord; 2]> =
@@ -356,8 +413,7 @@ impl<R: SimpleRec> HashLookup<R> {
             *buf.reference_sequence_id_mut() = Some(sr.ref_id);
             if sr.pos > 0 {
                 *buf.alignment_start_mut() = Some(
-                    Position::new(sr.pos)
-                        .ok_or_else(|| anyhow!("Invalid position {}", sr.pos))?,
+                    Position::new(sr.pos).ok_or_else(|| anyhow!("Invalid position {}", sr.pos))?,
                 );
             }
             let mut cigar_ops = Vec::new();
@@ -365,9 +421,15 @@ impl<R: SimpleRec> HashLookup<R> {
                 let encoded = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
                 let len = (encoded >> 4) as usize;
                 let kind = match encoded & 0xF {
-                    0 => Kind::Match, 1 => Kind::Insertion, 2 => Kind::Deletion,
-                    3 => Kind::Skip, 4 => Kind::SoftClip, 5 => Kind::HardClip,
-                    6 => Kind::Pad, 7 => Kind::SequenceMatch, 8 => Kind::SequenceMismatch,
+                    0 => Kind::Match,
+                    1 => Kind::Insertion,
+                    2 => Kind::Deletion,
+                    3 => Kind::Skip,
+                    4 => Kind::SoftClip,
+                    5 => Kind::HardClip,
+                    6 => Kind::Pad,
+                    7 => Kind::SequenceMatch,
+                    8 => Kind::SequenceMismatch,
                     k => return Err(anyhow!("Unknown CIGAR op {k}")),
                 };
                 cigar_ops.push(Op::new(kind, len));
@@ -376,8 +438,8 @@ impl<R: SimpleRec> HashLookup<R> {
             *buf.quality_scores_mut() = QualityScores::from_iter(sr.qualities.iter().cloned());
             let seq_len = sr.qualities.len();
             *buf.sequence_mut() = Sequence::from(vec![b'N'; seq_len]);
-            let md_str = String::from_utf8(sr.md.clone())
-                .map_err(|e| anyhow!("MD not UTF-8: {e}"))?;
+            let md_str =
+                String::from_utf8(sr.md.clone()).map_err(|e| anyhow!("MD not UTF-8: {e}"))?;
             let data: Data = [(Tag::MISMATCHED_POSITIONS, BufValue::from(md_str))]
                 .into_iter()
                 .collect();
@@ -398,9 +460,11 @@ impl<R: SimpleRec> HashLookup<R> {
             if buf.flags().is_unmapped() {
                 dvnt.push(SmallVec::new());
             } else {
-                let tid = buf.reference_sequence_id()
+                let tid = buf
+                    .reference_sequence_id()
                     .ok_or_else(|| anyhow!("No ref seq id"))?;
-                let start = buf.alignment_start()
+                let start = buf
+                    .alignment_start()
                     .ok_or_else(|| anyhow!("No alignment start"))?
                     .get();
                 let end = start + buf.cigar().len();
@@ -425,28 +489,34 @@ impl<R: SimpleRec> HashLookup<R> {
         let driving_offsets = pending.driving.virtual_offsets();
         let lookup_offsets = pending.lookup.virtual_offsets();
 
-        let (winner_offsets, winner_nr): (SmallVec<[(usize, u64); 2]>, usize) =
-            if !driving_empty {
-                (driving_offsets.iter().map(|&o| (0, o)).collect(), 0)
-            } else {
-                (lookup_offsets.iter().map(|&o| (1, o)).collect(), 1)
-            };
+        let (winner_offsets, winner_nr): (SmallVec<[(usize, u64); 2]>, usize) = if !driving_empty {
+            (driving_offsets.iter().map(|&o| (0, o)).collect(), 0)
+        } else {
+            (lookup_offsets.iter().map(|&o| (1, o)).collect(), 1)
+        };
 
-        self.staged.push(seq_nr, ScoredFragment {
-            winner_offsets,
-            loser_offsets: SmallVec::new(),
-            supp_offsets: supp,
-            decision: None,
-            winner_nr,
-            is_ambiguous: false,
-        });
+        self.staged.push(
+            seq_nr,
+            ScoredFragment {
+                winner_offsets,
+                loser_offsets: SmallVec::new(),
+                supp_offsets: supp,
+                decision: None,
+                winner_nr,
+                is_ambiguous: false,
+            },
+        );
         Ok(())
     }
 
     pub(crate) fn print_counters(&self) {
         for i in 0..2 {
             eprintln!("hashlookup[filter:{}]: {}", i, self.branch_counters[i << 1]);
-            eprintln!("hashlookup[out:{}]: {}", i, self.branch_counters[1 + (i << 1)]);
+            eprintln!(
+                "hashlookup[out:{}]: {}",
+                i,
+                self.branch_counters[1 + (i << 1)]
+            );
             eprintln!("hashlookup[ambig:{}]: {}", i, self.branch_counters[16 + i]);
         }
     }

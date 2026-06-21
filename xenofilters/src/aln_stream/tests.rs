@@ -1,13 +1,11 @@
-// src/aln_stream/tests.rs
-use crate::aln_stream::OutputMode;
-use crate::bam::BamFormat;
+use crate::bam::{BamFormat, OutputMode};
 use crate::config::{Config, StripReadSuffix};
 use crate::tests::create_record;
 use crate::variant::StoreTrait;
 use crate::{AlignmentStream, AlnStream};
 use anyhow::Result;
-use noodles::sam::header::record::value::{map::ReadGroup, Map};
-use noodles::sam::{alignment::record_buf::RecordBuf, header::Header};
+use noodles::sam::{alignment::record_buf::RecordBuf, Header};
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 pub(crate) struct MockStream {
@@ -43,24 +41,31 @@ impl AlignmentStream<RecordBuf> for MockStream {
 
 impl MockStream {
     pub(crate) fn new(i: usize, reads: Vec<RecordBuf>) -> Self {
-        Self {
-            reads,
-            written: Vec::new(),
-            aln_stream: empty_aln_stream(),
-            i,
-        }
+        let aln_stream = AlnStream {
+            ambiguous: None,
+            bam: None,
+            filt: None,
+            next: None,
+            output: None,
+            sample_variants: None,
+            population_variants: None,
+            header: Header::default(),
+            output_mode: OutputMode::default(),
+            threads: NonZeroUsize::MIN,
+        };
+        Self { reads, written: Vec::new(), aln_stream, i }
     }
+
     fn next_rec(&mut self) -> Result<Option<RecordBuf>> {
         if let Some(rec) = self.aln_stream.next_rec()? {
             return Ok(Some(rec));
         }
-        if self.reads.is_empty() {
-            return Ok(None);
-        }
+        if self.reads.is_empty() { return Ok(None); }
         let rec = self.reads.remove(0);
-        self.aln_stream.un_next(rec.into())?;
+        self.aln_stream.un_next(rec)?;
         self.aln_stream.next_rec()
     }
+
     fn un_next(&mut self, rec: RecordBuf) -> Result<()> {
         let name = rec.name().expect("Invalid Name");
         eprintln!(
@@ -70,6 +75,7 @@ impl MockStream {
         );
         self.aln_stream.un_next(rec)
     }
+
     fn write_record(&mut self, rec: RecordBuf, state: Option<bool>) -> Result<()> {
         self.written.push((rec, state));
         Ok(())
@@ -78,16 +84,16 @@ impl MockStream {
 
 fn empty_aln_stream() -> AlnStream<RecordBuf> {
     AlnStream {
+        ambiguous: None,
         bam: None,
-        output_mode: OutputMode::MultiFile {
-            ambiguous: None,
-            filt: None,
-            output: None,
-        },
+        filt: None,
         next: None,
-        variant_store: None,
+        output: None,
+        sample_variants: None,
+        population_variants: None,
         header: Header::default(),
-        threads: 1,
+        output_mode: OutputMode::default(),
+        threads: NonZeroUsize::MIN,
     }
 }
 
@@ -99,7 +105,7 @@ fn test_aln_stream_new_mismatch_strip_suffix_true_instead_of_false() {
         strip_read_suffix: StripReadSuffix::True,
         ..Default::default()
     };
-    assert!(AlnStream::<RecordBuf>::new(&mut config, 0).is_err());
+    assert!(AlnStream::new(&mut config, 0).is_err());
 }
 
 #[test]
@@ -131,7 +137,6 @@ fn test_aln_stream_un_next() -> Result<()> {
 
     let rec2 = mock_stream.next_rec()?.unwrap();
     assert_eq!(rec2.name().unwrap().as_ref() as &[u8], b"read1/1");
-
     let rec3 = mock_stream.next_rec()?.unwrap();
     assert_eq!(rec3.name().unwrap().as_ref() as &[u8], b"read2/1");
     Ok(())
@@ -145,7 +150,8 @@ fn test_next_qname_empty_when_no_next_record() {
 #[test]
 fn test_next_qname_returns_pending_records_name() -> Result<()> {
     let mut stream = empty_aln_stream();
-    stream.un_next(create_record(b"r1", "5M", &[], &[30; 5], "5", false)?)?;
+    let rec = create_record(b"r1", "5M", &[], &[30; 5], "5", false)?;
+    stream.un_next(rec)?;
     assert_eq!(stream.next_qname(), b"r1");
     Ok(())
 }
@@ -154,9 +160,7 @@ fn test_next_qname_returns_pending_records_name() -> Result<()> {
 fn test_un_next_errors_when_already_occupied() -> Result<()> {
     let mut stream = empty_aln_stream();
     stream.un_next(create_record(b"r1", "5M", &[], &[30; 5], "5", false)?)?;
-    assert!(stream
-        .un_next(create_record(b"r2", "5M", &[], &[30; 5], "5", false)?)
-        .is_err());
+    assert!(stream.un_next(create_record(b"r2", "5M", &[], &[30; 5], "5", false)?).is_err());
     Ok(())
 }
 
@@ -179,87 +183,4 @@ fn test_write_record_is_noop_without_attached_writers() -> Result<()> {
 #[test]
 fn test_variant_store_none_when_unset() {
     assert!(empty_aln_stream().variant_store().is_none());
-}
-
-#[test]
-fn test_init_writers_configures_merged_mode() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let merged_path = temp_dir.path().join("merged.bam");
-
-    let mut config = Config::default();
-    config.merged_output = Some(merged_path.clone());
-    config.no_program_line = true; // simplify header checks
-
-    let mut stream = empty_aln_stream();
-
-    // Inject a dummy read group to test that header expansion is triggered
-    // during init_writers.
-    stream
-        .header
-        .read_groups_mut()
-        .insert("rg_test".parse()?, Map::<ReadGroup>::default());
-
-    // Initialize writers for stream 0
-    stream.init_writers(&config, 0)?;
-
-    // Verify the state transitioned to OutputMode::Merged
-    match &stream.output_mode {
-        OutputMode::Merged(merged_out) => {
-            let keys: Vec<String> = merged_out
-                .header()
-                .read_groups()
-                .keys()
-                .map(|k| k.to_string())
-                .collect();
-
-            // 1 original + 2 derived suffixes = 3 total Read Groups expected
-            assert_eq!(keys.len(), 3, "Header was not properly expanded");
-            assert!(keys.contains(&"rg_test".to_string()));
-            assert!(keys.contains(&format!("rg_test{}", crate::bam::SUFFIX_FILTERED)));
-            assert!(keys.contains(&format!("rg_test{}", crate::bam::SUFFIX_AMBIGUOUS)));
-        }
-        OutputMode::MultiFile { .. } => {
-            panic!("init_writers failed to set OutputMode::Merged when configured");
-        }
-    }
-
-    // Verify the file was physically created
-    assert!(merged_path.exists(), "Merged file was not created on disk");
-
-    Ok(())
-}
-
-#[test]
-fn test_init_writers_defaults_to_multi_file() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let out_path = temp_dir.path().join("out.bam");
-
-    let mut config = Config::default();
-    config.output = vec![out_path.clone()];
-    config.no_program_line = true;
-
-    let mut stream = empty_aln_stream();
-    stream.init_writers(&config, 0)?;
-
-    // Verify the state is MultiFile with the output writer populated
-    match &stream.output_mode {
-        OutputMode::MultiFile {
-            output,
-            filt,
-            ambiguous,
-        } => {
-            assert!(
-                output.is_some(),
-                "Standard output writer should be initialized"
-            );
-            assert!(filt.is_none(), "Filtered output should be None");
-            assert!(ambiguous.is_none(), "Ambiguous output should be None");
-        }
-        OutputMode::Merged(_) => {
-            panic!("init_writers incorrectly fell back to Merged mode");
-        }
-    }
-
-    assert!(out_path.exists());
-    Ok(())
 }

@@ -5,20 +5,17 @@
 
 use anyhow::{anyhow, Result};
 use noodles::bam::io::Writer as BamWriter;
-use noodles::bgzf::{
-    self,
-    io::{
-        multithreaded_writer::Builder as MultiBuilder,
-        writer::{Builder, CompressionLevel},
-        MultithreadedWriter, Writer as BgzfSyncWriter,
-    },
+use noodles::bgzf::io::{
+    multithreaded_writer::Builder as MultiBuilder,
+    writer::{Builder, CompressionLevel},
+    MultithreadedWriter, Writer as BgzfSyncWriter,
 };
 use noodles::sam::{
     alignment::{io::Write as AlignmentWrite, record_buf::RecordBuf},
     header::record::value::{map::program::tag, Map},
     Header,
 };
-use std::{fs::File, num::NonZeroUsize, path::Path, sync::Arc};
+use std::{fs::File, num::NonZeroUsize, path::Path};
 
 // -- @PG helper ----------------------------------------------------------------
 
@@ -58,6 +55,14 @@ impl BamOutput {
             Self::Single(w) => w.write_alignment_record(header, rec),
             Self::Multi(w) => w.write_alignment_record(header, rec),
         }
+    }
+}
+
+impl Default for BamOutput {
+    fn default() -> Self {
+        BamOutput::Single(BamWriter::<BgzfSyncWriter<File>>::new(BgzfSyncWriter::new(
+            std::io::sink(),
+        )))
     }
 }
 

@@ -14,7 +14,7 @@
 //! always stored separately for pass-2 retrieval.
 
 use crate::region::{AmbiguousRegions, DiagnosticVariants};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use noodles::sam::alignment::record::Flags;
 use smallvec::SmallVec;
 
@@ -86,7 +86,7 @@ impl StreamBuf {
     /// Returns `StreamKind::Early` only if every primary is perfect and
     /// none overlaps an ambiguous BED or diagnostic VCF region.
     fn classify(
-        mut self,
+        self,
         bed: Option<&AmbiguousRegions>,
         vcf: Option<&DiagnosticVariants>,
     ) -> StreamKind {
@@ -160,6 +160,14 @@ impl StreamKind {
     }
     pub(crate) fn is_empty(&self) -> bool {
         matches!(self, StreamKind::Empty)
+    }
+    pub(crate) fn virtual_offsets(&self) -> Result<&[u64]> {
+        match self {
+            StreamKind::Early {
+                virtual_offsets, ..
+            } => Ok(virtual_offsets),
+            _ => Err(anyhow!("StreamKind does not have virtual offsets")),
+        }
     }
 }
 

@@ -1,18 +1,24 @@
-use crate::bam::{out_from_file, path_unicode_ok};
-use crate::variant::{
-    Store, StoreTrait, Population, Sample, parse_population_record, parse_sample_record,
-};
-use crate::config::{Config, StripReadSuffix};
-use anyhow::{Result, anyhow, ensure};
-use noodles::bam::{io::{Reader as BamReader, Writer as BamWriter}, record::Record};
-use std::io::Read as ioRead;
-use noodles::bgzf::io::{Reader as BgzfReader, Writer as BgzfWriter};
-use std::fs::File;
-use noodles::sam::header::Header;
-use noodles::sam::alignment::io::Write;
 use crate::alignment::SimpleRec;
+use crate::bam::{out_from_file, path_unicode_ok, OutputMode};
+use crate::config::{Config, StripReadSuffix};
+use crate::variant::{
+    parse_population_record, parse_sample_record, Population, Sample, Store, StoreTrait,
+};
+use anyhow::{anyhow, ensure, Result};
+use noodles::bam::{
+    io::{Reader as BamReader, Writer as BamWriter},
+    record::Record,
+};
+use noodles::bgzf::io::{Reader as BgzfReader, Writer as BgzfWriter};
+use noodles::bgzf::VirtualPosition;
+use noodles::sam::alignment::io::Write;
 use noodles::sam::alignment::record_buf::RecordBuf;
+use noodles::sam::Header;
+use std::fs::File;
+use std::io::Read as ioRead;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 pub(crate) trait AlignmentStream<R: SimpleRec> {
     fn next_qname(&self) -> &[u8];
@@ -20,12 +26,14 @@ pub(crate) trait AlignmentStream<R: SimpleRec> {
     fn next_rec(&mut self) -> Result<Option<R>>;
     fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<()>;
     fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<()>;
-    fn variant_store(&self) -> Option<&dyn StoreTrait>;
+    fn variant_store(&self) -> Option<Arc<dyn StoreTrait>>;
     fn header(&self) -> &Header;
-    /// Seek to a BGZF virtual offset and read one full record.
-    /// Returns `Err` for streams that do not support seeking (e.g. mock streams).
+    /// Seek to a BGZF virtual offset and read one full record for pass-2 output.
+    /// Returns `Err` for stream types that do not support seeking (e.g. mock streams).
     fn fetch_by_virtual_offset(&mut self, _virtual_offset: u64) -> Result<RecordBuf> {
-        Err(anyhow!("fetch_by_virtual_offset not supported for this stream type"))
+        Err(anyhow!(
+            "fetch_by_virtual_offset not supported for this stream type"
+        ))
     }
 }
 
@@ -35,9 +43,11 @@ pub(crate) struct AlnStream<R> {
     filt: Option<BamWriter<BgzfWriter<File>>>,
     next: Option<R>,
     output: Option<BamWriter<BgzfWriter<File>>>,
-    sample_variants: Option<Store<Sample>>,
-    population_variants: Option<Store<Population>>,
+    sample_variants: Option<Arc<Store<Sample>>>,
+    population_variants: Option<Arc<Store<Population>>>,
     pub(crate) header: Header,
+    output_mode: OutputMode,
+    threads: NonZeroUsize,
 }
 
 impl AlnStream<Record> {
@@ -72,7 +82,9 @@ impl AlnStream<Record> {
             None => return Err(anyhow!("{bam_str} has no records")),
         };
 
-        let name = test_record.name().ok_or_else(|| anyhow!("Record has no name"))?;
+        let name = test_record
+            .name()
+            .ok_or_else(|| anyhow!("Record has no name"))?;
         opt.strip_read_suffix = match opt.strip_read_suffix {
             StripReadSuffix::True => {
                 ensure!(
@@ -111,18 +123,26 @@ impl AlnStream<Record> {
             .sample_variants
             .get(i)
             .filter(|s| !s.is_empty())
-            .map(|s| Store::new(&PathBuf::try_from(s)?, parse_sample_record))
+            .map(|s| Store::new(&PathBuf::try_from(s)?, parse_sample_record).map(Arc::new))
             .transpose()?;
         let population_variants = opt
             .population_variants
             .get(i)
             .filter(|s| !s.is_empty())
-            .map(|s| Store::new(&PathBuf::try_from(s)?, parse_population_record))
+            .map(|s| Store::new(&PathBuf::try_from(s)?, parse_population_record).map(Arc::new))
             .transpose()?;
 
         opt.output.get(i).map(path_unicode_ok).transpose()?;
-        opt.filtered_output.get(i).map(path_unicode_ok).transpose()?;
-        opt.ambiguous_output.get(i).map(path_unicode_ok).transpose()?;
+        opt.filtered_output
+            .get(i)
+            .map(path_unicode_ok)
+            .transpose()?;
+        opt.ambiguous_output
+            .get(i)
+            .map(path_unicode_ok)
+            .transpose()?;
+
+        let threads = NonZeroUsize::new(opt.threads).unwrap_or(NonZeroUsize::MIN);
 
         Ok(AlnStream {
             ambiguous: None,
@@ -133,6 +153,8 @@ impl AlnStream<Record> {
             sample_variants,
             population_variants,
             header,
+            output_mode: OutputMode::default(),
+            threads,
         })
     }
 }
@@ -158,7 +180,10 @@ where
     R: SimpleRec + FromBamRecord,
 {
     fn next_qname(&self) -> &[u8] {
-        self.next.as_ref().and_then(|r| r.name()).map_or(b"", |n| n.as_ref())
+        self.next
+            .as_ref()
+            .and_then(|r| r.name())
+            .map_or(b"", |n| n.as_ref())
     }
 
     fn un_next(&mut self, rec: R) -> Result<()> {
@@ -171,14 +196,15 @@ where
 
     fn next_rec(&mut self) -> Result<Option<R>> {
         let header = &self.header;
-        Ok(self.next
+        Ok(self
+            .next
             .take()
             .map(Ok)
             .or_else(|| {
                 self.bam.as_mut().and_then(|b| {
-                    b.records().next().map(|r| {
-                        r.and_then(|r| R::from_bam_record(header, r))
-                    })
+                    b.records()
+                        .next()
+                        .map(|r| r.and_then(|r| R::from_bam_record(header, r)))
                 })
             })
             .transpose()?)
@@ -197,22 +223,45 @@ where
     }
 
     fn init_writers(&mut self, opt: &Config, i: usize) -> Result<()> {
-        let add_pg_line = !opt.no_program_line;
-        self.output = opt.output.get(i)
-            .map(|f| out_from_file(f, &self.header, add_pg_line))
-            .transpose()?;
-        self.filt = opt.filtered_output.get(i)
-            .map(|f| out_from_file(f, &self.header, add_pg_line))
-            .transpose()?;
-        self.ambiguous = opt.ambiguous_output.get(i)
-            .map(|f| out_from_file(f, &self.header, add_pg_line))
-            .transpose()?;
+        let add_pg = !opt.no_program_line;
+        let threads = self.threads;
+        self.output = opt
+            .output
+            .get(i)
+            .map(|f| out_from_file(f, &self.header, add_pg, threads.into()))
+            .ok_or_else(|| anyhow!("Output file must be specified for alignment {}", i + 1))?;
+        self.filt = opt
+            .filtered_output
+            .get(i)
+            .map(|f| out_from_file(f, &self.header, add_pg, threads.into()))
+            .ok_or_else(|| {
+                anyhow!(
+                    "Filtered output file must be specified for alignment {}",
+                    i + 1
+                )
+            })?;
+        self.ambiguous = opt
+            .ambiguous_output
+            .get(i)
+            .map(|f| out_from_file(f, &self.header, add_pg, threads.into()))
+            .ok_or_else(|| {
+                anyhow!(
+                    "Ambiguous output file must be specified for alignment {}",
+                    i + 1
+                )
+            })?;
         Ok(())
     }
 
-    fn variant_store(&self) -> Option<&dyn StoreTrait> {
-        self.sample_variants.as_ref().map(|s| s as &dyn StoreTrait)
-            .or_else(|| self.population_variants.as_ref().map(|p| p as &dyn StoreTrait))
+    fn variant_store(&self) -> Option<Arc<dyn StoreTrait>> {
+        self.sample_variants
+            .as_ref()
+            .map(|s| Arc::clone(s) as Arc<dyn StoreTrait>)
+            .or_else(|| {
+                self.population_variants
+                    .as_ref()
+                    .map(|p| Arc::clone(p) as Arc<dyn StoreTrait>)
+            })
     }
 
     fn header(&self) -> &Header {
@@ -220,13 +269,16 @@ where
     }
 
     fn fetch_by_virtual_offset(&mut self, virtual_offset: u64) -> Result<RecordBuf> {
-        use noodles::bgzf::VirtualPosition;
         let vpos = VirtualPosition::try_from(virtual_offset)
             .map_err(|_| anyhow!("Invalid virtual position {virtual_offset}"))?;
-        let bam = self.bam.as_mut()
+        let bam = self
+            .bam
+            .as_mut()
             .ok_or_else(|| anyhow!("No BAM reader available for seek"))?;
         bam.seek(vpos)?;
-        let rec = bam.records().next()
+        let rec = bam
+            .records()
+            .next()
             .ok_or_else(|| anyhow!("No record at virtual offset {virtual_offset}"))?
             .map_err(|e| anyhow!("BAM read error: {e}"))?;
         RecordBuf::try_from_alignment_record(&self.header, &rec)
