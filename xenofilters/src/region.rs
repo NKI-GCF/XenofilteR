@@ -12,4 +12,4 @@ pub(crate) mod tabix_query;
 
 pub(crate) use ambiguous::AmbiguousRegions;
 pub(crate) use diagnostic::DiagnosticVariants;
-pub(crate) use early_assign::{check_early, EarlyCheck};
+pub(crate) use early_assign::{EarlyCheck, check_early};
