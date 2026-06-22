@@ -3,7 +3,7 @@ use crate::config::{Config, StripReadSuffix};
 use crate::tests::create_record;
 use crate::variant::StoreTrait;
 use crate::{AlignmentStream, AlnStream};
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use noodles::sam::{alignment::record_buf::RecordBuf, Header};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -44,18 +44,25 @@ impl MockStream {
     pub(crate) fn new(i: usize, reads: Vec<RecordBuf>) -> Self {
         let original_reads = reads.clone();
         let aln_stream = AlnStream {
-            ambiguous: None,
             bam: None,
-            filt: None,
             next: None,
-            output: None,
             sample_variants: None,
             population_variants: None,
             header: Header::default(),
-            output_mode: OutputMode::default(),
+            output_mode: OutputMode::MultiFile {
+                output: None,
+                filt: None,
+                ambiguous: None,
+            },
             threads: NonZeroUsize::MIN,
         };
-        Self { reads, original_reads, written: Vec::new(), aln_stream, i }
+        Self {
+            reads,
+            original_reads,
+            written: Vec::new(),
+            aln_stream,
+            i,
+        }
     }
 
     fn next_rec(&mut self) -> Result<Option<RecordBuf>> {
@@ -97,15 +104,16 @@ impl MockStream {
 
 fn empty_aln_stream() -> AlnStream<RecordBuf> {
     AlnStream {
-        ambiguous: None,
         bam: None,
-        filt: None,
         next: None,
-        output: None,
         sample_variants: None,
         population_variants: None,
         header: Header::default(),
-        output_mode: OutputMode::default(),
+        output_mode: OutputMode::MultiFile {
+            output: None,
+            filt: None,
+            ambiguous: None,
+        },
         threads: NonZeroUsize::MIN,
     }
 }

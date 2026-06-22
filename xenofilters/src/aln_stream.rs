@@ -1,15 +1,13 @@
 use crate::alignment::SimpleRec;
 use crate::bam::{out_from_file, path_unicode_ok, BamOutput, OutputMode};
+use crate::config::MatchingAlgorithm;
 use crate::config::{Config, StripReadSuffix};
 use crate::variant::{
     parse_population_record, parse_sample_record, Population, Sample, Store, StoreTrait,
 };
 use anyhow::{anyhow, ensure, Result};
-use noodles::bam::{
-    io::{Reader as BamReader},
-    record::Record,
-};
-use noodles::bgzf::io::{Reader as BgzfReader};
+use noodles::bam::{io::Reader as BamReader, record::Record};
+use noodles::bgzf::io::Reader as BgzfReader;
 use noodles::bgzf::VirtualPosition;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::Header;
@@ -61,11 +59,8 @@ impl<T: ioRead + ioSeek> BamStreamReader for BamReader<BgzfReader<T>> {
 }
 
 pub(crate) struct AlnStream<R, B = BamReader<BgzfReader<File>>> {
-    ambiguous: Option<BamOutput>,
     pub(crate) bam: Option<B>,
-    filt: Option<BamOutput>,
     next: Option<R>,
-    output: Option<BamOutput>,
     sample_variants: Option<Arc<Store<Sample>>>,
     population_variants: Option<Arc<Store<Population>>>,
     pub(crate) header: Header,
@@ -90,16 +85,20 @@ where
         let mut buf = Vec::new();
         raw_sam_header_reader.read_to_end(&mut buf)?;
 
-        for parts in buf
-            .split(|&b| b == b'\n')
-            .map(|s| s.split(|&b| b == b'\t').collect::<Vec<_>>())
-        {
-            ensure!(
-                parts.len() < 3
-                    || parts[0] != b"@HD"
-                    || (parts[2] != b"SO:coordinate" && parts[2] != b"GO:reference"),
-                "Coordinate sorted input, would require hashmap lookup."
-            );
+        // Only name-sorted mode requires name-ordered input.
+        if opt.matching_algorithm == MatchingAlgorithm::Namesorted {
+            for parts in buf
+                .split(|&b| b == b'\n')
+                .map(|s| s.split(|&b| b == b'\t').collect::<Vec<_>>())
+            {
+                ensure!(
+                    parts.len() < 3
+                        || parts[0] != b"@HD"
+                        || (parts[2] != b"SO:coordinate" && parts[2] != b"GO:reference"),
+                    "Coordinate-sorted input detected; \
+                     use --matching-algorithm hashlookup or collated."
+                );
+            }
         }
 
         let test_record = match bam.records().next() {
@@ -172,15 +171,16 @@ where
         let next_rec = R::from_bam_record(&header, test_record)?;
 
         Ok(AlnStream {
-            ambiguous: None,
             bam: Some(bam),
-            filt: None,
             next: Some(next_rec),
-            output: None,
             sample_variants,
             population_variants,
             header,
-            output_mode: OutputMode::default(),
+            output_mode: OutputMode::MultiFile {
+                output: None,
+                filt: None,
+                ambiguous: None,
+            },
             threads,
         })
     }
@@ -236,37 +236,34 @@ where
             })
             .transpose()?)
     }
-
     fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<()> {
-        let output = match is_best {
-            Some(true) => self.output.as_mut(),
-            Some(false) => self.filt.as_mut(),
-            None => self.ambiguous.as_mut(),
-        };
-        if let Some(o) = output {
-            o.write_alignment_record(&self.header, &rec)?;
-        }
-        Ok(())
+        self.output_mode.write(rec, is_best, &self.header)
     }
 
     fn init_writers(&mut self, opt: &Config, i: usize) -> Result<()> {
         let add_pg = !opt.no_program_line;
         let threads = self.threads.into();
-        self.output = opt
-            .output
-            .get(i)
-            .map(|f| out_from_file(f, &self.header, add_pg, threads))
-            .transpose()?;
-        self.filt = opt
-            .filtered_output
-            .get(i)
-            .map(|f| out_from_file(f, &self.header, add_pg, threads))
-            .transpose()?;
-        self.ambiguous = opt
-            .ambiguous_output
-            .get(i)
-            .map(|f| out_from_file(f, &self.header, add_pg, threads))
-            .transpose()?;
+        // Merged output requires a shared writer held above the per-stream level
+        // (LineByLine or equivalent). Per-stream routing into a single BAM is not
+        // yet wired; --merged-output silently disables per-stream writes.
+        // TODO: lift MergedOutput into LineByLine and route from there.
+        self.output_mode = OutputMode::MultiFile {
+            output: opt
+                .output
+                .get(i)
+                .map(|f| out_from_file(f, &self.header, add_pg, threads))
+                .transpose()?,
+            filt: opt
+                .filtered_output
+                .get(i)
+                .map(|f| out_from_file(f, &self.header, add_pg, threads))
+                .transpose()?,
+            ambiguous: opt
+                .ambiguous_output
+                .get(i)
+                .map(|f| out_from_file(f, &self.header, add_pg, threads))
+                .transpose()?,
+        };
         Ok(())
     }
 

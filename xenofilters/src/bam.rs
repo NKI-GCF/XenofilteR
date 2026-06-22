@@ -27,7 +27,12 @@ impl Default for OutputMode {
 }
 
 impl OutputMode {
-    fn write(&mut self, mut rec: RecordBuf, is_best: Option<bool>, header: &Header) -> Result<()> {
+    pub(crate) fn write(
+        &mut self,
+        mut rec: RecordBuf,
+        is_best: Option<bool>,
+        header: &Header,
+    ) -> Result<()> {
         match self {
             OutputMode::MultiFile {
                 output,

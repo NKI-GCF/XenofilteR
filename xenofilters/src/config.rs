@@ -168,6 +168,19 @@ pub(crate) struct Config {
     /// memory usage; single-threaded only; preserves driving-stream (stream 0) output order.
     #[arg(long, default_value = "namesorted")]
     pub(crate) matching_algorithm: MatchingAlgorithm,
+
+    /// BED file of ambiguous genomic regions per stream (positional: stream 0, then 1).
+    /// Reads overlapping these regions are forced through full log-likelihood scoring.
+    /// Collated: must be bgzf-compressed and tabix-indexed (.bed.gz + .tbi).
+    /// HashLookup: loaded fully into memory.
+    #[arg(long, num_args = 0..=2)]
+    pub(crate) ambiguous_regions: Vec<String>,
+
+    /// VCF/BCF of species-diagnostic positions per stream (positional: stream 0, then 1).
+    /// Reads overlapping these positions are forced through full scoring.
+    /// Same indexing and compression rules as --ambiguous-regions.
+    #[arg(long, num_args = 0..=2)]
+    pub(crate) diagnostic_variants: Vec<String>,
 }
 
 impl Config {
@@ -209,6 +222,22 @@ impl Config {
             ensure!(
                 self.output.is_empty() && self.filtered_output.is_empty() && self.ambiguous_output.is_empty(),
                 "Cannot use --merged-output in combination with --output, --filtered-output, or --ambiguous-output."
+            );
+        }
+        ensure!(
+            self.ambiguous_regions.len() <= 2,
+            "--ambiguous-regions: at most 2 files (one per stream)"
+        );
+        ensure!(
+            self.diagnostic_variants.len() <= 2,
+            "--diagnostic-variants: at most 2 files (one per stream)"
+        );
+        if self.matching_algorithm == MatchingAlgorithm::Namesorted
+            && (!self.ambiguous_regions.is_empty() || !self.diagnostic_variants.is_empty())
+        {
+            tracing::warn!(
+                "--ambiguous-regions / --diagnostic-variants have no effect \
+                 with --matching-algorithm namesorted"
             );
         }
         // Determine effective dimensions (logical comparisons)
