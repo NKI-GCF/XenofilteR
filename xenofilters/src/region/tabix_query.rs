@@ -111,6 +111,6 @@ impl TabixVcf {
             .reader
             .query(&self.header, &region)
             .map_err(|e| anyhow!("Tabix VCF query failed: {e}"))?;
-        Ok(!query.records().next().is_some())
+        Ok(query.records().next().is_none())
     }
 }

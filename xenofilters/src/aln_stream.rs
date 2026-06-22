@@ -149,13 +149,13 @@ where
             .sample_variants
             .get(i)
             .filter(|s| !s.is_empty())
-            .map(|s| Store::new(&PathBuf::try_from(s)?, parse_sample_record).map(Arc::new))
+            .map(|s| Store::new(&PathBuf::from(s), parse_sample_record).map(Arc::new))
             .transpose()?;
         let population_variants = opt
             .population_variants
             .get(i)
             .filter(|s| !s.is_empty())
-            .map(|s| Store::new(&PathBuf::try_from(s)?, parse_population_record).map(Arc::new))
+            .map(|s| Store::new(&PathBuf::from(s), parse_population_record).map(Arc::new))
             .transpose()?;
 
         opt.output.get(i).map(path_unicode_ok).transpose()?;
@@ -186,7 +186,7 @@ where
     }
 }
 
-trait FromBamRecord: Sized {
+pub(crate) trait FromBamRecord: Sized {
     fn from_bam_record(header: &Header, rec: Record) -> std::io::Result<Self>;
 }
 
@@ -286,8 +286,7 @@ where
     }
 
     fn fetch_by_virtual_offset(&mut self, virtual_offset: u64) -> Result<RecordBuf> {
-        let vpos = VirtualPosition::try_from(virtual_offset)
-            .map_err(|_| anyhow!("Invalid virtual position {virtual_offset}"))?;
+        let vpos = VirtualPosition::from(virtual_offset);
         let bam = self
             .bam
             .as_mut()

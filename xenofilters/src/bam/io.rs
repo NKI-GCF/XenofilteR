@@ -77,6 +77,7 @@ impl Default for BamOutput {
 ///
 /// The `Arc` wrapper lets `LineByLine` hold one `MergedOutput` and hand
 /// references to the IO helpers that need to call `write_alignment_record`.
+#[derive(Default)]
 pub(crate) struct MergedOutput {
     writer: BamOutput,
     /// The expanded header (with `_xenofilt` / `_xenoambig` RG groups).
@@ -110,14 +111,6 @@ impl MergedOutput {
     }
 }
 
-impl Default for MergedOutput {
-    fn default() -> Self {
-        Self {
-            writer: BamOutput::default(),
-            header: Header::default(),
-        }
-    }
-}
 
 // -- Public constructors -------------------------------------------------------
 

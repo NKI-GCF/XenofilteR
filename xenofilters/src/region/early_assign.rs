@@ -27,16 +27,14 @@ pub(crate) fn check_early(
         if !is_perfect {
             return EarlyCheck::NeedsScoring;
         }
-        if let Some(b) = bed {
-            if b.overlaps(ref_id, start, end) {
+        if let Some(b) = bed
+            && b.overlaps(ref_id, start, end) {
                 return EarlyCheck::NeedsScoring;
             }
-        }
-        if let Some(v) = vcf {
-            if v.overlaps(ref_id, start, end) {
+        if let Some(v) = vcf
+            && v.overlaps(ref_id, start, end) {
                 return EarlyCheck::NeedsScoring;
             }
-        }
     }
     EarlyCheck::Assignable
 }

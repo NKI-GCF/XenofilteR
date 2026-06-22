@@ -108,13 +108,13 @@ impl<R: SimpleRec> HashLookup<R> {
         let mut exhausted = [false; 2];
         loop {
             let mut progress = false;
-            for nr in 0..2usize {
-                if exhausted[nr] {
+            for (nr, ex) in exhausted.iter_mut().enumerate() {
+                if *ex {
                     continue;
                 }
                 match self.read_scoring_record(nr)? {
                     None => {
-                        exhausted[nr] = true;
+                        *ex = true;
                     }
                     Some((key, rec)) => {
                         progress = true;

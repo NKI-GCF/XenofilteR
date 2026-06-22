@@ -93,16 +93,14 @@ impl StreamBuf {
             if !r.is_perfect() {
                 return false;
             }
-            if let Some(b) = bed {
-                if b.overlaps(r.ref_id, r.pos, r.pos + r.ref_len) {
+            if let Some(b) = bed
+                && b.overlaps(r.ref_id, r.pos, r.pos + r.ref_len) {
                     return false;
                 }
-            }
-            if let Some(v) = vcf {
-                if v.overlaps(r.ref_id, r.pos, r.pos + r.ref_len) {
+            if let Some(v) = vcf
+                && v.overlaps(r.ref_id, r.pos, r.pos + r.ref_len) {
                     return false;
                 }
-            }
             true
         });
 
@@ -125,6 +123,7 @@ impl StreamBuf {
 // StreamKind — post-classification state
 // ---------------------------------------------------------------------------
 
+#[derive(Default)]
 pub(crate) enum StreamKind {
     /// All primaries perfect, no region overlap.
     Early {
@@ -137,14 +136,10 @@ pub(crate) enum StreamKind {
         primary_count: usize,
     },
     /// No records received yet.
+    #[default]
     Empty,
 }
 
-impl Default for StreamKind {
-    fn default() -> Self {
-        StreamKind::Empty
-    }
-}
 
 impl StreamKind {
     pub(crate) fn primary_count(&self) -> usize {

@@ -143,17 +143,17 @@ impl<R: SimpleRec> CollatedMatcher<R> {
 
         // Nest cmp_perfect so mcfs are dropped before a/b are consumed below.
         enum Res { Ordered(std::cmp::Ordering), Scored(f64) }
-        let res = if ord.is_none() {
+        let res = if let Some(o) = ord {
+            Res::Ordered(o)
+        } else {
             let (mcfs1, mcfs2) = a.cmp_perfect(&b, &mut ord)?;
-            if ord.is_none() {
+            if let Some(o) = ord {
+                Res::Ordered(o)
+            } else {
                 let s1 = self.score_one(&a, mcfs1, 0)?;
                 let s2 = self.score_one(&b, mcfs2, 1)?;
                 Res::Scored(s1 - s2)
-            } else {
-                Res::Ordered(ord.unwrap())
             }
-        } else {
-            Res::Ordered(ord.unwrap())
         };
 
         use std::cmp::Ordering::*;
