@@ -67,9 +67,14 @@ impl TabixBed {
         let region: Region = region_str
             .parse()
             .map_err(|e| anyhow!("Invalid region {region_str}: {e}"))?;
+        let header = self.index.header().expect("missing tabix header");
+        let reference_sequence_id = header
+            .reference_sequence_names()
+            .get_index_of(region.name())
+            .expect("invalid reference sequence name");
         let chunks = self
             .index
-            .query(region.name(), region.interval())
+            .query(reference_sequence_id, region.interval())
             .map_err(|e| anyhow!("Tabix BED query failed: {e}"))?;
         Ok(!chunks.is_empty())
     }
@@ -88,10 +93,8 @@ pub(crate) struct TabixVcf {
 impl TabixVcf {
     pub(crate) fn open(path: &Path) -> Result<Self> {
         let index = read_tabix_index(path)?;
-        let bgzf_reader = bgzf::io::Reader::new(
-            File::open(path).map_err(|e| anyhow!("Cannot open VCF {}: {e}", path.display()))?,
-        );
-        let mut reader = vcf::io::IndexedReader::new(bgzf_reader, index);
+        let file = File::open(path).map_err(|e| anyhow!("Cannot open VCF {}: {e}", path.display()))?;
+        let mut reader = vcf::io::IndexedReader::new(file, index);
         let header = reader
             .read_header()
             .map_err(|e| anyhow!("VCF header read error: {e}"))?;
@@ -104,10 +107,10 @@ impl TabixVcf {
         let region: Region = region_str
             .parse()
             .map_err(|e| anyhow!("Invalid region {region_str}: {e}"))?;
-        let mut query = self
+        let query = self
             .reader
             .query(&self.header, &region)
             .map_err(|e| anyhow!("Tabix VCF query failed: {e}"))?;
-        Ok(query.next().is_some())
+        Ok(!query.records().next().is_some())
     }
 }
