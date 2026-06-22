@@ -209,7 +209,6 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         let mut seg_mcfs: SmallVec<[MdCigFlags; READ_CT]> = SmallVec::new();
         let mut mcfs_opt: SmallVec<[Option<MdCigFlags>; READ_CT]> =
             mcfs.into_iter().map(Some).collect();
-        let mut dvnt: FragEvalVec<'_> = SmallVec::new();
 
         // Get the variant store Arc before the loop to avoid repeated borrow.
         let store = if aln_idx == 0 {
@@ -217,6 +216,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         } else {
             self.b.variant_store()
         };
+        let mut dvnt: FragEvalVec<'_> = SmallVec::new();
 
         for idx in state.order_mates() {
             let rec = &state.get_records()[idx];

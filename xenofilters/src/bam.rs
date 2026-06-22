@@ -22,10 +22,7 @@ pub(crate) enum OutputMode {
 
 impl Default for OutputMode {
     fn default() -> Self {
-        OutputMode::Merged(MergedOutput {
-            writer: BamOutput::default(),
-            header: Header::default(),
-        })
+        OutputMode::Merged(MergedOutput::default())
     }
 }
 

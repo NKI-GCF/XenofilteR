@@ -110,6 +110,15 @@ impl MergedOutput {
     }
 }
 
+impl Default for MergedOutput {
+    fn default() -> Self {
+        Self {
+            writer: BamOutput::default(),
+            header: Header::default(),
+        }
+    }
+}
+
 // -- Public constructors -------------------------------------------------------
 
 pub(crate) fn path_unicode_ok<'a, P: 'a + AsRef<Path>>(path: P) -> Result<()> {

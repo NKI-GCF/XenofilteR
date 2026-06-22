@@ -14,7 +14,7 @@ use noodles::bgzf::VirtualPosition;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::Header;
 use std::fs::File;
-use std::io::Read as ioRead;
+use std::io::{Read as ioRead, Seek as ioSeek};
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -36,9 +36,33 @@ pub(crate) trait AlignmentStream<R: SimpleRec> {
     }
 }
 
-pub(crate) struct AlnStream<R> {
+pub(crate) trait BamStreamReader {
+    fn next_record(&mut self) -> Option<std::io::Result<Record>>;
+    fn seek_vpos(&mut self, pos: VirtualPosition) -> std::io::Result<VirtualPosition>;
+}
+
+impl<T: ioRead + ioSeek> BamStreamReader for BamReader<BgzfReader<T>> {
+    fn next_record(&mut self) -> Option<std::io::Result<Record>> {
+        self.records().next()
+    }
+
+    fn seek_vpos(&mut self, pos: VirtualPosition) -> std::io::Result<VirtualPosition> {
+        // Bypass the BAM wrapper and seek directly on the underlying BGZF reader
+        self.get_mut().seek(pos)
+        /* Depending on the exact micro-version/patch-level resolution of your noodles crates,
+         * BgzfReader might expect standard std::io::SeekFrom positioning where the packed u64
+         * is treated as the virtual position. If the block above throws a type mismatch error,
+         * use this variant instead:
+        self.get_mut()
+            .seek(std::io::SeekFrom::Start(u64::from(pos)))
+            .map(VirtualPosition::from)
+        */
+    }
+}
+
+pub(crate) struct AlnStream<R, B = BamReader<BgzfReader<File>>> {
     ambiguous: Option<BamOutput>,
-    pub(crate) bam: Option<BamReader<BgzfReader<File>>>,
+    pub(crate) bam: Option<B>,
     filt: Option<BamOutput>,
     next: Option<R>,
     output: Option<BamOutput>,
@@ -268,7 +292,7 @@ where
             .bam
             .as_mut()
             .ok_or_else(|| anyhow!("No BAM reader available for seek"))?;
-        bam.seek(vpos)?;
+        bam.seek_vpos(vpos)?;
         let rec = bam
             .records()
             .next()

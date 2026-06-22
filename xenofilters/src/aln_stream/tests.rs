@@ -107,7 +107,7 @@ fn test_aln_stream_new_mismatch_strip_suffix_true_instead_of_false() {
         strip_read_suffix: StripReadSuffix::True,
         ..Default::default()
     };
-    assert!(AlnStream::new(&mut config, 0).is_err());
+    assert!(AlnStream::<RecordBuf>::new(&mut config, 0).is_err());
 }
 
 #[test]

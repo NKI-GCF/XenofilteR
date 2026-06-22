@@ -445,14 +445,17 @@ impl<R: SimpleRec> HashLookup<R> {
             *buf.data_mut() = data;
             bufs.push(buf);
         }
-
+        let flags_vec: SmallVec<[_; 2]> = bufs.iter().map(|b| b.flags()).collect();
         let mut mcfs: SmallVec<[MdCigFlags; READ_CT]> = SmallVec::new();
-        for buf in bufs.iter() {
-            let flags = buf.flags();
-            mcfs.push(MdCigFlags::try_from_record(buf, &flags)?);
+
+        for (buf, flags) in bufs.iter().zip(flags_vec.iter()) {
+            mcfs.push(MdCigFlags::try_from_record(buf, flags)?);
         }
 
         let seg: SmallVec<[&RecordBuf; READ_CT]> = bufs.iter().collect();
+
+        let store = self.aln[aln_idx].variant_store();
+
         let mut dvnt: FragEvalVec<'_> = SmallVec::new();
 
         for buf in bufs.iter() {
@@ -467,8 +470,10 @@ impl<R: SimpleRec> HashLookup<R> {
                     .ok_or_else(|| anyhow!("No alignment start"))?
                     .get();
                 let end = start + buf.cigar().len();
-                let vars = if let Some(store) = self.aln[aln_idx].variant_store() {
-                    store.overlapping_multi(tid, start, end)
+
+                // Borrow from the `store` we fetched outside the loop
+                let vars = if let Some(ref s) = store {
+                    s.overlapping_multi(tid, start, end)
                 } else {
                     SmallVec::new()
                 };
@@ -484,7 +489,7 @@ impl<R: SimpleRec> HashLookup<R> {
     fn handle_unmatched(&mut self, pending: PendingFragment) -> Result<()> {
         let seq_nr = pending.seq_nr;
         let supp = pending.supplementary_offsets;
-        let (driving_empty, lookup_empty) = (pending.driving.is_empty(), pending.lookup.is_empty());
+        let (driving_empty, _lookup_empty) = (pending.driving.is_empty(), pending.lookup.is_empty());
         let driving_offsets = pending.driving.virtual_offsets();
         let lookup_offsets = pending.lookup.virtual_offsets();
 
