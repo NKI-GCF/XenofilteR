@@ -6,12 +6,11 @@ use crate::variant::{
 };
 use anyhow::{anyhow, ensure, Result};
 use noodles::bam::{
-    io::{Reader as BamReader, Writer as BamWriter},
+    io::{Reader as BamReader},
     record::Record,
 };
-use noodles::bgzf::io::{Reader as BgzfReader, Writer as BgzfWriter};
+use noodles::bgzf::io::{Reader as BgzfReader};
 use noodles::bgzf::VirtualPosition;
-use noodles::sam::alignment::io::Write;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::Header;
 use std::fs::File;
@@ -50,7 +49,10 @@ pub(crate) struct AlnStream<R> {
     threads: NonZeroUsize,
 }
 
-impl AlnStream<Record> {
+impl<R> AlnStream<R>
+where
+    R: SimpleRec + FromBamRecord,
+{
     pub(crate) fn new(opt: &mut Config, i: usize) -> Result<Self> {
         let bam_str = opt.alignment[i].as_str();
         let file = File::open(bam_str)?;
@@ -143,12 +145,13 @@ impl AlnStream<Record> {
             .transpose()?;
 
         let threads = NonZeroUsize::new(opt.threads).unwrap_or(NonZeroUsize::MIN);
+        let next_rec = R::from_bam_record(&header, test_record)?;
 
         Ok(AlnStream {
             ambiguous: None,
             bam: Some(bam),
             filt: None,
-            next: Some(test_record),
+            next: Some(next_rec),
             output: None,
             sample_variants,
             population_variants,

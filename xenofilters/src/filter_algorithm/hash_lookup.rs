@@ -253,7 +253,6 @@ impl<R: SimpleRec> HashLookup<R> {
 
     fn resolve_fragment(&mut self, pending: PendingFragment) -> Result<ScoredFragment> {
         let supp_offsets = pending.supplementary_offsets;
-        let seq_nr = pending.seq_nr;
 
         // Extract offsets and records from both streams before consuming them.
         let driving_early = pending.driving.is_early();

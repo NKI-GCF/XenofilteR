@@ -46,8 +46,8 @@ impl AmbiguousRegions {
                 break;
             }
             let chrom = record.reference_sequence_name();
-            let chrom_str: &str = chrom.as_ref();
-            let id = match name_to_id.get(chrom_str) {
+            let chrom_str: String = String::try_from(chrom)?;
+            let id = match name_to_id.get(chrom_str.as_str()) {
                 Some(&id) => id,
                 None => continue,
             };

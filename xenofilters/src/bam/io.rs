@@ -16,6 +16,7 @@ use noodles::sam::{
     Header,
 };
 use std::{fs::File, num::NonZeroUsize, path::Path};
+use std::io::Stdout;
 
 // -- @PG helper ----------------------------------------------------------------
 
@@ -43,6 +44,7 @@ fn add_pg_line(header: &mut Header) -> Result<()> {
 pub(crate) enum BamOutput {
     Single(BamWriter<BgzfSyncWriter<File>>),
     Multi(BamWriter<MultithreadedWriter<File>>),
+    Stdout(BamWriter<BgzfSyncWriter<Stdout>>),
 }
 
 impl BamOutput {
@@ -54,15 +56,14 @@ impl BamOutput {
         match self {
             Self::Single(w) => w.write_alignment_record(header, rec),
             Self::Multi(w) => w.write_alignment_record(header, rec),
+            Self::Stdout(w) => w.write_alignment_record(header, rec),
         }
     }
 }
 
 impl Default for BamOutput {
     fn default() -> Self {
-        BamOutput::Single(BamWriter::<BgzfSyncWriter<File>>::new(BgzfSyncWriter::new(
-            std::io::sink(),
-        )))
+        Self::Stdout(BamWriter::from(Builder::default().build_from_writer(std::io::stdout())))
     }
 }
 
