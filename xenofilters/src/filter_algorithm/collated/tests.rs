@@ -25,7 +25,7 @@ fn make_matcher(
     use crate::aln_stream::AlignmentStream;
     let s0 = Box::new(MockStream::new(0, stream0)) as Box<dyn AlignmentStream<RecordBuf>>;
     let s1 = Box::new(MockStream::new(1, stream1)) as Box<dyn AlignmentStream<RecordBuf>>;
-    CollatedMatcher::new(cfg, smallvec![s0, s1])
+    CollatedMatcher::new_no_regions(cfg, smallvec![s0, s1])
 }
 
 #[test]
@@ -76,7 +76,7 @@ fn test_collated_streams_in_different_order() -> Result<()> {
     m.process()?;
     // R1: stream0 perfect wins
     assert_eq!(m.branch_counters[1], 1); // out:0 (R1)
-    // R2: stream1 perfect wins
+                                         // R2: stream1 perfect wins
     assert_eq!(m.branch_counters[3], 1); // out:1 (R2)
     Ok(())
 }
@@ -86,7 +86,7 @@ fn test_collated_paired_end_same_name_grouped() -> Result<()> {
     // Both reads of a pair share a name and appear consecutively.
     let s0 = vec![
         create_record(b"R1", "10M", &[], &[], "10", false)?,
-        create_record(b"R1", "10M", &[], &[], "10", true)?,  // mate
+        create_record(b"R1", "10M", &[], &[], "10", true)?, // mate
     ];
     let s1 = vec![
         create_record(b"R1", "5M5S", &[], &[], "5", false)?,
@@ -146,12 +146,12 @@ fn test_collated_unmatched_is_emitted_as_best() -> Result<()> {
     m.process()?;
     // R1: stream0 wins normally
     assert_eq!(m.branch_counters[1], 1); // out:0 R1
-    // R2: unmatched, emitted as best for stream0
+                                         // R2: unmatched, emitted as best for stream0
     assert_eq!(m.branch_counters[1], 1); // out:0 total = R1 + R2 ... wait, check total
-    // Actually both R1 win and R2 unmatched go to branch_counters[1]
-    // Let's just check no panic and filter:0 is 0 for R2
+                                         // Actually both R1 win and R2 unmatched go to branch_counters[1]
+                                         // Let's just check no panic and filter:0 is 0 for R2
     assert_eq!(m.branch_counters[0], 1); // filter:0 is only R1 from stream1 = NO
-    // stream1 R1 is filtered:
+                                         // stream1 R1 is filtered:
     assert_eq!(m.branch_counters[2], 1); // filter:1 R1
     Ok(())
 }

@@ -1,4 +1,4 @@
-use crate::bam::{BamFormat, OutputMode};
+use crate::bam::{BamFormat, BamOutput, OutputMode};
 use crate::config::{Config, StripReadSuffix};
 use crate::tests::create_record;
 use crate::variant::StoreTrait;
@@ -60,7 +60,9 @@ impl MockStream {
         if let Some(rec) = self.aln_stream.next_rec()? {
             return Ok(Some(rec));
         }
-        if self.reads.is_empty() { return Ok(None); }
+        if self.reads.is_empty() {
+            return Ok(None);
+        }
         let rec = self.reads.remove(0);
         self.aln_stream.un_next(rec)?;
         self.aln_stream.next_rec()
@@ -160,7 +162,9 @@ fn test_next_qname_returns_pending_records_name() -> Result<()> {
 fn test_un_next_errors_when_already_occupied() -> Result<()> {
     let mut stream = empty_aln_stream();
     stream.un_next(create_record(b"r1", "5M", &[], &[30; 5], "5", false)?)?;
-    assert!(stream.un_next(create_record(b"r2", "5M", &[], &[30; 5], "5", false)?).is_err());
+    assert!(stream
+        .un_next(create_record(b"r2", "5M", &[], &[30; 5], "5", false)?)
+        .is_err());
     Ok(())
 }
 

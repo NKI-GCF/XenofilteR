@@ -1,5 +1,5 @@
 use crate::alignment::SimpleRec;
-use crate::bam::{out_from_file, path_unicode_ok, OutputMode};
+use crate::bam::{out_from_file, path_unicode_ok, BamOutput, OutputMode};
 use crate::config::{Config, StripReadSuffix};
 use crate::variant::{
     parse_population_record, parse_sample_record, Population, Sample, Store, StoreTrait,
@@ -38,11 +38,11 @@ pub(crate) trait AlignmentStream<R: SimpleRec> {
 }
 
 pub(crate) struct AlnStream<R> {
-    ambiguous: Option<BamWriter<BgzfWriter<File>>>,
+    ambiguous: Option<BamOutput>,
     pub(crate) bam: Option<BamReader<BgzfReader<File>>>,
-    filt: Option<BamWriter<BgzfWriter<File>>>,
+    filt: Option<BamOutput>,
     next: Option<R>,
-    output: Option<BamWriter<BgzfWriter<File>>>,
+    output: Option<BamOutput>,
     sample_variants: Option<Arc<Store<Sample>>>,
     population_variants: Option<Arc<Store<Population>>>,
     pub(crate) header: Header,
@@ -224,32 +224,22 @@ where
 
     fn init_writers(&mut self, opt: &Config, i: usize) -> Result<()> {
         let add_pg = !opt.no_program_line;
-        let threads = self.threads;
+        let threads = self.threads.into();
         self.output = opt
             .output
             .get(i)
-            .map(|f| out_from_file(f, &self.header, add_pg, threads.into()))
-            .ok_or_else(|| anyhow!("Output file must be specified for alignment {}", i + 1))?;
+            .map(|f| out_from_file(f, &self.header, add_pg, threads))
+            .transpose()?;
         self.filt = opt
             .filtered_output
             .get(i)
-            .map(|f| out_from_file(f, &self.header, add_pg, threads.into()))
-            .ok_or_else(|| {
-                anyhow!(
-                    "Filtered output file must be specified for alignment {}",
-                    i + 1
-                )
-            })?;
+            .map(|f| out_from_file(f, &self.header, add_pg, threads))
+            .transpose()?;
         self.ambiguous = opt
             .ambiguous_output
             .get(i)
-            .map(|f| out_from_file(f, &self.header, add_pg, threads.into()))
-            .ok_or_else(|| {
-                anyhow!(
-                    "Ambiguous output file must be specified for alignment {}",
-                    i + 1
-                )
-            })?;
+            .map(|f| out_from_file(f, &self.header, add_pg, threads))
+            .transpose()?;
         Ok(())
     }
 

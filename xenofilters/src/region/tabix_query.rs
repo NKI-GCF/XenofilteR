@@ -1,4 +1,3 @@
-//! Tabix-backed random-access queries for the Collated algorithm.
 //!
 //! The Collated algorithm processes records by name order, so BED and VCF
 //! files cannot be walked with a position cursor. Instead, records are queried
@@ -50,30 +49,15 @@ fn read_tabix_index(path: &Path) -> Result<tabix::Index> {
 pub(crate) struct TabixBed {
     reader: bgzf::io::Reader<File>,
     index: tabix::Index,
-    /// Reference sequence names from the tabix index header.
-    ref_names: Vec<Vec<u8>>,
 }
 
 impl TabixBed {
     pub(crate) fn open(path: &Path) -> Result<Self> {
         let index = read_tabix_index(path)?;
-        let ref_names: Vec<Vec<u8>> = index
-            .header()
-            .map(|h| {
-                h.reference_sequence_names()
-                    .iter()
-                    .map(|n| n.to_vec())
-                    .collect()
-            })
-            .unwrap_or_default();
         let reader = bgzf::io::Reader::new(
             File::open(path).map_err(|e| anyhow!("Cannot open BED {}: {e}", path.display()))?,
         );
-        Ok(Self {
-            reader,
-            index,
-            ref_names,
-        })
+        Ok(Self { reader, index })
     }
 
     /// Returns `true` if any BED record overlaps `[start, end)` (0-based).

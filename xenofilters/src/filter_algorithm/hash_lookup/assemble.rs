@@ -14,7 +14,6 @@
 //! always stored separately for pass-2 retrieval.
 
 use crate::region::{AmbiguousRegions, DiagnosticVariants};
-use anyhow::{anyhow, Result};
 use noodles::sam::alignment::record::Flags;
 use smallvec::SmallVec;
 
@@ -161,12 +160,15 @@ impl StreamKind {
     pub(crate) fn is_empty(&self) -> bool {
         matches!(self, StreamKind::Empty)
     }
-    pub(crate) fn virtual_offsets(&self) -> Result<&[u64]> {
+    pub(crate) fn virtual_offsets(&self) -> SmallVec<[u64; 2]> {
         match self {
             StreamKind::Early {
                 virtual_offsets, ..
-            } => Ok(virtual_offsets),
-            _ => Err(anyhow!("StreamKind does not have virtual offsets")),
+            } => virtual_offsets.clone(),
+            StreamKind::Scoring { records, .. } => {
+                records.iter().map(|r| r.virtual_offset).collect()
+            }
+            StreamKind::Empty => SmallVec::new(),
         }
     }
 }
