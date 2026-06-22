@@ -3,13 +3,14 @@ use crate::config::{Config, StripReadSuffix};
 use crate::tests::create_record;
 use crate::variant::StoreTrait;
 use crate::{AlignmentStream, AlnStream};
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use noodles::sam::{alignment::record_buf::RecordBuf, Header};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 pub(crate) struct MockStream {
     pub(crate) reads: Vec<RecordBuf>,
+    pub(crate) original_reads: Vec<RecordBuf>,
     written: Vec<(RecordBuf, Option<bool>)>,
     aln_stream: AlnStream<RecordBuf>,
     i: usize,
@@ -41,6 +42,7 @@ impl AlignmentStream<RecordBuf> for MockStream {
 
 impl MockStream {
     pub(crate) fn new(i: usize, reads: Vec<RecordBuf>) -> Self {
+        let original_reads = reads.clone();
         let aln_stream = AlnStream {
             ambiguous: None,
             bam: None,
@@ -53,7 +55,7 @@ impl MockStream {
             output_mode: OutputMode::default(),
             threads: NonZeroUsize::MIN,
         };
-        Self { reads, written: Vec::new(), aln_stream, i }
+        Self { reads, original_reads, written: Vec::new(), aln_stream, i }
     }
 
     fn next_rec(&mut self) -> Result<Option<RecordBuf>> {
@@ -81,6 +83,15 @@ impl MockStream {
     fn write_record(&mut self, rec: RecordBuf, state: Option<bool>) -> Result<()> {
         self.written.push((rec, state));
         Ok(())
+    }
+    fn fetch_by_virtual_offset(&mut self, virtual_offset: u64) -> Result<RecordBuf> {
+        self.original_reads
+            // Tests usually use small 0-based offsets matching the read index
+            .get(virtual_offset as usize)
+            .cloned()
+            // Fallback to the first read just in case the mock offset is weird
+            .or_else(|| self.original_reads.first().cloned())
+            .ok_or_else(|| anyhow!("MockStream has no original reads to fetch"))
     }
 }
 

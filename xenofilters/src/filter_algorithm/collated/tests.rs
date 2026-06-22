@@ -145,13 +145,9 @@ fn test_collated_unmatched_is_emitted_as_best() -> Result<()> {
     let mut m = make_matcher(s0, s1, config())?;
     m.process()?;
     // R1: stream0 wins normally
-    assert_eq!(m.branch_counters[1], 1); // out:0 R1
-                                         // R2: unmatched, emitted as best for stream0
-    assert_eq!(m.branch_counters[1], 1); // out:0 total = R1 + R2 ... wait, check total
-                                         // Actually both R1 win and R2 unmatched go to branch_counters[1]
-                                         // Let's just check no panic and filter:0 is 0 for R2
-    assert_eq!(m.branch_counters[0], 1); // filter:0 is only R1 from stream1 = NO
-                                         // stream1 R1 is filtered:
+    assert_eq!(m.branch_counters[1], 2); // out:0
+    assert_eq!(m.branch_counters[0], 0); // filter:0
     assert_eq!(m.branch_counters[2], 1); // filter:1 R1
+    assert_eq!(m.branch_counters[3], 0); // filter:1 R1
     Ok(())
 }

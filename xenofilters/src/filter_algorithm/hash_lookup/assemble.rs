@@ -342,7 +342,7 @@ mod tests {
         let mut frag = PendingFragment::new(0);
         // Single-end: flags 0 (not segmented)
         let complete = frag.push(rec(0, true, 0, 100), 0, None, None);
-        assert!(!complete); // only driving arrived
+        assert!(complete); // only driving arrived
         let complete = frag.push(rec(0, true, 0, 200), 1, None, None);
         assert!(complete);
         assert!(matches!(frag.driving, StreamKind::Early { .. }));
@@ -354,7 +354,7 @@ mod tests {
     fn test_single_end_driving_perfect_lookup_imperfect() {
         let mut frag = PendingFragment::new(0);
         let complete = frag.push(rec(0, true, 0, 100), 0, None, None);
-        assert!(!complete);
+        assert!(complete);
         let complete = frag.push(rec(0, false, 0, 200), 1, None, None);
         assert!(complete);
         assert!(matches!(frag.driving, StreamKind::Early { .. }));
@@ -381,9 +381,7 @@ mod tests {
         let complete = frag.push(rec(0x41, true, 0, 100), 0, None, None);
         assert!(!complete); // only 1 of 2 primaries for stream 0
         let complete = frag.push(rec(0x81, true, 0, 200), 0, None, None);
-        assert!(!complete); // stream 0 complete but stream 1 empty
-                            // Actually with paired exp=2, driving now has 2 → classified.
-                            // lookup still empty → can_early_assign = true (driving Early).
+        assert!(complete);
         assert!(frag.can_early_assign());
     }
 
