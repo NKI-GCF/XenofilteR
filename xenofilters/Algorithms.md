@@ -32,13 +32,13 @@ when Tier 2 would resolve the fragment.
 `Fragment::score` iterates `ScoreOpIter` (CIGAR + MD joint iterator) and
 accumulates per-base log-likelihood penalties:
 
-| Op type  | Penalty                          |
-|----------|----------------------------------|
-| Match    | `log_likelihood_match[q]`        |
-| Mismatch | `log_likelihood_mismatch[q]`     |
-| Soft-clip | `log_likelihood_mismatch[q]` per clipped base |
-| Insertion/Deletion | affine: `gap_open + len × gap_extend` |
-| RefSkip  | zero                             |
+| Op type            | Penalty                                       |
+|--------------------|-----------------------------------------------|
+| Match              | `log_likelihood_match[q]`                     |
+| Mismatch           | `log_likelihood_mismatch[q]`                  |
+| Soft-clip          | `log_likelihood_mismatch[q]` per clipped base |
+| Insertion/Deletion | affine: `gap_open + len × gap_extend`         |
+| RefSkip            | zero                                          |
 
 Quality scores index the penalty arrays (Phred-capped at `MAX_Q = 93`).
 
@@ -81,7 +81,7 @@ The rescue delta is added to the fragment's log-likelihood score.  A non-zero
 delta = score(stream_0) - score(stream_1)
 ```
 
-- `delta >  ambiguous_threshold` → stream 0 wins; records written to `--output[0]`, losers to `--filtered-output[1]`
+- `delta >  ambiguous_threshold` → stream 0 wins; records written to `--output[0]`, losers to `--discarded-output[1]`
 - `delta < -ambiguous_threshold` → stream 1 wins
 - `|delta| ≤ threshold` → ambiguous; both go to `--ambiguous-output`
 
@@ -225,14 +225,14 @@ O(name-order skew between the two streams).
 
 ## Algorithm Comparison
 
-| Property | Namesorted | HashLookup | Collated |
-|---|---|---|---|
-| BAM sort order required | identical name order, both streams | position-sorted | collated (name-grouped) per stream |
-| Inter-stream order | must match | arbitrary | arbitrary |
-| Output order | deterministic (sequential) / nondeterministic (parallel) | driving-stream order | unordered |
-| Parallelism | IO + N scoring workers | single-threaded | single-threaded |
-| Memory | O(fragment) | O(in-flight fragments) | O(name-order skew) |
-| Region files | not supported | in-memory BED/VCF | tabix-indexed BED/VCF |
-| Pass count | 1 | 2 (scan + seek) | 1 |
-| Variant rescue | yes | yes | yes |
-| BAM index needed | no | yes (BGZF virtual offsets) | no (tabix for region files only) |
+| Property                | Namesorted                                   | HashLookup                 | Collated                           |
+|-------------------------|----------------------------------------------|----------------------------|------------------------------------|
+| BAM sort order required | identical name order, both streams           | position-sorted            | collated (name-grouped) per stream |
+| Inter-stream order      | must match                                   | arbitrary                  | arbitrary                          |
+| Output order            | deterministic (sequential) / non- (parallel) | driving-stream order       | unordered                          |
+| Parallelism             | IO + N scoring workers                       | single-threaded            | single-threaded                    |
+| Memory                  | O(fragment)                                  | O(in-flight fragments)     | O(name-order skew)                 |
+| Region files            | not supported                                | in-memory BED/VCF          | tabix-indexed BED/VCF              |
+| Pass count              | 1                                            | 2 (scan + seek)            | 1                                  |
+| Variant rescue          | yes                                          | yes                        | yes                                |
+| BAM index needed        | no                                           | yes (BGZF virtual offsets) | no (tabix for region files only)   |
