@@ -59,6 +59,9 @@ pub(crate) struct HashLookup<R: SimpleRec> {
     table: NameTable,
     staged: StagedOutput,
     seq_counter: u64,
+    /// Per-stream record counters used as virtual offsets for MockStream compat
+    /// and correct pass-2 fetch indexing.
+    record_counters: [u64; 2],
     penalties: Penalty,
     scratch: Scratch,
     pub(crate) branch_counters: [u64; 32],
@@ -93,6 +96,7 @@ impl<R: SimpleRec> HashLookup<R> {
             table: NameTable::new(),
             staged: StagedOutput::new(),
             seq_counter: 0,
+            record_counters: [0, 0],
             penalties: config.to_penalties(),
             scratch: Scratch::new(),
             branch_counters: [0u64; 32],
@@ -213,7 +217,10 @@ impl<R: SimpleRec> HashLookup<R> {
             .iter()
             .collect::<Result<Vec<u8>, std::io::Error>>()?;
 
-        let virtual_offset = self.seq_counter;
+        // Use a per-stream counter so fetch_by_virtual_offset(offset) correctly
+        // indexes into stream[nr].original_reads[offset] for both real and mock streams.
+        let virtual_offset = self.record_counters[nr];
+        self.record_counters[nr] += 1;
 
         Ok(Some((
             key,
@@ -489,7 +496,8 @@ impl<R: SimpleRec> HashLookup<R> {
     fn handle_unmatched(&mut self, pending: PendingFragment) -> Result<()> {
         let seq_nr = pending.seq_nr;
         let supp = pending.supplementary_offsets;
-        let (driving_empty, _lookup_empty) = (pending.driving.is_empty(), pending.lookup.is_empty());
+        let (driving_empty, _lookup_empty) =
+            (pending.driving.is_empty(), pending.lookup.is_empty());
         let driving_offsets = pending.driving.virtual_offsets();
         let lookup_offsets = pending.lookup.virtual_offsets();
 

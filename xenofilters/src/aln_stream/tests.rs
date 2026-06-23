@@ -16,30 +16,6 @@ pub(crate) struct MockStream {
     i: usize,
 }
 
-impl AlignmentStream<RecordBuf> for MockStream {
-    fn next_qname(&self) -> &[u8] {
-        self.aln_stream.next_qname()
-    }
-    fn un_next(&mut self, rec: RecordBuf) -> Result<()> {
-        self.un_next(rec)
-    }
-    fn next_rec(&mut self) -> Result<Option<RecordBuf>> {
-        self.next_rec()
-    }
-    fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<()> {
-        self.write_record(rec, is_best)
-    }
-    fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<()> {
-        Ok(())
-    }
-    fn variant_store(&self) -> Option<Arc<dyn StoreTrait>> {
-        None
-    }
-    fn header(&self) -> &Header {
-        &self.aln_stream.header
-    }
-}
-
 impl MockStream {
     pub(crate) fn new(i: usize, reads: Vec<RecordBuf>) -> Self {
         let original_reads = reads.clone();
@@ -99,6 +75,42 @@ impl MockStream {
             // Fallback to the first read just in case the mock offset is weird
             .or_else(|| self.original_reads.first().cloned())
             .ok_or_else(|| anyhow!("MockStream has no original reads to fetch"))
+    }
+
+    /// Inherent implementation; renamed to avoid ambiguity with the trait method.
+    fn fetch_record(&mut self, virtual_offset: u64) -> Result<RecordBuf> {
+        self.original_reads
+            .get(virtual_offset as usize)
+            .cloned()
+            .or_else(|| self.original_reads.first().cloned())
+            .ok_or_else(|| anyhow!("MockStream: no record at virtual offset {virtual_offset}"))
+    }
+}
+
+impl AlignmentStream<RecordBuf> for MockStream {
+    fn next_qname(&self) -> &[u8] {
+        self.aln_stream.next_qname()
+    }
+    fn un_next(&mut self, rec: RecordBuf) -> Result<()> {
+        self.un_next(rec)
+    }
+    fn next_rec(&mut self) -> Result<Option<RecordBuf>> {
+        self.next_rec()
+    }
+    fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<()> {
+        self.write_record(rec, is_best)
+    }
+    fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<()> {
+        Ok(())
+    }
+    fn variant_store(&self) -> Option<Arc<dyn StoreTrait>> {
+        None
+    }
+    fn header(&self) -> &Header {
+        &self.aln_stream.header
+    }
+    fn fetch_by_virtual_offset(&mut self, virtual_offset: u64) -> Result<RecordBuf> {
+        self.fetch_record(virtual_offset)
     }
 }
 

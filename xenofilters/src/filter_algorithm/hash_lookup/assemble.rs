@@ -251,27 +251,24 @@ impl PendingFragment {
     }
 
     fn is_complete_inner(&self, exp: usize) -> bool {
-        // Early assignment: one stream classified as Early.
-        let driving_early = matches!(&self.driving,
-            StreamKind::Early { primary_count, .. } if *primary_count >= exp);
-        let lookup_early = matches!(&self.lookup,
-            StreamKind::Early { primary_count, .. } if *primary_count >= exp);
-        // Full scoring: both streams classified (Early or Scoring).
-        let both_classified = !self.driving.is_empty() && !self.lookup.is_empty();
+        // Both streams must classify their records before a decision is made.
+        // Early-assignment-before-lookup is disabled: without it, ties are correctly
+        // detected and losing-stream records are routed to filtered output (not unmatched).
+        !self.driving.is_empty() && !self.lookup.is_empty()
+    }
 
-        driving_early || lookup_early || both_classified
+    pub(crate) fn can_early_assign(&self) -> bool {
+        // True when both streams are classified and at least one qualified as Early.
+        let exp = self.expected_primaries();
+        if self.driving.is_empty() || self.lookup.is_empty() {
+            return false;
+        }
+        (matches!(&self.driving, StreamKind::Early { .. }) && self.driving.primary_count() >= exp)
+            || (matches!(&self.lookup, StreamKind::Early { .. }) && self.lookup.primary_count() >= exp)
     }
 
     pub(crate) fn is_complete(&self) -> bool {
         self.is_complete_inner(self.expected_primaries())
-    }
-
-    /// True if at least one stream is Early-classified and complete.
-    /// When true, the other stream need not have arrived.
-    pub(crate) fn can_early_assign(&self) -> bool {
-        let exp = self.expected_primaries();
-        matches!(&self.driving, StreamKind::Early { primary_count, .. } if *primary_count >= exp)
-            || matches!(&self.lookup, StreamKind::Early { primary_count, .. } if *primary_count >= exp)
     }
 }
 
@@ -340,11 +337,10 @@ mod tests {
     #[test]
     fn test_single_end_perfect_both_streams_classified() {
         let mut frag = PendingFragment::new(0);
-        // Single-end: flags 0 (not segmented)
         let complete = frag.push(rec(0, true, 0, 100), 0, None, None);
-        assert!(complete); // only driving arrived
+        assert!(!complete); // driving classified as Early but lookup still Empty
         let complete = frag.push(rec(0, true, 0, 200), 1, None, None);
-        assert!(complete);
+        assert!(complete); // both Early → complete
         assert!(matches!(frag.driving, StreamKind::Early { .. }));
         assert!(matches!(frag.lookup, StreamKind::Early { .. }));
         assert!(frag.can_early_assign());
@@ -354,7 +350,7 @@ mod tests {
     fn test_single_end_driving_perfect_lookup_imperfect() {
         let mut frag = PendingFragment::new(0);
         let complete = frag.push(rec(0, true, 0, 100), 0, None, None);
-        assert!(complete);
+        assert!(!complete); // driving only
         let complete = frag.push(rec(0, false, 0, 200), 1, None, None);
         assert!(complete);
         assert!(matches!(frag.driving, StreamKind::Early { .. }));
@@ -364,24 +360,24 @@ mod tests {
 
     #[test]
     fn test_driving_early_without_lookup() {
-        // Driving arrives as perfect; lookup not yet seen.
-        // Fragment should be complete for early assignment.
+        // Both-stream requirement: driving alone is classified but fragment is not complete.
         let mut frag = PendingFragment::new(0);
         let complete = frag.push(rec(0, true, 0, 100), 0, None, None);
-        // Single-end: exp=1, driving has 1 primary → classified as Early.
-        assert!(complete);
-        assert!(frag.can_early_assign());
+        assert!(!complete);
+        assert!(!frag.can_early_assign()); // lookup hasn't contributed
         assert!(frag.lookup.is_empty());
+        assert!(matches!(&frag.driving, StreamKind::Early { .. }));
     }
 
     #[test]
     fn test_paired_end_requires_two_primaries() {
         let mut frag = PendingFragment::new(0);
-        // Paired: flags 0x41 = first in pair, paired
         let complete = frag.push(rec(0x41, true, 0, 100), 0, None, None);
         assert!(!complete); // only 1 of 2 primaries for stream 0
         let complete = frag.push(rec(0x81, true, 0, 200), 0, None, None);
-        assert!(complete);
+        assert!(!complete); // stream 0 classified (Early) but lookup still Empty
+        let complete = frag.push(rec(0, true, 0, 300), 1, None, None);
+        assert!(complete); // both streams classified → complete
         assert!(frag.can_early_assign());
     }
 
