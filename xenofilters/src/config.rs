@@ -188,10 +188,25 @@ impl Config {
         let aln_count = self.alignment.len();
 
         // Reject multi-threaded modes for non-namesorted algorithms.
-        if self.matching_algorithm != MatchingAlgorithm::Namesorted {
-            // FIXME
-            // No --threads flag currently, but guard here for future addition.
-            // Document the constraint.
+        if self.matching_algorithm == MatchingAlgorithm::Namesorted {
+            ensure!(self.ambiguous_regions.is_empty() && self.diagnostic_variants.is_empty(),
+                "--ambiguous-regions / --diagnostic-variants have no effect with --matching-algorithm namesorted"
+            );
+            // Resolve score_threads = 0 → available logical CPUs with a max of 16.
+            if self.score_threads == 0 {
+                self.score_threads = std::thread::available_parallelism()
+                    .map(|n| n.get().min(16))
+                    .unwrap_or(1);
+                tracing::info!(
+                    score_threads = self.score_threads,
+                    "score_threads=0: using all available logical CPUs"
+                );
+            }
+        } else {
+            ensure!(
+                self.score_threads == 1,
+                "Multi-threaded scoring is only supported with --matching-algorithm namesorted."
+            );
         }
 
         // 1. Guard against single-stream niche execution accidents first
@@ -204,6 +219,7 @@ impl Config {
                 !self.read_from_stdin,
                 "Cannot use single alignment mode with stdin because the stream must be duplicated via file system access."
             );
+            // FIXME: why this restriction?
             ensure!(
                 self.matching_algorithm == MatchingAlgorithm::Namesorted,
                 "--single-alignment-mode is only supported with --matching-algorithm namesorted."
@@ -232,14 +248,6 @@ impl Config {
             self.diagnostic_variants.len() <= 2,
             "--diagnostic-variants: at most 2 files (one per stream)"
         );
-        if self.matching_algorithm == MatchingAlgorithm::Namesorted
-            && (!self.ambiguous_regions.is_empty() || !self.diagnostic_variants.is_empty())
-        {
-            tracing::warn!(
-                "--ambiguous-regions / --diagnostic-variants have no effect \
-                 with --matching-algorithm namesorted"
-            );
-        }
         // Determine effective dimensions (logical comparisons)
         let logical_len = if aln_count == 1 { 2 } else { aln_count };
 
@@ -321,16 +329,6 @@ impl Config {
             ));
         }
 
-        // Resolve score_threads = 0 → all available logical CPUs.
-        if self.score_threads == 0 {
-            self.score_threads = std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(1);
-            tracing::info!(
-                score_threads = self.score_threads,
-                "score_threads=0: using all available logical CPUs"
-            );
-        }
 
         tracing::debug!(
             threads = self.threads,
