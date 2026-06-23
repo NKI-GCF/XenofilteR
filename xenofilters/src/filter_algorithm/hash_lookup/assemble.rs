@@ -333,7 +333,6 @@ mod tests {
             virtual_offset: pos as u64 * 1000,
         }
     }
-
     #[test]
     fn test_single_end_perfect_both_streams_classified() {
         let mut frag = PendingFragment::new(0);
@@ -343,19 +342,17 @@ mod tests {
         assert!(complete); // both Early → complete
         assert!(matches!(frag.driving, StreamKind::Early { .. }));
         assert!(matches!(frag.lookup, StreamKind::Early { .. }));
-        assert!(frag.can_early_assign());
     }
 
     #[test]
     fn test_single_end_driving_perfect_lookup_imperfect() {
         let mut frag = PendingFragment::new(0);
         let complete = frag.push(rec(0, true, 0, 100), 0, None, None);
-        assert!(!complete); // driving only
+        assert!(!complete);
         let complete = frag.push(rec(0, false, 0, 200), 1, None, None);
         assert!(complete);
         assert!(matches!(frag.driving, StreamKind::Early { .. }));
         assert!(matches!(frag.lookup, StreamKind::Scoring { .. }));
-        assert!(frag.can_early_assign());
     }
 
     #[test]
@@ -364,7 +361,7 @@ mod tests {
         let mut frag = PendingFragment::new(0);
         let complete = frag.push(rec(0, true, 0, 100), 0, None, None);
         assert!(!complete);
-        assert!(!frag.can_early_assign()); // lookup hasn't contributed
+        assert!(!frag.is_complete());
         assert!(frag.lookup.is_empty());
         assert!(matches!(&frag.driving, StreamKind::Early { .. }));
     }
@@ -376,9 +373,10 @@ mod tests {
         assert!(!complete); // only 1 of 2 primaries for stream 0
         let complete = frag.push(rec(0x81, true, 0, 200), 0, None, None);
         assert!(!complete); // stream 0 classified (Early) but lookup still Empty
-        let complete = frag.push(rec(0, true, 0, 300), 1, None, None);
+        let complete = frag.push(rec(0x41, true, 0, 300), 1, None, None);
+        assert!(!complete); // stream 1 has only 1 of 2 expected primaries
+        let complete = frag.push(rec(0x81, true, 0, 400), 1, None, None);
         assert!(complete); // both streams classified → complete
-        assert!(frag.can_early_assign());
     }
 
     #[test]
@@ -396,24 +394,16 @@ mod tests {
         use std::collections::HashMap;
 
         let mut per_ref = HashMap::new();
-        per_ref.insert(
-            0usize,
-            vec![Region {
-                start: 90,
-                end: 110,
-            }],
-        );
+        per_ref.insert(0usize, vec![Region { start: 90, end: 110 }]);
         let bed = AmbiguousRegions::from_test(per_ref);
 
         let mut frag = PendingFragment::new(0);
         // pos=100, ref_len=10 → [100,110) overlaps [90,110)
         let complete = frag.push(rec(0, true, 0, 100), 0, Some(&bed), None);
         assert!(!complete);
-        // push lookup imperfect
         let complete = frag.push(rec(0, false, 0, 200), 1, Some(&bed), None);
         assert!(complete);
         // Driving overlaps ambiguous region → NeedsScoring despite being perfect.
         assert!(matches!(frag.driving, StreamKind::Scoring { .. }));
-        assert!(!frag.can_early_assign());
     }
 }
