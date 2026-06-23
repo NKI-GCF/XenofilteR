@@ -238,8 +238,8 @@ impl<R: SimpleRec> HashLookup<R> {
     }
 
     fn ingest(&mut self, key: Box<[u8]>, rec: ScoringRecord, nr: usize) -> Result<()> {
-        let bed = self.bed[nr].as_ref();
-        let vcf = self.vcf[nr].as_ref();
+        let bed = self.bed[nr].as_ref().filter(|b| !b.is_empty());
+        let vcf = self.vcf[nr].as_ref().filter(|v| !v.is_empty());
         let (key, complete) = insert(
             &mut self.table,
             rec,

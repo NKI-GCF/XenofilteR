@@ -13,6 +13,8 @@ use std::path::Path;
 pub(crate) struct DiagnosticSite {
     pub(crate) pos: usize,
     pub(crate) ref_len: usize,
+    /// Alt allele bytes; reserved for pass-2 alt-allele validation once
+    /// ScoringRecord carries read sequence. Currently unused by `overlaps`.
     pub(crate) alt: Vec<u8>,
 }
 
@@ -29,10 +31,7 @@ pub(crate) struct DiagnosticVariants {
 }
 
 impl DiagnosticVariants {
-    pub(crate) fn from_vcf(
-        path: &Path,
-        name_to_id: &HashMap<String, usize>,
-    ) -> Result<Self> {
+    pub(crate) fn from_vcf(path: &Path, name_to_id: &HashMap<String, usize>) -> Result<Self> {
         let mut reader = bcf::io::reader::Builder::default()
             .build_from_path(path)
             .map_err(|e| anyhow!("Cannot open VCF/BCF {}: {e}", path.display()))?;
@@ -84,7 +83,10 @@ impl DiagnosticVariants {
             sites.sort_unstable_by_key(|s| s.pos);
         }
 
-        Ok(Self { per_ref, max_ref_len })
+        Ok(Self {
+            per_ref,
+            max_ref_len,
+        })
     }
 
     pub(crate) fn overlaps(&self, ref_id: usize, read_start: usize, read_end: usize) -> bool {
@@ -93,7 +95,9 @@ impl DiagnosticVariants {
         };
         let lower = read_start.saturating_sub(self.max_ref_len);
         let first = sites.partition_point(|s| s.pos < lower);
-        sites[first..].iter().any(|s| s.pos < read_end && s.end() > read_start)
+        sites[first..]
+            .iter()
+            .any(|s| s.pos < read_end && s.end() > read_start)
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -106,18 +110,29 @@ mod tests {
     use super::*;
 
     fn site(pos: usize, ref_len: usize) -> DiagnosticSite {
-        DiagnosticSite { pos, ref_len, alt: b"A".to_vec() }
+        DiagnosticSite {
+            pos,
+            ref_len,
+            alt: b"A".to_vec(),
+        }
     }
 
     fn store(sites: &[(usize, usize, usize)]) -> DiagnosticVariants {
         let mut per_ref: HashMap<usize, Vec<DiagnosticSite>> = HashMap::new();
         let mut max_ref_len = 1;
         for &(rid, pos, ref_len) in sites {
-            if ref_len > max_ref_len { max_ref_len = ref_len; }
+            if ref_len > max_ref_len {
+                max_ref_len = ref_len;
+            }
             per_ref.entry(rid).or_default().push(site(pos, ref_len));
         }
-        for v in per_ref.values_mut() { v.sort_unstable_by_key(|s| s.pos); }
-        DiagnosticVariants { per_ref, max_ref_len }
+        for v in per_ref.values_mut() {
+            v.sort_unstable_by_key(|s| s.pos);
+        }
+        DiagnosticVariants {
+            per_ref,
+            max_ref_len,
+        }
     }
 
     #[test]
