@@ -14,6 +14,8 @@ pub(crate) struct FragmentState<R> {
     species_nr: usize,
 }
 
+type McfPair<'f> = (SmallVec<[MdCigFlags<'f>; 8]>, SmallVec<[MdCigFlags<'f>; 8]>);
+
 impl<R: SimpleRec> FragmentState<R> {
     pub(crate) fn from_record(r: R, species_nr: usize) -> Result<Self> {
         Ok(FragmentState {
@@ -82,7 +84,7 @@ impl<R: SimpleRec> FragmentState<R> {
         &'f self,
         other: &'f FragmentState<R>,
         ord: &mut Option<Ordering>,
-    ) -> Result<(SmallVec<[MdCigFlags<'f>; 8]>, SmallVec<[MdCigFlags<'f>; 8]>)> {
+    ) -> Result<McfPair<'f>> {
         let mut mcfs1: SmallVec<[MdCigFlags<'f>; 8]> =
             SmallVec::with_capacity(self.get_records().len());
         let mut perfect_self = true;

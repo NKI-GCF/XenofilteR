@@ -19,6 +19,45 @@ pub(crate) struct Fragment<'r, R> {
     nt_i: usize,
 }
 
+/// Identifies a scoring window within a segment.
+struct WindowCtx {
+    dvnt_i: usize,
+    seg_i: usize,
+    ref_start: usize,
+    ref_end: usize,
+    ref_score: f64,
+}
+
+impl WindowCtx {
+    fn new(dvnt_i: usize, seg_i: usize, ref_start: usize, ref_end: usize, ref_score: f64) -> Self {
+        Self {
+            dvnt_i,
+            seg_i,
+            ref_start,
+            ref_end,
+            ref_score,
+        }
+    }
+    fn to_variant_ctx(&self, dvnt_j: usize) -> VariantCtx {
+        VariantCtx {
+            dvnt_i: self.dvnt_i,
+            dvnt_j,
+            seg_i: self.seg_i,
+            ref_start: self.ref_start,
+            ref_end: self.ref_end,
+        }
+    }
+}
+
+/// Identifies a specific variant within a scoring window.
+struct VariantCtx {
+    dvnt_i: usize,
+    dvnt_j: usize,
+    seg_i: usize,
+    ref_start: usize,
+    ref_end: usize,
+}
+
 pub(super) fn maximize_delta<'v>(
     dvnt: &mut FragEvalVec<'v>,
     dp: &mut SmallVec<[f64; READ_CT]>,
@@ -123,16 +162,8 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             }
             let seg_ref_start = self.seg_start[prior_seg_i];
             let seg_ref_end = seg_ref_start + self.seg[prior_seg_i].cigar().len();
-            self.score_variants_in_window(
-                scratch,
-                dvnt,
-                finished,
-                i,
-                prior_seg_i,
-                seg_ref_start,
-                seg_ref_end,
-                0.0,
-            )?;
+            let ctx = WindowCtx::new(i, prior_seg_i, seg_ref_start, seg_ref_end, 0.0);
+            self.score_variants_in_window(scratch, dvnt, finished, ctx)?;
         }
 
         let mut iter = ScoreOpIter::new(&self.md_cig_flags[self.seg_i]).peekable();
@@ -190,17 +221,8 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
                     self.refpos += len;
                 }
             }
-
-            self.score_variants_in_window(
-                scratch,
-                dvnt,
-                finished,
-                i,
-                self.seg_i,
-                ref_start,
-                self.refpos,
-                ref_score,
-            )?;
+            let ctx = WindowCtx::new(i, self.seg_i, ref_start, self.refpos, ref_score);
+            self.score_variants_in_window(scratch, dvnt, finished, ctx)?;
             score += ref_score;
         }
 
@@ -212,16 +234,8 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             }
             let seg_ref_start = self.seg_start[next_seg_i];
             let seg_ref_end = seg_ref_start + self.seg[next_seg_i].sequence().len();
-            self.score_variants_in_window(
-                scratch,
-                dvnt,
-                finished,
-                i,
-                next_seg_i,
-                seg_ref_start,
-                seg_ref_end,
-                0.0,
-            )?;
+            let ctx = WindowCtx::new(i, next_seg_i, seg_ref_start, seg_ref_end, 0.0);
+            self.score_variants_in_window(scratch, dvnt, finished, ctx)?;
         }
 
         Ok(score)
@@ -232,27 +246,23 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         scratch: &mut Scratch,
         dvnt: &mut FragEvalVec<'v>,
         finished: &mut FragEvalVec<'v>,
-        dvnt_i: usize,
-        seg_i: usize,
-        start: usize,
-        end: usize,
-        ref_score: f64,
+        ctx: WindowCtx,
     ) -> Result<()> {
         let mut i = 0;
-        while i < dvnt[dvnt_i].len() && dvnt[dvnt_i][i].start() < end {
+        while i < dvnt[ctx.dvnt_i].len() && dvnt[ctx.dvnt_i][i].start() < ctx.ref_end {
             if let Some((weighted_ref_score, alt_score)) =
-                self.score_variant_in_seg(scratch, dvnt, dvnt_i, i, seg_i, start, end)?
+                self.score_variant_in_seg(scratch, dvnt, ctx.to_variant_ctx(i))?
             {
-                dvnt[dvnt_i][i].update(weighted_ref_score, alt_score);
-                let fully_processed =
-                    dvnt[dvnt_i][i].ref_end() <= end && dvnt[dvnt_i][i].alt_end() <= end;
+                dvnt[ctx.dvnt_i][i].update(weighted_ref_score, alt_score);
+                let fully_processed = dvnt[ctx.dvnt_i][i].ref_end() <= ctx.ref_end
+                    && dvnt[ctx.dvnt_i][i].alt_end() <= ctx.ref_end;
                 if fully_processed {
-                    let done = dvnt[dvnt_i].remove(i);
-                    finished[dvnt_i].push(done);
+                    let done = dvnt[ctx.dvnt_i].remove(i);
+                    finished[ctx.dvnt_i].push(done);
                     continue;
                 }
             } else {
-                dvnt[dvnt_i][i].update(ref_score, 0.0);
+                dvnt[ctx.dvnt_i][i].update(ctx.ref_score, 0.0);
             }
             i += 1;
         }
@@ -274,16 +284,12 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         &self,
         scratch: &mut Scratch,
         dvnt: &FragEvalVec<'v>,
-        dvnt_i: usize,
-        dvnt_j: usize,
-        seg_i: usize,
-        ref_start: usize,
-        ref_end: usize,
+        ctx: VariantCtx,
     ) -> Result<Option<(f64, f64)>> {
-        let vnt_eval = &dvnt[dvnt_i][dvnt_j];
+        let vnt_eval = &dvnt[ctx.dvnt_i][ctx.dvnt_j];
         let window = match VariantWindow::compute(
-            ref_start,
-            ref_end,
+            ctx.ref_start,
+            ctx.ref_end,
             vnt_eval.start(),
             vnt_eval.ref_end(),
         ) {
@@ -294,16 +300,16 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         let vnt = vnt_eval.vnt();
         let alt = vnt.alt_allele();
         let p_variant = vnt.p_variant();
-        let seg_ref_start = self.seg_start[seg_i];
+        let seg_ref_start = self.seg_start[ctx.seg_i];
 
         let weighted_ref =
             weighted_ref_score(window, seg_ref_start, p_variant, self.pen, |nt_i| {
-                self.q(seg_i, nt_i)
+                self.q(ctx.seg_i, nt_i)
             })?;
 
         let read_offset = window.read_offset(seg_ref_start);
-        let revcmp = self.requires_revcmp(seg_i);
-        let seq = self.seg[seg_i].sequence();
+        let revcmp = self.requires_revcmp(ctx.seg_i);
+        let seq = self.seg[ctx.seg_i].sequence();
         let seq_len = seq.len();
 
         let alt_score = align_alt_to_read(
@@ -319,7 +325,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
                 } else {
                     (seq.get(fwd_nt_i).unwrap_or(b'N'), fwd_nt_i)
                 };
-                Ok((read_base, self.q(seg_i, q_nt_i)?))
+                Ok((read_base, self.q(ctx.seg_i, q_nt_i)?))
             },
             scratch,
         )?;

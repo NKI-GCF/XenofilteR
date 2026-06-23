@@ -270,10 +270,10 @@ impl<R: SimpleRec> HashLookup<R> {
         // Check if we have scoring records available.
         let (driving_records, lookup_records) = match (pending.driving, pending.lookup) {
             (StreamKind::Scoring { records: ra, .. }, StreamKind::Scoring { records: rb, .. }) => {
-                (Some(ra), Some(rb))
+                (Some(*ra), Some(*rb))
             }
-            (StreamKind::Scoring { records: ra, .. }, _) => (Some(ra), None),
-            (_, StreamKind::Scoring { records: rb, .. }) => (None, Some(rb)),
+            (StreamKind::Scoring { records: ra, .. }, _) => (Some(*ra), None),
+            (_, StreamKind::Scoring { records: rb, .. }) => (None, Some(*rb)),
             _ => (None, None),
         };
 

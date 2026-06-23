@@ -112,7 +112,7 @@ impl StreamBuf {
             }
         } else {
             StreamKind::Scoring {
-                records: self.records,
+                records: Box::new(self.records),
                 primary_count: self.primary_count,
             }
         }
@@ -132,7 +132,7 @@ pub(crate) enum StreamKind {
     },
     /// At least one primary needs NW scoring.
     Scoring {
-        records: SmallVec<[ScoringRecord; 2]>,
+        records: Box<SmallVec<[ScoringRecord; 2]>>,
         primary_count: usize,
     },
     /// No records received yet.
