@@ -90,7 +90,7 @@ impl<R: SimpleRec> FragmentState<R> {
         let mut perfect_self = true;
         for (flags, record) in self.flags.iter().zip(self.records.iter()) {
             let mcf = MdCigFlags::try_from_record(record, flags)?;
-            if flags.is_secondary() || !mcf.is_perfect() {
+            if flags.is_supplementary() || !mcf.is_perfect() {
                 perfect_self = false;
             }
             mcfs1.push(mcf);
@@ -101,7 +101,7 @@ impl<R: SimpleRec> FragmentState<R> {
         let mut perfect_other = true;
         for (flags, record) in other.flags.iter().zip(other.records.iter()) {
             let mcf = MdCigFlags::try_from_record(record, flags)?;
-            if flags.is_secondary() || !mcf.is_perfect() {
+            if flags.is_supplementary() || !mcf.is_perfect() {
                 perfect_other = false;
             }
             mcfs2.push(mcf);
