@@ -9,15 +9,6 @@ pub(crate) enum BaseOp {
     Ins(usize),
     Clip(usize),
     RefSkip(usize),
-    /// Position jump with penalty for secondary alignments, non-penalty for mate switch
-    /// in paired-end alignments. Possibly Relocate is no longer required. A test should
-    /// ensure that the secondary penalty is applied so that a read split into a smaller
-    /// primary plus a secondary alignment is not scored as high as a single, commensurate
-    /// primary alignment.
-    Relocate {
-        pos: usize,
-        penalty_score: f64,
-    },
 }
 
 pub(crate) struct ScoreOpIter<'a> {

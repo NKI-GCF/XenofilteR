@@ -14,7 +14,7 @@ use noodles::core::Region;
 use noodles::csi::BinningIndex;
 use noodles::{tabix, vcf};
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn read_tabix_index(path: &Path) -> Result<tabix::Index> {
     // Try <file>.tbi, then <file>.<ext>.tbi
@@ -22,7 +22,7 @@ fn read_tabix_index(path: &Path) -> Result<tabix::Index> {
     let tbi2 = {
         let mut p = path.as_os_str().to_owned();
         p.push(".tbi");
-        std::path::PathBuf::from(p)
+        PathBuf::from(p)
     };
     for tbi_path in &[&tbi1, &tbi2] {
         if tbi_path.exists() {
@@ -47,17 +47,13 @@ fn read_tabix_index(path: &Path) -> Result<tabix::Index> {
 
 /// Tabix-indexed BED file for random-access ambiguous-region queries.
 pub(crate) struct TabixBed {
-    reader: bgzf::io::Reader<File>,
     index: tabix::Index,
 }
 
 impl TabixBed {
     pub(crate) fn open(path: &Path) -> Result<Self> {
         let index = read_tabix_index(path)?;
-        let reader = bgzf::io::Reader::new(
-            File::open(path).map_err(|e| anyhow!("Cannot open BED {}: {e}", path.display()))?,
-        );
-        Ok(Self { reader, index })
+        Ok(Self { index })
     }
 
     /// Returns `true` if any BED record overlaps `[start, end)` (0-based).
@@ -93,7 +89,8 @@ pub(crate) struct TabixVcf {
 impl TabixVcf {
     pub(crate) fn open(path: &Path) -> Result<Self> {
         let index = read_tabix_index(path)?;
-        let file = File::open(path).map_err(|e| anyhow!("Cannot open VCF {}: {e}", path.display()))?;
+        let file =
+            File::open(path).map_err(|e| anyhow!("Cannot open VCF {}: {e}", path.display()))?;
         let mut reader = vcf::io::IndexedReader::new(file, index);
         let header = reader
             .read_header()

@@ -1,5 +1,5 @@
 use crate::alignment::SimpleRec;
-use crate::bam::{out_from_file, path_unicode_ok, BamOutput, OutputMode};
+use crate::bam::{out_from_file, path_unicode_ok, OutputMode};
 use crate::config::MatchingAlgorithm;
 use crate::config::{Config, StripReadSuffix};
 use crate::variant::{

@@ -15,8 +15,8 @@ use noodles::sam::{
     header::record::value::{map::program::tag, Map},
     Header,
 };
-use std::{fs::File, num::NonZeroUsize, path::Path};
 use std::io::Stdout;
+use std::{fs::File, num::NonZeroUsize, path::Path};
 
 // -- @PG helper ----------------------------------------------------------------
 
@@ -63,7 +63,9 @@ impl BamOutput {
 
 impl Default for BamOutput {
     fn default() -> Self {
-        Self::Stdout(BamWriter::from(Builder::default().build_from_writer(std::io::stdout())))
+        Self::Stdout(BamWriter::from(
+            Builder::default().build_from_writer(std::io::stdout()),
+        ))
     }
 }
 
@@ -102,15 +104,10 @@ impl MergedOutput {
         })
     }
 
-    pub(crate) fn header(&self) -> &Header {
-        &self.header
-    }
-
     pub(crate) fn write_alignment_record(&mut self, rec: &RecordBuf) -> std::io::Result<()> {
         self.writer.write_alignment_record(&self.header, rec)
     }
 }
-
 
 // -- Public constructors -------------------------------------------------------
 

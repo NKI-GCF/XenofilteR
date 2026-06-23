@@ -25,7 +25,7 @@ fn make_matcher(
     use crate::aln_stream::AlignmentStream;
     let s0 = Box::new(MockStream::new(0, stream0)) as Box<dyn AlignmentStream<RecordBuf>>;
     let s1 = Box::new(MockStream::new(1, stream1)) as Box<dyn AlignmentStream<RecordBuf>>;
-    CollatedMatcher::new_no_regions(cfg, smallvec![s0, s1])
+    CollatedMatcher::new(cfg, smallvec![s0, s1], [None, None], [None, None])
 }
 
 #[test]

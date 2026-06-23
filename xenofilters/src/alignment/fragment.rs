@@ -213,10 +213,6 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
                     self.nt_i += len;
                     ref_score += self.pen.gap_open + (len as f64) * self.pen.gap_extend;
                 }
-                BaseOp::Relocate { penalty_score, pos } => {
-                    self.refpos = pos;
-                    ref_score += penalty_score;
-                }
                 BaseOp::RefSkip(len) => {
                     self.refpos += len;
                 }

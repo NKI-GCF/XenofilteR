@@ -13,9 +13,6 @@ use std::path::Path;
 pub(crate) struct DiagnosticSite {
     pub(crate) pos: usize,
     pub(crate) ref_len: usize,
-    /// Alt allele bytes; reserved for pass-2 alt-allele validation once
-    /// ScoringRecord carries read sequence. Currently unused by `overlaps`.
-    pub(crate) alt: Vec<u8>,
 }
 
 impl DiagnosticSite {
@@ -68,15 +65,10 @@ impl DiagnosticVariants {
                 max_ref_len = ref_len;
             }
 
-            let alt_bases = record.alternate_bases();
-            let alt_bytes: &[u8] = alt_bases.as_ref();
-            for alt in alt_bytes.split(|&b| b == b',') {
-                per_ref.entry(ref_id).or_default().push(DiagnosticSite {
-                    pos,
-                    ref_len,
-                    alt: alt.to_vec(),
-                });
-            }
+            per_ref
+                .entry(ref_id)
+                .or_default()
+                .push(DiagnosticSite { pos, ref_len });
         }
 
         for sites in per_ref.values_mut() {
@@ -110,11 +102,7 @@ mod tests {
     use super::*;
 
     fn site(pos: usize, ref_len: usize) -> DiagnosticSite {
-        DiagnosticSite {
-            pos,
-            ref_len,
-            alt: b"A".to_vec(),
-        }
+        DiagnosticSite { pos, ref_len }
     }
 
     fn store(sites: &[(usize, usize, usize)]) -> DiagnosticVariants {

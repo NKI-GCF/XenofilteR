@@ -7,7 +7,6 @@
 
 pub(crate) mod ambiguous;
 pub(crate) mod diagnostic;
-pub(crate) mod early_assign;
 pub(crate) mod tabix_query;
 
 pub(crate) use ambiguous::AmbiguousRegions;

@@ -91,18 +91,6 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         })
     }
 
-    /// Convenience constructor with no BED/VCF acceleration (tests and default path).
-    pub(crate) fn new_no_regions(
-        config: Config,
-        aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
-    ) -> Result<Self> {
-        // TabixBed/TabixVcf are not Default, so we use None directly.
-        // The array [None, None] needs explicit typing.
-        let bed: [Option<TabixBed>; 2] = [None, None];
-        let vcf: [Option<TabixVcf>; 2] = [None, None];
-        Self::new(config, aln, bed, vcf)
-    }
-
     pub(crate) fn process(&mut self) -> Result<()> {
         loop {
             let fa = self.a.next_fragment()?;
@@ -208,22 +196,20 @@ impl<R: SimpleRec> CollatedMatcher<R> {
 
         // Unmapped fast-path: if partial_cmp resolved it and no region forces scoring,
         // skip cmp_perfect entirely.
-        if let Some(o) = ord {
-            if !a_needs_scoring && !b_needs_scoring {
+        if let Some(o) = ord
+            && !a_needs_scoring && !b_needs_scoring {
                 return self.apply_ordered(a, b, o);
             }
-        }
 
         let (mcfs1, mcfs2) = a.cmp_perfect(&b, &mut ord)?;
 
         // Perfect-match fast-path: cmp_perfect resolved it and no region forces scoring.
-        if let Some(o) = ord {
-            if !a_needs_scoring && !b_needs_scoring {
+        if let Some(o) = ord
+            && !a_needs_scoring && !b_needs_scoring {
                 drop(mcfs1);
                 drop(mcfs2);
                 return self.apply_ordered(a, b, o);
             }
-        }
 
         // Full NW scoring (both imperfect, or region overlap forces it).
         let s1 = self.score_one(&a, mcfs1, 0)?;

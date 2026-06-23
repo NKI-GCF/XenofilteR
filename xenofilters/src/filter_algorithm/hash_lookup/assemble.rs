@@ -84,15 +84,9 @@ impl StreamBuf {
     /// Evaluate early-assignability once all primaries have arrived.
     /// Returns `StreamKind::Early` only if every primary is perfect and
     /// none overlaps an ambiguous BED or diagnostic VCF region.
-    fn classify(
-        self,
-        bed: Option<&AmbiguousRegions>,
-        vcf: Option<&DiagnosticVariants>,
-    ) -> StreamKind {
+    fn classify(self, bed: Option<&AmbiguousRegions>, vcf: Option<&DiagnosticVariants>) -> StreamKind {
         let all_assignable = self.records.iter().filter(|r| r.is_primary()).all(|r| {
-            if !r.is_perfect() {
-                return false;
-            }
+            if !r.is_perfect() { return false; }
             if let Some(b) = bed
                 && b.overlaps(r.ref_id, r.pos, r.pos + r.ref_len) {
                     return false;
@@ -106,15 +100,9 @@ impl StreamBuf {
 
         if all_assignable && self.primary_count > 0 {
             let offsets = self.records.iter().map(|r| r.virtual_offset).collect();
-            StreamKind::Early {
-                virtual_offsets: offsets,
-                primary_count: self.primary_count,
-            }
+            StreamKind::Early { virtual_offsets: offsets }
         } else {
-            StreamKind::Scoring {
-                records: Box::new(self.records),
-                primary_count: self.primary_count,
-            }
+            StreamKind::Scoring { records: Box::new(self.records) }
         }
     }
 }
@@ -125,30 +113,17 @@ impl StreamBuf {
 
 #[derive(Default)]
 pub(crate) enum StreamKind {
-    /// All primaries perfect, no region overlap.
     Early {
         virtual_offsets: SmallVec<[u64; 2]>,
-        primary_count: usize,
     },
-    /// At least one primary needs NW scoring.
     Scoring {
         records: Box<SmallVec<[ScoringRecord; 2]>>,
-        primary_count: usize,
     },
-    /// No records received yet.
     #[default]
     Empty,
 }
 
-
 impl StreamKind {
-    pub(crate) fn primary_count(&self) -> usize {
-        match self {
-            StreamKind::Early { primary_count, .. } => *primary_count,
-            StreamKind::Scoring { primary_count, .. } => *primary_count,
-            StreamKind::Empty => 0,
-        }
-    }
     pub(crate) fn is_early(&self) -> bool {
         matches!(self, StreamKind::Early { .. })
     }
@@ -157,9 +132,7 @@ impl StreamKind {
     }
     pub(crate) fn virtual_offsets(&self) -> SmallVec<[u64; 2]> {
         match self {
-            StreamKind::Early {
-                virtual_offsets, ..
-            } => virtual_offsets.clone(),
+            StreamKind::Early { virtual_offsets, .. } => virtual_offsets.clone(),
             StreamKind::Scoring { records, .. } => {
                 records.iter().map(|r| r.virtual_offset).collect()
             }
@@ -225,7 +198,7 @@ impl PendingFragment {
     }
 
     fn expected_primaries(&self) -> usize {
-        self.is_paired.map_or(1, |p| if p { 2 } else { 1 })
+        self.is_paired.map_or(1, |p| p as usize + 1)
     }
 
     /// Check completion and classify streams that have enough primaries.
@@ -247,28 +220,11 @@ impl PendingFragment {
             self.lookup = buf.classify(bed, vcf);
         }
 
-        self.is_complete_inner(exp)
+        self.is_complete_inner()
     }
 
-    fn is_complete_inner(&self, exp: usize) -> bool {
-        // Both streams must classify their records before a decision is made.
-        // Early-assignment-before-lookup is disabled: without it, ties are correctly
-        // detected and losing-stream records are routed to filtered output (not unmatched).
+    fn is_complete_inner(&self) -> bool {
         !self.driving.is_empty() && !self.lookup.is_empty()
-    }
-
-    pub(crate) fn can_early_assign(&self) -> bool {
-        // True when both streams are classified and at least one qualified as Early.
-        let exp = self.expected_primaries();
-        if self.driving.is_empty() || self.lookup.is_empty() {
-            return false;
-        }
-        (matches!(&self.driving, StreamKind::Early { .. }) && self.driving.primary_count() >= exp)
-            || (matches!(&self.lookup, StreamKind::Early { .. }) && self.lookup.primary_count() >= exp)
-    }
-
-    pub(crate) fn is_complete(&self) -> bool {
-        self.is_complete_inner(self.expected_primaries())
     }
 }
 
@@ -361,7 +317,6 @@ mod tests {
         let mut frag = PendingFragment::new(0);
         let complete = frag.push(rec(0, true, 0, 100), 0, None, None);
         assert!(!complete);
-        assert!(!frag.is_complete());
         assert!(frag.lookup.is_empty());
         assert!(matches!(&frag.driving, StreamKind::Early { .. }));
     }

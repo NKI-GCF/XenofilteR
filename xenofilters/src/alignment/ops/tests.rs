@@ -107,7 +107,6 @@ fn op_repr(op: &BaseOp) -> String {
         BaseOp::Ins(n) => format!("I{n}"),
         BaseOp::Clip(n) => format!("C{n}"),
         BaseOp::RefSkip(n) => format!("N{n}"),
-        BaseOp::Relocate { pos, .. } => format!("R{pos}"),
     }
 }
 
