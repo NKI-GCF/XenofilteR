@@ -201,58 +201,47 @@ impl<R: SimpleRec> CollatedMatcher<R> {
     }
 
     fn score_pair(&mut self, a: FragmentState<R>, b: FragmentState<R>) -> Result<()> {
-        // Check BED/VCF before fast paths: even a perfect alignment must go through
-        // full scoring if it overlaps an ambiguous region or diagnostic position.
         let a_needs_scoring = self.fragment_overlaps_region(&a, 0)?;
         let b_needs_scoring = self.fragment_overlaps_region(&b, 1)?;
 
         let mut ord = a.partial_cmp(&b);
 
-        enum Res {
-            Ordered(std::cmp::Ordering),
-            Scored(f64),
+        // Unmapped fast-path: if partial_cmp resolved it and no region forces scoring,
+        // skip cmp_perfect entirely.
+        if let Some(o) = ord {
+            if !a_needs_scoring && !b_needs_scoring {
+                return self.apply_ordered(a, b, o);
+            }
         }
 
-        let res = {
-            let (mcfs1, mcfs2) = if ord.is_some() && !a_needs_scoring && !b_needs_scoring {
-                // Unmapped fast-path: skip cmp_perfect entirely.
-                return self.apply_ordered(a, b, ord.unwrap());
-            } else {
-                a.cmp_perfect(&b, &mut ord)?
-            };
+        let (mcfs1, mcfs2) = a.cmp_perfect(&b, &mut ord)?;
 
-            if let Some(o) = ord
-                && !a_needs_scoring && !b_needs_scoring {
-                    // Perfect-match fast-path: no region overlap, no full scoring.
-                    drop(mcfs1);
-                    drop(mcfs2);
-                    return self.apply_ordered(a, b, o);
-                }
+        // Perfect-match fast-path: cmp_perfect resolved it and no region forces scoring.
+        if let Some(o) = ord {
+            if !a_needs_scoring && !b_needs_scoring {
+                drop(mcfs1);
+                drop(mcfs2);
+                return self.apply_ordered(a, b, o);
+            }
+        }
 
-            // Full NW scoring (either both imperfect, or region overlap forces it).
-            let s1 = self.score_one(&a, mcfs1, 0)?;
-            let s2 = self.score_one(&b, mcfs2, 1)?;
-            Res::Scored(s1 - s2)
-        };
+        // Full NW scoring (both imperfect, or region overlap forces it).
+        let s1 = self.score_one(&a, mcfs1, 0)?;
+        let s2 = self.score_one(&b, mcfs2, 1)?;
+        let delta = s1 - s2;
 
-        use std::cmp::Ordering::*;
-        match res {
-            Res::Scored(delta) if delta > self.ambiguous_log_threshold => {
-                let dec = self.phred_decision(delta);
-                self.emit_filtered(b)?;
-                self.emit_records_owned(a, dec.as_ref(), Some(true))?;
-            }
-            Res::Scored(delta) if delta < -self.ambiguous_log_threshold => {
-                let dec = self.phred_decision(-delta);
-                self.emit_filtered(a)?;
-                self.emit_records_owned(b, dec.as_ref(), Some(true))?;
-            }
-            Res::Scored(_) => {
-                let dec = self.add_decision_tag.then_some(Decision::Ambiguous);
-                self.emit_records_owned(a, dec.as_ref(), None)?;
-                self.emit_records_owned(b, dec.as_ref(), None)?;
-            }
-            Res::Ordered(_) => unreachable!("handled above"),
+        if delta > self.ambiguous_log_threshold {
+            let dec = self.phred_decision(delta);
+            self.emit_filtered(b)?;
+            self.emit_records_owned(a, dec.as_ref(), Some(true))?;
+        } else if delta < -self.ambiguous_log_threshold {
+            let dec = self.phred_decision(-delta);
+            self.emit_filtered(a)?;
+            self.emit_records_owned(b, dec.as_ref(), Some(true))?;
+        } else {
+            let dec = self.add_decision_tag.then_some(Decision::Ambiguous);
+            self.emit_records_owned(a, dec.as_ref(), None)?;
+            self.emit_records_owned(b, dec.as_ref(), None)?;
         }
         Ok(())
     }
@@ -263,7 +252,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         b: FragmentState<R>,
         ord: std::cmp::Ordering,
     ) -> Result<()> {
-        use std::cmp::Ordering::*;
+        use std::cmp::Ordering::{Equal, Greater, Less};
         match ord {
             Greater => {
                 self.emit_filtered(b)?;
