@@ -1,4 +1,4 @@
-use crate::bam::{BamFormat, BamOutput, OutputMode};
+use crate::bam::{BamFormat, OutputMode};
 use crate::config::{Config, StripReadSuffix};
 use crate::tests::create_record;
 use crate::variant::StoreTrait;
@@ -66,15 +66,6 @@ impl MockStream {
     fn write_record(&mut self, rec: RecordBuf, state: Option<bool>) -> Result<()> {
         self.written.push((rec, state));
         Ok(())
-    }
-    fn fetch_by_virtual_offset(&mut self, virtual_offset: u64) -> Result<RecordBuf> {
-        self.original_reads
-            // Tests usually use small 0-based offsets matching the read index
-            .get(virtual_offset as usize)
-            .cloned()
-            // Fallback to the first read just in case the mock offset is weird
-            .or_else(|| self.original_reads.first().cloned())
-            .ok_or_else(|| anyhow!("MockStream has no original reads to fetch"))
     }
 
     /// Inherent implementation; renamed to avoid ambiguity with the trait method.
