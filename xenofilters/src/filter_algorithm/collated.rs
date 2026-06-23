@@ -218,11 +218,11 @@ impl<R: SimpleRec> CollatedMatcher<R> {
 
         if delta > self.ambiguous_log_threshold {
             let dec = self.phred_decision(delta);
-            self.emit_filtered(b)?;
+            self.emit_discarded(b)?;
             self.emit_records_owned(a, dec.as_ref(), Some(true))?;
         } else if delta < -self.ambiguous_log_threshold {
             let dec = self.phred_decision(-delta);
-            self.emit_filtered(a)?;
+            self.emit_discarded(a)?;
             self.emit_records_owned(b, dec.as_ref(), Some(true))?;
         } else {
             let dec = self.add_decision_tag.then_some(Decision::Ambiguous);
@@ -241,12 +241,12 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         use std::cmp::Ordering::{Equal, Greater, Less};
         match ord {
             Greater => {
-                self.emit_filtered(b)?;
+                self.emit_discarded(b)?;
                 let dec = self.add_decision_tag.then_some(Decision::First);
                 self.emit_records_owned(a, dec.as_ref(), Some(true))?;
             }
             Less => {
-                self.emit_filtered(a)?;
+                self.emit_discarded(a)?;
                 let dec = self.add_decision_tag.then_some(Decision::Last);
                 self.emit_records_owned(b, dec.as_ref(), Some(true))?;
             }
@@ -342,7 +342,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             })
     }
 
-    fn emit_filtered(&mut self, mut frag: FragmentState<R>) -> Result<()> {
+    fn emit_discarded(&mut self, mut frag: FragmentState<R>) -> Result<()> {
         let nr = frag.get_nr();
         for r in frag.drain_records() {
             let stream = if nr == 0 { &mut self.a } else { &mut self.b };
@@ -385,7 +385,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
 
     pub(crate) fn print_counters(&self) {
         for i in 0..2 {
-            eprintln!("collated[filter:{}]: {}", i, self.branch_counters[i << 1]);
+            eprintln!("collated[discard:{}]: {}", i, self.branch_counters[i << 1]);
             eprintln!(
                 "collated[out:{}]: {}",
                 i,

@@ -5,7 +5,7 @@ fn base_config() -> Config {
     Config {
         alignment: vec!["a.bam".into(), "b.bam".into()],
         output: vec!["out1.bam".into(), "out2.bam".into()],
-        filtered_output: vec![],
+        discarded_output: vec![],
         ambiguous_output: vec![],
         sample_variants: vec![],
         population_variants: vec![],
@@ -38,9 +38,9 @@ fn test_validate_rejects_too_many_outputs() {
 }
 
 #[test]
-fn test_validate_rejects_too_many_filtered_outputs() {
+fn test_validate_rejects_too_many_discarded_outputs() {
     let mut c = base_config();
-    c.filtered_output = vec!["f1".into(), "f2".into(), "f3".into()];
+    c.discarded_output = vec!["f1".into(), "f2".into(), "f3".into()];
     assert!(c.validate_and_init().is_err());
 }
 
@@ -282,10 +282,10 @@ fn test_merged_output_mutually_exclusive_with_output() {
 }
 
 #[test]
-fn test_merged_output_mutually_exclusive_with_filtered() {
+fn test_merged_output_mutually_exclusive_with_discarded() {
     let mut config = valid_base_config();
     config.merged_output = Some(PathBuf::from("merged.bam"));
-    config.filtered_output = vec![PathBuf::from("filtered.bam")];
+    config.discarded_output = vec![PathBuf::from("discarded.bam")];
 
     let err = config.validate_and_init().unwrap_err();
     assert!(err

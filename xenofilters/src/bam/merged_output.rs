@@ -4,7 +4,7 @@
 //!
 //! # Design
 //!
-//! When `--merged-output <file>` is given, winners, filtered reads, and
+//! When `--merged-output <file>` is given, winners, discarded reads, and
 //! ambiguous reads all go to the same BAM file.  Each destination is
 //! distinguished by a read-group ID suffix appended to the original `RG:Z`
 //! aux tag:

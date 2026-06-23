@@ -272,7 +272,7 @@ fn test_maximize_delta_ignores_non_positive_delta() -> Result<()> {
     let v = TestVariant::new(0, 1, 0.1);
     let mut e = Eval::new();
     e.set_variant(&v);
-    e.update(5.0, 5.0); // delta == 0, filtered out
+    e.update(5.0, 5.0); // delta == 0, discarded out
     let mut dvnt: FragEvalVec<'_> = smallvec![smallvec![e]];
     let mut dp = SmallVec::new();
     assert_eq!(maximize_delta(&mut dvnt, &mut dp), 0.0);

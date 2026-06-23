@@ -158,7 +158,7 @@ where
             .transpose()?;
 
         opt.output.get(i).map(path_unicode_ok).transpose()?;
-        opt.filtered_output
+        opt.discarded_output
             .get(i)
             .map(path_unicode_ok)
             .transpose()?;
@@ -265,7 +265,7 @@ where
                     .map(|f| out_from_file(f, &self.header, add_pg, threads))
                     .transpose()?,
                 filt: opt
-                    .filtered_output
+                    .discarded_output
                     .get(i)
                     .map(|f| out_from_file(f, &self.header, add_pg, threads))
                     .transpose()?,

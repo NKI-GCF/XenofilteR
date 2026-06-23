@@ -37,7 +37,7 @@ For every fragment (one or two reads sharing the same name) `xenofilters`:
 4. **Variant-aware rescue** (optional, `-s` / `-p`) — if a VCF/BCF is supplied, known
    variants are scored via a Needleman–Wunsch alignment of the alt allele against the
    read.  A positive score delta (alt allele better supported than reference) is added to
-   the fragment score, potentially rescuing alignments that would otherwise be filtered.
+   the fragment score, potentially rescuing alignments that would otherwise be discarded.
    Non-overlapping variants are combined with a weighted interval scheduling DP.
 
 5. **Decision** — the stream with the higher score wins.  If the Phred-scaled score
@@ -87,8 +87,8 @@ bwa mem -M -t 8 mouse_ref.fa reads_R1.fq.gz reads_R2.fq.gz \
 xenofilters human.bam mouse.bam \
   --output human_best.bam \
   --output mouse_best.bam \
-  --filtered-output human_filtered.bam \
-  --filtered-output mouse_filtered.bam \
+  --discarded-output human_discarded.bam \
+  --discarded-output mouse_discarded.bam \
   --ambiguous-output ambiguous.bam \
   --threads 8 \
   --verbose
@@ -110,7 +110,7 @@ Options:
       Output file for winning reads (one per alignment stream).
       Defaults to stdout for the first stream when omitted.
 
-  -f, --filtered-output <PATH>...
+  -f, --discarded-output <PATH>...
       Output file for reads that lost (one per stream). Default: discard.
 
   -a, --ambiguous-output <PATH>...
@@ -127,7 +127,7 @@ Options:
 
   -U, --discard-unmapped
       Discard fragments that are unmapped in every stream, even from
-      --filtered-output.
+      --discarded-output.
 
   -m, --mismatch-penalty <F>
       Mismatch penalty (Phred-scaled, positive). [default: 4]
@@ -176,7 +176,7 @@ Options:
 | Stream | Reads written |
 |--------|--------------|
 | `--output` | Reads that aligned **better** to this reference |
-| `--filtered-output` | Reads that aligned **worse** (won by another stream) |
+| `--discarded-output` | Reads that aligned **worse** (won by another stream) |
 | `--ambiguous-output` | Reads where no stream was clearly better |
 
 All output files are bgzf-compressed BAM. The input BAM header (plus an

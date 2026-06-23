@@ -523,7 +523,7 @@ impl<R: SimpleRec> HashLookup<R> {
 
     pub(crate) fn print_counters(&self) {
         for i in 0..2 {
-            eprintln!("hashlookup[filter:{}]: {}", i, self.branch_counters[i << 1]);
+            eprintln!("hashlookup[discard:{}]: {}", i, self.branch_counters[i << 1]);
             eprintln!(
                 "hashlookup[out:{}]: {}",
                 i,

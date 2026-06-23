@@ -23,7 +23,7 @@ impl<R: SimpleRec> LineByLine<R> {
     ///
     /// `best_state`:
     /// - `Some(true)`  → winning alignment (→ `--output`)
-    /// - `Some(false)` → losing alignment  (→ `--filtered-output`)
+    /// - `Some(false)` → losing alignment  (→ `--discarded-output`)
     /// - `None`        → ambiguous         (→ `--ambiguous-output`)
     pub(super) fn write_record(
         &mut self,
@@ -47,18 +47,18 @@ impl<R: SimpleRec> LineByLine<R> {
     ///
     /// Counter layout (index → meaning):
     /// ```text
-    /// i*2+0  : filtered from alignment i
+    /// i*2+0  : discarded from alignment i
     /// i*2+1  : assigned to alignment i
     /// 16+i   : ambiguous for alignment i
-    /// 24+i   : unmapped-filtered for alignment i
+    /// 24+i   : unmapped-discarded for alignment i
     /// ```
     pub(super) fn print_counters(&self, i: usize) {
         tracing::info!(
             stream = i,
-            filtered  = self.branch_counters[i << 1],
+            discarded  = self.branch_counters[i << 1],
             assigned  = self.branch_counters[1 + (i << 1)],
             ambiguous = self.branch_counters[16 + i],
-            unmapped_filtered = self.branch_counters[24 + i],
+            unmapped_discarded = self.branch_counters[24 + i],
             "Stream summary"
         );
     }

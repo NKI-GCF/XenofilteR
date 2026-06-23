@@ -16,9 +16,9 @@ pub(crate) fn setup_mock_streams() -> SmallVec<[Box<dyn AlignmentStream<RecordBu
         vec![
             create_record(b"R0", "10M", &[], &[], "10", false).unwrap(), // perfect => out
             create_record(b"R1", "10M", &[], &[], "10", false).unwrap(), // perfect => out
-            create_record(b"R2", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => filtered
+            create_record(b"R2", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => discarded
             create_record(b"R3", "10M", &[], &[], "10", false).unwrap(), // perfect => out
-            create_record(b"R4", "*", &[], &[], "10", false).unwrap(),   // unmapped => filtered
+            create_record(b"R4", "*", &[], &[], "10", false).unwrap(),   // unmapped => discarded
             create_record(b"R5", "10M", &[], &[], "10", false).unwrap(), // perfect => ambiguous
             create_record(b"R6", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => ambiguous
             create_record(b"R7", "*", &[], &[], "10", false).unwrap(),   // unmapped => ambiguous
@@ -28,15 +28,15 @@ pub(crate) fn setup_mock_streams() -> SmallVec<[Box<dyn AlignmentStream<RecordBu
     let stream2 = MockStream::new(
         1,
         vec![
-            create_record(b"R0", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => filtered
-            create_record(b"R1", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => filtered
+            create_record(b"R0", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => discarded
+            create_record(b"R1", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => discarded
             create_record(b"R2", "10M", &[], &[], "10", false).unwrap(), // perfect => out
-            create_record(b"R3", "*", &[], &[], "10", false).unwrap(),   // unmapped => filtered
+            create_record(b"R3", "*", &[], &[], "10", false).unwrap(),   // unmapped => discarded
             create_record(b"R4", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => out
             create_record(b"R5", "10M", &[], &[], "10", false).unwrap(), // perfect => ambiguous
             create_record(b"R6", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => ambiguous
             create_record(b"R7", "*", &[], &[], "9", false).unwrap(),    // unmapped => ambiguous
-            create_record(b"R8", "5M5S", &[], &[], "5", false).unwrap(), // less match => filtered
+            create_record(b"R8", "5M5S", &[], &[], "5", false).unwrap(), // less match => discarded
         ],
     );
     smallvec![
@@ -49,7 +49,7 @@ fn setup_mock_streams_r4() -> SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>
     let stream1 = MockStream::new(
         0,
         vec![
-            create_record(b"R4", "*", &[], &[], "10", false).unwrap(), // unmapped => filtered
+            create_record(b"R4", "*", &[], &[], "10", false).unwrap(), // unmapped => discarded
         ],
     );
     let stream2 = MockStream::new(
@@ -127,7 +127,7 @@ fn test_branch_counters_and_skipping() -> Result<()> {
     assert!(lbl.write_record(0, unmapped_single, Some(false)).is_ok());
     lbl.print_counters(0);
     assert_eq!(lbl.branch_counters[16], 2); // ambiguous:0: 2
-    assert_eq!(lbl.branch_counters[0], 1); // filter:0:
+    assert_eq!(lbl.branch_counters[0], 1); // discard:0:
                                            // handle_record_is_fragment_finished should skip secondary
     let mut best: AlnBuffer<RecordBuf> = smallvec![];
     let finished = lbl
@@ -158,11 +158,11 @@ fn test_process_multi_stream_sync_r4() -> Result<()> {
 
     lbl.process_sequential()?;
 
-    assert_eq!(lbl.branch_counters[2], 0); // filter:1:
+    assert_eq!(lbl.branch_counters[2], 0); // discard:1:
     assert_eq!(lbl.branch_counters[3], 1); // out:1: R4
     assert_eq!(lbl.branch_counters[17], 0); // ambiguous:1:
     assert_eq!(lbl.branch_counters[25], 0); // unmapped:1:
-    assert_eq!(lbl.branch_counters[0], 1); // filter:0: R4
+    assert_eq!(lbl.branch_counters[0], 1); // discard:0: R4
     assert_eq!(lbl.branch_counters[1], 0); // out:0:
     assert_eq!(lbl.branch_counters[16], 0); // ambiguous:0:
     assert_eq!(lbl.branch_counters[24], 0); // unmapped:0:
@@ -190,16 +190,16 @@ fn test_process_multi_stream_sync() -> Result<()> {
     // R5 -> tie perfect/perfect -> ambiguity
     // R6 -> tie mismatch/mismatch -> ambiguity
     // R7 -> unmapped/unmapped -> ambiguity
-    // R8 -> stream 0 (mismatch vs more mismatches, but stream 1 filtered)
+    // R8 -> stream 0 (mismatch vs more mismatches, but stream 1 discarded)
 
     lbl.process_sequential()?;
     // this is the order of printing, first aln 1 then aln 0
-    assert_eq!(lbl.branch_counters[2], 4); // filter:1: R0, R1, R3, R8
+    assert_eq!(lbl.branch_counters[2], 4); // discard:1: R0, R1, R3, R8
     assert_eq!(lbl.branch_counters[3], 2); // out:1: R2, R4
     assert_eq!(lbl.branch_counters[17], 2); // ambiguous:1: R5, R6
     assert_eq!(lbl.branch_counters[25], 1); // unmapped:1: R7
 
-    assert_eq!(lbl.branch_counters[0], 2); // filter:0: R2, R4
+    assert_eq!(lbl.branch_counters[0], 2); // discard:0: R2, R4
     assert_eq!(lbl.branch_counters[1], 4); // out:0: R0, R1, R3, R8
     assert_eq!(lbl.branch_counters[16], 2); // ambiguous:0: R5, R6
     assert_eq!(lbl.branch_counters[24], 1); // unmapped:0: R7
@@ -262,7 +262,7 @@ fn test_handle_ordering_drain_logic() -> Result<()> {
 
     assert_eq!(best.len(), 1);
     assert_eq!(best[0].get_nr(), 0);
-    assert_eq!(lbl.branch_counters[1 + 1], 1); // stream 1 filtered
+    assert_eq!(lbl.branch_counters[1 + 1], 1); // stream 1 discarded
     eprintln!("Writing best fragment from stream {}", best[0].get_nr());
     lbl.handle_best(&mut best, None)?;
     lbl.print_counters(0);
@@ -348,11 +348,11 @@ fn test_observed_pe_scoring1() -> Result<()> {
         LineByLine::new(config, setup_mock_streams_observed_examples())?;
 
     lbl.process_sequential()?;
-    assert_eq!(lbl.branch_counters[2], 2); // filter:1: both reads
+    assert_eq!(lbl.branch_counters[2], 2); // discard:1: both reads
     assert_eq!(lbl.branch_counters[3], 0); // out:1:
     assert_eq!(lbl.branch_counters[17], 0); // ambiguous:1:
     assert_eq!(lbl.branch_counters[25], 0); // unmapped:1:
-    assert_eq!(lbl.branch_counters[0], 0); // filter:0:
+    assert_eq!(lbl.branch_counters[0], 0); // discard:0:
     assert_eq!(lbl.branch_counters[1], 2); // out:0: both reads
     assert_eq!(lbl.branch_counters[16], 0); // ambiguous:0:
     assert_eq!(lbl.branch_counters[24], 0); // unmapped:0:

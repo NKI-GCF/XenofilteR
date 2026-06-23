@@ -10,7 +10,7 @@ Compares multiple aligned BAM streams (host vs graft vs ...) per fragment and de
 
 - alignment is better than in other species → -o / stdout
 - ambiguous is as good or too close to other species→ --ambiguous-output
-- alignment is worse than in other species → --filtered-output
+- alignment is worse than in other species → --discarded-output
 
 ## Features (compared to original XenofilteR)
 

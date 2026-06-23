@@ -10,7 +10,7 @@ use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::Header;
 
 pub(crate) enum OutputMode {
-    /// Separate files for winners / filtered / ambiguous (original behaviour).
+    /// Separate files for winners / discarded / ambiguous (original behaviour).
     MultiFile {
         output: Option<BamOutput>,
         filt: Option<BamOutput>,

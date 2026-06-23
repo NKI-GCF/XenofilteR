@@ -71,7 +71,7 @@ impl Default for BamOutput {
 
 // -- MergedOutput --------------------------------------------------------------
 
-/// A single BAM file that receives winners, filtered reads, and ambiguous reads
+/// A single BAM file that receives winners, discarded reads, and ambiguous reads
 /// from all streams, distinguished by `RG:Z` tag suffixes.
 ///
 /// Created when `--merged-output` is supplied.  The header it was opened with

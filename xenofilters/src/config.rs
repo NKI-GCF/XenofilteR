@@ -54,14 +54,14 @@ pub(crate) struct Config {
     #[arg(short, long, num_args = 1..ARG_MAX)]
     pub(crate) output: Vec<PathBuf>,
 
-    /// Output file for all alignments (winners, filtered, and ambiguous).
-    /// If set, overrides --output, --filtered-output, and --ambiguous-output.
+    /// Output file for all alignments (winners, discarded, and ambiguous).
+    /// If set, overrides --output, --discarded-output, and --ambiguous-output.
     #[arg(short, long)]
     pub(crate) merged_output: Option<PathBuf>,
 
     /// Discard fragments distancing more in alignment to these files. Default: do not discard
     #[arg(short, long, num_args = 0..ARG_MAX)]
-    pub(crate) filtered_output: Vec<PathBuf>,
+    pub(crate) discarded_output: Vec<PathBuf>,
 
     /// Write ambiguous reads (equally good mappings) to these files. Default: do not write
     #[arg(short, long, num_args = 0..ARG_MAX)]
@@ -220,8 +220,8 @@ impl Config {
         }
         if self.merged_output.is_some() {
             ensure!(
-                self.output.is_empty() && self.filtered_output.is_empty() && self.ambiguous_output.is_empty(),
-                "Cannot use --merged-output in combination with --output, --filtered-output, or --ambiguous-output."
+                self.output.is_empty() && self.discarded_output.is_empty() && self.ambiguous_output.is_empty(),
+                "Cannot use --merged-output in combination with --output, --discarded-output, or --ambiguous-output."
             );
         }
         ensure!(
@@ -292,8 +292,8 @@ impl Config {
             "More output paths than logical alignment processing streams specified"
         );
         ensure!(
-            self.filtered_output.len() <= logical_len,
-            "More filtered output paths than logical alignment processing streams specified"
+            self.discarded_output.len() <= logical_len,
+            "More discarded output paths than logical alignment processing streams specified"
         );
 
         if aln_count == 1 {

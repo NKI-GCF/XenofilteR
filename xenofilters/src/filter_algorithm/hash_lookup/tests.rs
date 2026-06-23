@@ -35,7 +35,7 @@ fn test_hash_perfect_vs_imperfect_stream0_wins() -> Result<()> {
     let mut h = make_lookup(s0, s1, config())?;
     h.process()?;
     assert_eq!(h.branch_counters[1], 1); // out:0
-    assert_eq!(h.branch_counters[2], 1); // filter:1
+    assert_eq!(h.branch_counters[2], 1); // discard:1
     Ok(())
 }
 
@@ -45,7 +45,7 @@ fn test_hash_perfect_vs_imperfect_stream1_wins() -> Result<()> {
     let s1 = vec![create_record(b"R1", "10M", &[], &[], "10", false)?];
     let mut h = make_lookup(s0, s1, config())?;
     h.process()?;
-    assert_eq!(h.branch_counters[0], 1); // filter:0
+    assert_eq!(h.branch_counters[0], 1); // discard:0
     assert_eq!(h.branch_counters[3], 1); // out:1
     Ok(())
 }
@@ -85,7 +85,7 @@ fn test_hash_unmapped_vs_mapped() -> Result<()> {
     let s1 = vec![create_record(b"R1", "10M", &[], &[], "10", false)?];
     let mut h = make_lookup(s0, s1, config())?;
     h.process()?;
-    assert_eq!(h.branch_counters[0], 1); // filter:0
+    assert_eq!(h.branch_counters[0], 1); // discard:0
     assert_eq!(h.branch_counters[3], 1); // out:1
     Ok(())
 }
@@ -104,7 +104,7 @@ fn test_hash_suffix_stripping() -> Result<()> {
     let mut h = make_lookup(s0, s1, cfg)?;
     h.process()?;
     assert_eq!(h.branch_counters[1], 1); // out:0
-    assert_eq!(h.branch_counters[2], 1); // filter:1
+    assert_eq!(h.branch_counters[2], 1); // discard:1
     Ok(())
 }
 
@@ -121,7 +121,7 @@ fn test_hash_paired_end_both_mates_grouped() -> Result<()> {
     let mut h = make_lookup(s0, s1, config())?;
     h.process()?;
     assert_eq!(h.branch_counters[1], 2); // out:0 (both mates)
-    assert_eq!(h.branch_counters[2], 2); // filter:1 (both mates)
+    assert_eq!(h.branch_counters[2], 2); // discard:1 (both mates)
     Ok(())
 }
 
