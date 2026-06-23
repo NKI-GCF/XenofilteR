@@ -1,14 +1,19 @@
 use crate::alignment::AlignmentError;
-use noodles::sam::alignment::record::cigar::op::{Op, Kind};
 use crate::alignment::MdCigFlags;
+use noodles::sam::alignment::record::cigar::op::{Kind, Op};
 
 pub(crate) enum BaseOp {
     Match,
     Mis,
-    Del(usize),   // still worth grouping — no per-base work
+    Del(usize), // still worth grouping — no per-base work
     Ins(usize),
     Clip(usize),
     RefSkip(usize),
+    /// Position jump with penalty for secondary alignments, non-penalty for mate switch
+    /// in paired-end alignments. Possibly Relocate is no longer required. A test should
+    /// ensure that the secondary penalty is applied so that a read split into a smaller
+    /// primary plus a secondary alignment is not scored as high as a single, commensurate
+    /// primary alignment.
     Relocate {
         pos: usize,
         penalty_score: f64,
@@ -28,7 +33,13 @@ impl<'a> ScoreOpIter<'a> {
     pub(crate) fn new(md_cig: &'a MdCigFlags) -> Self {
         let md = md_cig.get_md();
         let cigar = md_cig.get_cigar().iter();
-        Self { md, cigar, md_at: 0, md_match_remain: 0, cig_m_remain: 0 }
+        Self {
+            md,
+            cigar,
+            md_at: 0,
+            md_match_remain: 0,
+            cig_m_remain: 0,
+        }
     }
 }
 
@@ -44,7 +55,10 @@ impl<'a> Iterator for ScoreOpIter<'a> {
                 Kind::SoftClip => Some(Ok(BaseOp::Clip(op.len()))),
                 Kind::Insertion => Some(Ok(BaseOp::Ins(op.len()))),
                 Kind::Skip => Some(Ok(BaseOp::RefSkip(op.len()))),
-                Kind::Deletion => Some(self.skip_md_deletion(op.len()).map(|()| BaseOp::Del(op.len()))),
+                Kind::Deletion => Some(
+                    self.skip_md_deletion(op.len())
+                        .map(|()| BaseOp::Del(op.len())),
+                ),
                 Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
                     self.cig_m_remain = op.len() - 1;
                     Some(self.next_md_base())
@@ -67,7 +81,9 @@ impl<'a> ScoreOpIter<'a> {
                 Some(n) if n.is_ascii_digit() => {
                     let mut num = (n - b'0') as usize;
                     while let Some(&d) = self.md.get(self.md_at) {
-                        if !d.is_ascii_digit() { break; }
+                        if !d.is_ascii_digit() {
+                            break;
+                        }
                         num = num * 10 + (d - b'0') as usize;
                         self.md_at += 1;
                     }
@@ -89,7 +105,9 @@ impl<'a> ScoreOpIter<'a> {
                 self.md_at += 1;
                 let md_start = self.md_at;
                 while let Some(b) = self.md.get(self.md_at) {
-                    if !matches!(b, b'A' | b'C' | b'G' | b'T' | b'N') { break; }
+                    if !matches!(b, b'A' | b'C' | b'G' | b'T' | b'N') {
+                        break;
+                    }
                     self.md_at += 1;
                 }
                 if self.md_at - md_start == cig_remain {

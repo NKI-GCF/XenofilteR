@@ -440,8 +440,8 @@ fn test_handle_ordering_ambiguous_when_below_threshold_and_negative_delta() -> R
     ];
     let mut ord = None;
     let (mcfs1, mcfs2) = best[0].cmp_perfect(&best[1], &mut ord)?;
-    let delta = lbl.score_delta(&best, mcfs1, mcfs2)?;
-    let decision = lbl.apply_delta(&mut best, delta)?;
+    let (delta, s1_vd, s2_vd) = lbl.score_delta(&best, mcfs1, mcfs2)?;
+    let decision = lbl.apply_delta(&mut best, delta, s1_vd, s2_vd)?;
     assert!(matches!(decision, Some(Decision::Ambiguous)));
 
     // Also test negative-delta case (we flip sign internally)
@@ -452,8 +452,8 @@ fn test_handle_ordering_ambiguous_when_below_threshold_and_negative_delta() -> R
         FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0)?,
     ];
     let (mcfs1, mcfs2) = best_flipped[0].cmp_perfect(&best_flipped[1], &mut ord)?;
-    let delta = lbl.score_delta(&best, mcfs1, mcfs2)?;
-    let decision_flipped = lbl.apply_delta(&mut best, delta)?;
+    let (delta, s1_vd, s2_vd) = lbl.score_delta(&best, mcfs1, mcfs2)?;
+    let decision_flipped = lbl.apply_delta(&mut best, delta, s1_vd, s2_vd)?;
     assert!(matches!(decision_flipped, Some(Decision::Ambiguous)));
 
     Ok(())
@@ -473,8 +473,8 @@ fn test_handle_ordering_when_decision_tag_is_disabled() -> Result<()> {
     ];
     let mut ord = None;
     let (mcfs1, mcfs2) = best[0].cmp_perfect(&best[1], &mut ord)?;
-    let delta = lbl.score_delta(&best, mcfs1, mcfs2)?;
-    let decision = lbl.apply_delta(&mut best, delta)?;
+    let (delta, s1_vd, s2_vd) = lbl.score_delta(&best, mcfs1, mcfs2)?;
+    let decision = lbl.apply_delta(&mut best, delta, s1_vd, s2_vd)?;
     assert!(decision.is_none()); // no Decision object when tag is off
 
     Ok(())

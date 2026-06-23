@@ -14,8 +14,7 @@ Items marked ✓ are complete; ○ are planned; ◑ are in progress.
   tests with synthetic BAM + VCF fixtures showing score-delta change drives a
   different decision.
 - ○ **Variant rescue — indels** — extend `align_alt_to_read` NW path to handle
-  multi-base insertions and deletions in the alt allele. Currently the NW table is
-  computed but the `Relocate` op in `ScoreOpIter` is not yet wired to indel variants.
+  multi-base insertions and deletions in the alt allele.
 - ○ **Multiple ALT alleles** — `parse_sample_record` and `parse_population_record` both
   carry a `FIXME` noting that only the first ALT allele is handled. Extend to iterate
   all ALT alleles and pick the highest-scoring one per read.
@@ -27,9 +26,9 @@ Items marked ✓ are complete; ○ are planned; ◑ are in progress.
 
 ## v0.3 — Performance
 
-- ○ **Progress bar** — integrate `indicatif` progress bar driven by bytes read from the
-  BAM (obtainable from `File::metadata().len()` vs. current file position).  Must not
-  stall the main loop; update at most once per 10 k fragments.
+- ○ **Progress report** — Print stats oneliner, including completion read from the BAM
+  (obtainable from `File::metadata().len()` vs. current file position).  Must not
+  stall the main loop; update at most once per 100 k fragments.
 - ○ **bgzf read parallelism** — noodles ≥ 0.65 exposes `.set_worker_count()` on the
   bgzf reader builder.  Wire `--threads` into the reader (currently only wired into
   writers).

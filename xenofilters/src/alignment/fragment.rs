@@ -101,7 +101,9 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             d.extend(f.drain(..));
         }
 
-        Ok(score + maximize_delta(dvnt, &mut scratch.dp))
+        let variant_delta = maximize_delta(dvnt, &mut scratch.dp);
+        scratch.last_variant_delta = variant_delta;
+        Ok(score + variant_delta)
     }
 
     fn score_with_variant<'v>(

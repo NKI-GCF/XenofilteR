@@ -142,8 +142,10 @@ fn score_bundle(
             let store2 = stores.get(last.get_nr()).and_then(|s| s.as_deref());
 
             let s1 = score_candidate_owned(first, mcfs1, store1, ctx, scratch).ok()?;
+            let s1_vd = scratch.last_variant_delta;
             let s2 = score_candidate_owned(last, mcfs2, store2, ctx, scratch).ok()?;
-            return apply_delta_owned(best, s1 - s2, ctx);
+            let s2_vd = scratch.last_variant_delta;
+            return apply_delta_owned(best, s1 - s2, s1_vd, s2_vd, ctx);
         }
     }
 
@@ -244,25 +246,41 @@ fn score_candidate_owned(
 fn apply_delta_owned(
     best: &mut AlnBuffer<RecordBuf>,
     mut delta: f64,
+    s1_vd: f64,
+    s2_vd: f64,
     ctx: &ScoringContext,
 ) -> Option<Decision> {
     match delta {
         d if d > ctx.ambiguous_log_threshold => {
             best.pop(); // first wins; drop last
+            if ctx.add_decision_tag {
+                let phred = (10.0 * delta / std::f64::consts::LN_10) as u32;
+                let phred = phred.min(255) as u8;
+                // First stream won; use VariantRescued if its margin came from rescue.
+                return Some(if s1_vd > 0.0 {
+                    Decision::VariantRescued(phred)
+                } else {
+                    Decision::ConfDelta(phred)
+                });
+            }
         }
         d if d < -ctx.ambiguous_log_threshold => {
             let n = best.len() - 1;
             best.drain(0..n); // last wins; drop all before
             delta = -delta;
+            if ctx.add_decision_tag {
+                let phred = (10.0 * delta / std::f64::consts::LN_10) as u32;
+                let phred = phred.min(255) as u8;
+                return Some(if s2_vd > 0.0 {
+                    Decision::VariantRescued(phred)
+                } else {
+                    Decision::ConfDelta(phred)
+                });
+            }
         }
         _ => return ctx.add_decision_tag.then_some(Decision::Ambiguous),
     }
-    if ctx.add_decision_tag {
-        let phred = (10.0 * delta / std::f64::consts::LN_10) as u32;
-        Some(Decision::ConfDelta(phred.min(255) as u8))
-    } else {
-        None
-    }
+    None
 }
 
 fn handle_ordering_owned(
@@ -302,7 +320,9 @@ impl<R: SimpleRec> LineByLine<R> {
             if best.len() > 1 {
                 decision = match self.resolve(&best)? {
                     Resolution::Ordered(ord) => self.handle_ordering(&mut best, ord)?,
-                    Resolution::Scored(delta) => self.apply_delta(&mut best, delta)?,
+                    Resolution::Scored(delta, s1_vd, s2_vd) => {
+                        self.apply_delta(&mut best, delta, s1_vd, s2_vd)?
+                    }
                 };
                 assert!(!best.is_empty());
             }
@@ -326,46 +346,71 @@ impl<R: SimpleRec> LineByLine<R> {
         Ok(())
     }
 
-    fn resolve(&mut self, best: &AlnBuffer<R>) -> Result<Resolution> {
-        let mut ord = best[0].partial_cmp(&best[best.len() - 1]);
-        if ord.is_none() {
-            let (mcfs1, mcfs2) = best[0].cmp_perfect(&best[best.len() - 1], &mut ord)?;
-            if ord.is_none() {
-                let delta = self.score_delta(best, mcfs1, mcfs2)?;
-                return Ok(Resolution::Scored(delta));
-            }
-        }
-        Ok(Resolution::Ordered(ord.expect("must be Some")))
-    }
-
     fn score_delta<'b>(
         &mut self,
         best: &'b AlnBuffer<R>,
         mcfs1: SmallVec<[MdCigFlags<'b>; READ_CT]>,
         mcfs2: SmallVec<[MdCigFlags<'b>; READ_CT]>,
-    ) -> Result<f64> {
+    ) -> Result<(f64, f64, f64)> {
+        // (delta, s1_variant_delta, s2_variant_delta)
         let first = best.first().unwrap();
         let last = best.last().unwrap();
         let s1 = self.score_candidate(first, mcfs1, first.get_nr())?;
+        let s1_vd = self.scratch.last_variant_delta;
         let s2 = self.score_candidate(last, mcfs2, last.get_nr())?;
-        Ok(s1 - s2)
+        let s2_vd = self.scratch.last_variant_delta;
+        Ok((s1 - s2, s1_vd, s2_vd))
     }
 
-    fn apply_delta(&mut self, best: &mut AlnBuffer<R>, mut delta: f64) -> Result<Option<Decision>> {
+    fn resolve(&mut self, best: &AlnBuffer<R>) -> Result<Resolution> {
+        let mut ord = best[0].partial_cmp(&best[best.len() - 1]);
+        if ord.is_none() {
+            let (mcfs1, mcfs2) = best[0].cmp_perfect(&best[best.len() - 1], &mut ord)?;
+            if ord.is_none() {
+                let (delta, s1_vd, s2_vd) = self.score_delta(best, mcfs1, mcfs2)?;
+                return Ok(Resolution::Scored(delta, s1_vd, s2_vd));
+            }
+        }
+        Ok(Resolution::Ordered(ord.expect("must be Some")))
+    }
+
+    fn apply_delta(
+        &mut self,
+        best: &mut AlnBuffer<R>,
+        mut delta: f64,
+        s1_vd: f64,
+        s2_vd: f64,
+    ) -> Result<Option<Decision>> {
         match delta {
-            d if d > self.ambiguous_log_threshold => self.handle_greater_than(best)?,
+            d if d > self.ambiguous_log_threshold => {
+                self.handle_greater_than(best)?;
+                if self.add_decision_tag {
+                    let phred = (10.0 * delta / std::f64::consts::LN_10) as u32;
+                    let phred = phred.min(255) as u8;
+                    // First stream won; use VariantRescued if its margin came from rescue.
+                    return Ok(Some(if s1_vd > 0.0 {
+                        Decision::VariantRescued(phred)
+                    } else {
+                        Decision::ConfDelta(phred)
+                    }));
+                }
+            }
             d if d < -self.ambiguous_log_threshold => {
                 self.handle_less_than(best)?;
                 delta = -delta;
+                if self.add_decision_tag {
+                    let phred = (10.0 * delta / std::f64::consts::LN_10) as u32;
+                    let phred = phred.min(255) as u8;
+                    return Ok(Some(if s2_vd > 0.0 {
+                        Decision::VariantRescued(phred)
+                    } else {
+                        Decision::ConfDelta(phred)
+                    }));
+                }
             }
             _ => return Ok(self.add_decision_tag.then_some(Decision::Ambiguous)),
         }
-        Ok(if self.add_decision_tag {
-            let phred = (10.0 * delta / std::f64::consts::LN_10) as u32;
-            Some(Decision::ConfDelta(phred.min(255) as u8))
-        } else {
-            None
-        })
+        Ok(None)
     }
 
     fn handle_ordering(
@@ -648,7 +693,7 @@ impl LineByLine<RecordBuf> {
 
 enum Resolution {
     Ordered(Ordering),
-    Scored(f64),
+    Scored(f64, f64, f64), // (delta, s1_vd, s2_vd)
 }
 
 #[cfg(test)]
