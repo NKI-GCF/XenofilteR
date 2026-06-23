@@ -147,8 +147,7 @@ fn run_collated(mut config: Config) -> Result<()> {
 
     let bed: [Option<TabixBed>; 2] = [
         config
-            .ambiguous_regions
-            .get(0)
+            .ambiguous_regions.first()
             .filter(|s| !s.is_empty())
             .map(|s| TabixBed::open(Path::new(s)))
             .transpose()?,
@@ -162,8 +161,7 @@ fn run_collated(mut config: Config) -> Result<()> {
 
     let vcf: [Option<TabixVcf>; 2] = [
         config
-            .diagnostic_variants
-            .get(0)
+            .diagnostic_variants.first()
             .filter(|s| !s.is_empty())
             .map(|s| TabixVcf::open(Path::new(s)))
             .transpose()?,
@@ -199,8 +197,7 @@ fn load_ambiguous_regions(
     name_to_id: &HashMap<String, usize>,
 ) -> Result<[Option<AmbiguousRegions>; 2]> {
     Ok([
-        specs
-            .get(0)
+        specs.first()
             .filter(|s| !s.is_empty())
             .map(|s| AmbiguousRegions::from_bed(Path::new(s), name_to_id))
             .transpose()?,
@@ -217,8 +214,7 @@ fn load_diagnostic_variants(
     name_to_id: &HashMap<String, usize>,
 ) -> Result<[Option<DiagnosticVariants>; 2]> {
     Ok([
-        specs
-            .get(0)
+        specs.first()
             .filter(|s| !s.is_empty())
             .map(|s| DiagnosticVariants::from_vcf(Path::new(s), name_to_id))
             .transpose()?,
