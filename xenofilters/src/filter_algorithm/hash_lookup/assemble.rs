@@ -100,7 +100,7 @@ impl StreamBuf {
 
         if all_assignable && self.primary_count > 0 {
             let offsets = self.records.iter().map(|r| r.virtual_offset).collect();
-            StreamKind::Early { virtual_offsets: offsets }
+            StreamKind::Early { virtual_offsets: offsets, kind: EarlyKind::AllPerfect }
         } else {
             StreamKind::Scoring { records: Box::new(self.records) }
         }
@@ -111,10 +111,16 @@ impl StreamBuf {
 // StreamKind — post-classification state
 // ---------------------------------------------------------------------------
 
+pub(crate) enum EarlyKind {
+    AllPerfect,
+    AllUnmapped,
+}
+
 #[derive(Default)]
 pub(crate) enum StreamKind {
     Early {
         virtual_offsets: SmallVec<[u64; 2]>,
+        kind: EarlyKind,
     },
     Scoring {
         records: Box<SmallVec<[ScoringRecord; 2]>>,
