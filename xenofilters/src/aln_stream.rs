@@ -229,13 +229,13 @@ where
             .map(Ok)
             .or_else(|| {
                 self.bam.as_mut().and_then(|b| {
-                    b.records()
-                        .next()
+                    b.next_record()
                         .map(|r| r.and_then(|r| R::from_bam_record(header, r)))
                 })
             })
             .transpose()?)
     }
+
     fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<()> {
         self.output_mode.write(rec, is_best, &self.header)
     }
@@ -243,27 +243,39 @@ where
     fn init_writers(&mut self, opt: &Config, i: usize) -> Result<()> {
         let add_pg = !opt.no_program_line;
         let threads = self.threads.into();
-        // Merged output requires a shared writer held above the per-stream level
-        // (LineByLine or equivalent). Per-stream routing into a single BAM is not
-        // yet wired; --merged-output silently disables per-stream writes.
-        // TODO: lift MergedOutput into LineByLine and route from there.
-        self.output_mode = OutputMode::MultiFile {
-            output: opt
-                .output
-                .get(i)
-                .map(|f| out_from_file(f, &self.header, add_pg, threads))
-                .transpose()?,
-            filt: opt
-                .filtered_output
-                .get(i)
-                .map(|f| out_from_file(f, &self.header, add_pg, threads))
-                .transpose()?,
-            ambiguous: opt
-                .ambiguous_output
-                .get(i)
-                .map(|f| out_from_file(f, &self.header, add_pg, threads))
-                .transpose()?,
-        };
+
+        if let Some(ref path) = opt.merged_output {
+            if i == 0 {
+                // Stream 0 owns the single merged writer.
+                // TODO: lift MergedOutput above AlnStream level (into LineByLine) and route
+                // records from all streams through it. Currently only stream 0 writes.
+                use crate::bam::{expand_header, MergedOutput};
+                let expanded = expand_header(self.header.clone());
+                self.output_mode =
+                    OutputMode::Merged(MergedOutput::new(path, expanded, add_pg, threads)?);
+            }
+            // i > 0: no-op writer; all records written through stream 0's MergedOutput.
+            // This is a known limitation; correct multi-stream merged output requires
+            // an Arc<Mutex<MergedOutput>> or caller-level aggregation.
+        } else {
+            self.output_mode = OutputMode::MultiFile {
+                output: opt
+                    .output
+                    .get(i)
+                    .map(|f| out_from_file(f, &self.header, add_pg, threads))
+                    .transpose()?,
+                filt: opt
+                    .filtered_output
+                    .get(i)
+                    .map(|f| out_from_file(f, &self.header, add_pg, threads))
+                    .transpose()?,
+                ambiguous: opt
+                    .ambiguous_output
+                    .get(i)
+                    .map(|f| out_from_file(f, &self.header, add_pg, threads))
+                    .transpose()?,
+            };
+        }
         Ok(())
     }
 
@@ -290,8 +302,7 @@ where
             .ok_or_else(|| anyhow!("No BAM reader available for seek"))?;
         bam.seek_vpos(vpos)?;
         let rec = bam
-            .records()
-            .next()
+            .next_record() // ← use trait method
             .ok_or_else(|| anyhow!("No record at virtual offset {virtual_offset}"))?
             .map_err(|e| anyhow!("BAM read error: {e}"))?;
         RecordBuf::try_from_alignment_record(&self.header, &rec)
