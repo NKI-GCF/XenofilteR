@@ -188,16 +188,14 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             };
             let end = start + rec.cigar().len();
 
-            if let Some(bed) = &mut self.bed[aln_idx] {
-                if bed.overlaps(chrom, start, end)? {
+            if let Some(bed) = &mut self.bed[aln_idx]
+                && bed.overlaps(chrom, start, end)? {
                     return Ok(true);
                 }
-            }
-            if let Some(vcf) = &mut self.vcf[aln_idx] {
-                if vcf.overlaps(chrom, start, end)? {
+            if let Some(vcf) = &mut self.vcf[aln_idx]
+                && vcf.overlaps(chrom, start, end)? {
                     return Ok(true);
                 }
-            }
         }
         Ok(false)
     }
@@ -223,14 +221,13 @@ impl<R: SimpleRec> CollatedMatcher<R> {
                 a.cmp_perfect(&b, &mut ord)?
             };
 
-            if let Some(o) = ord {
-                if !a_needs_scoring && !b_needs_scoring {
+            if let Some(o) = ord
+                && !a_needs_scoring && !b_needs_scoring {
                     // Perfect-match fast-path: no region overlap, no full scoring.
                     drop(mcfs1);
                     drop(mcfs2);
                     return self.apply_ordered(a, b, o);
                 }
-            }
 
             // Full NW scoring (either both imperfect, or region overlap forces it).
             let s1 = self.score_one(&a, mcfs1, 0)?;
