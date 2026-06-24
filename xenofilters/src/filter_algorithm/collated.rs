@@ -189,29 +189,27 @@ impl<R: SimpleRec> CollatedMatcher<R> {
     }
 
     fn score_pair(&mut self, a: FragmentState<R>, b: FragmentState<R>) -> Result<()> {
+        // Tier 1: unmapped fast-path — no region check needed when one stream is entirely unmapped.
+        let mut ord = a.partial_cmp(&b);
+        if let Some(o) = ord {
+            return self.apply_ordered(a, b, o);
+        }
+
+        // Both streams have mapped reads; now check BED/VCF region overlap.
         let a_needs_scoring = self.fragment_overlaps_region(&a, 0)?;
         let b_needs_scoring = self.fragment_overlaps_region(&b, 1)?;
 
-        let mut ord = a.partial_cmp(&b);
-
-        // Unmapped fast-path: if partial_cmp resolved it and no region forces scoring,
-        // skip cmp_perfect entirely.
-        if let Some(o) = ord
-            && !a_needs_scoring && !b_needs_scoring {
-                return self.apply_ordered(a, b, o);
-            }
-
         let (mcfs1, mcfs2) = a.cmp_perfect(&b, &mut ord)?;
 
-        // Perfect-match fast-path: cmp_perfect resolved it and no region forces scoring.
-        if let Some(o) = ord
-            && !a_needs_scoring && !b_needs_scoring {
+        if let Some(o) = ord {
+            if !a_needs_scoring && !b_needs_scoring {
                 drop(mcfs1);
                 drop(mcfs2);
                 return self.apply_ordered(a, b, o);
             }
+        }
 
-        // Full NW scoring (both imperfect, or region overlap forces it).
+        // Full NW scoring.
         let s1 = self.score_one(&a, mcfs1, 0)?;
         let s2 = self.score_one(&b, mcfs2, 1)?;
         let delta = s1 - s2;
