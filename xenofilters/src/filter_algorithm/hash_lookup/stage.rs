@@ -13,6 +13,24 @@ use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::SmallVec;
 use std::collections::BTreeMap;
 
+// CONCURRENCY STUB — HashLookup Pass-2 Seek-IO Thread
+//
+// When fragment volume is high, `fetch_by_virtual_offset` calls in `emit_scored`
+// serialise on disk seeks. To overlap seeks with scoring work, offload them to a
+// dedicated seek thread via a crossbeam_channel:
+//
+//   let (seek_tx, seek_rx) = crossbeam_channel::unbounded::<(usize, u64, crossbeam_channel::Sender<RecordBuf>)>();
+//   std::thread::spawn(move || {
+//       for (nr, voffset, result_tx) in seek_rx {
+//           let rec = aln[nr].fetch_by_virtual_offset(voffset).unwrap();
+//           let _ = result_tx.send(rec);
+//       }
+//   });
+//
+// Writers remain on the IO thread (no Mutex required); the seek thread owns the BAM
+// reader handles. Bounded capacity on the work channel provides backpressure.
+// N-STREAM NOTE: HashLookup NameTable memory scales as O(in-flight fragments × streams).
+// Beyond 2 streams the table can exhaust RAM on large skews; profile before enabling.
 pub(crate) struct StagedOutput {
     next_emit: u64,
     pending: BTreeMap<u64, ScoredFragment>,
@@ -20,7 +38,10 @@ pub(crate) struct StagedOutput {
 
 impl StagedOutput {
     pub(crate) fn new() -> Self {
-        Self { next_emit: 0, pending: BTreeMap::new() }
+        Self {
+            next_emit: 0,
+            pending: BTreeMap::new(),
+        }
     }
 
     pub(crate) fn push(&mut self, seq_nr: u64, sf: ScoredFragment) {
@@ -34,7 +55,9 @@ impl StagedOutput {
         add_decision_tag: bool,
     ) -> Result<()> {
         while let Some(&min_key) = self.pending.keys().next() {
-            if min_key != self.next_emit { break; }
+            if min_key != self.next_emit {
+                break;
+            }
             let sf = self.pending.remove(&min_key).unwrap();
             emit_scored(sf, aln, branch_counters, add_decision_tag)?;
             self.next_emit += 1;
@@ -72,7 +95,9 @@ fn emit_scored<R: SimpleRec>(
     } else {
         for (nr, voffset) in &sf.winner_offsets {
             let mut rec = fetch(aln, *nr, *voffset)?;
-            if add_decision_tag { apply_tag(&mut rec, sf.decision.as_ref()); }
+            if add_decision_tag {
+                apply_tag(&mut rec, sf.decision.as_ref());
+            }
             branch_counters[1 + (nr << 1)] += 1;
             aln[*nr].write_record(rec, Some(true))?;
         }
@@ -87,7 +112,11 @@ fn emit_scored<R: SimpleRec>(
     let winner_nr = sf.winner_nr;
     for (stream_nr, offsets) in sf.supp_offsets.iter().enumerate() {
         let is_winner_stream = stream_nr == winner_nr || sf.is_ambiguous;
-        let best_state = if sf.is_ambiguous { None } else { Some(is_winner_stream) };
+        let best_state = if sf.is_ambiguous {
+            None
+        } else {
+            Some(is_winner_stream)
+        };
         for &voffset in offsets {
             let mut rec = fetch(aln, stream_nr, voffset)?;
             if is_winner_stream && !sf.is_ambiguous && add_decision_tag {

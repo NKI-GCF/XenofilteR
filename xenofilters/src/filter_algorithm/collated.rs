@@ -90,7 +90,18 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             vcf,
         })
     }
-
+    // CONCURRENCY STUB — CollatedMatcher Thread Pool
+    //
+    // `score_pair` is embarrassingly parallel: matched pairs are independent once
+    // extracted from the waiting maps. A crossbeam thread pool can process them:
+    //
+    //   let (work_tx, work_rx) = crossbeam_channel::bounded(pool_size * 2);
+    //   // Workers call score_pair on received (FragmentState, FragmentState) tuples.
+    //   // Writers still run on the IO thread (writers need no Mutex this way).
+    //
+    // Output order is NOT guaranteed (acceptable for Collated mode).
+    // N-STREAM SUPPORT: Collated scales cleanly to N streams via N waiting maps,
+    // one per stream pair. Memory is O(name-order skew), manageable for N ≤ 4.
     pub(crate) fn process(&mut self) -> Result<()> {
         loop {
             let fa = self.a.next_fragment()?;
