@@ -45,7 +45,7 @@ impl<'r> MdCigFlags<'r> {
     pub(super) fn is_last_segment(&self) -> bool {
         self.flags.is_last_segment()
     }
-    pub(super) fn get_md(&self) -> &[u8] {
+    pub(crate) fn get_md(&self) -> &[u8] {
         self.md
     }
     pub(crate) fn get_cigar(&self) -> &(dyn Cigar + 'r) {
