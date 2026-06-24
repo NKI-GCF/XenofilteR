@@ -8,7 +8,7 @@ Fast, streaming read classifier for xenograft / PDX sequencing data — written 
 
 Patient-derived xenograft (PDX) models graft human tumour tissue into mouse hosts.
 Sequencing a PDX sample therefore captures reads from **both** species.
-`xenofilters` takes two name-sorted BAM files — one aligned to the **graft** reference
+`xenofilters` takes two BAM files — one aligned to the **graft** reference
 (e.g. human GRCh38) and one to the **host** (e.g. mouse GRCm39) — and assigns each
 read fragment to the species it aligns to best.
 
@@ -20,32 +20,64 @@ or comparison of two different aligners on the same sample.
 
 ## Algorithm
 
-For every fragment (one or two reads sharing the same name) `xenofilters`:
+For every fragment (one or two reads sharing the same name) `xenofilters` applies a
+cascading decision pipeline:
 
-1. **Fast-path ordering** — if one alignment is mapped and the other is not, the mapped
-   alignment wins immediately without any scoring.
+**Tier 1 — Unmapped fast-path.** If all primaries in one stream are unmapped (flags:
+`UNMAP` and either `!PAIRED` or `MUNMAP`), the mapped stream wins immediately without
+scoring. If both are unmapped the result is a tie.
 
-2. **Perfect-match fast path** — if one alignment has a single CIGAR operation with no
-   mismatches in the MD tag (a "perfect" alignment) and the other does not, the perfect
-   alignment wins without scoring.
+**Tier 2 — Perfect-match fast-path.** If one stream has every primary alignment with a
+single-op CIGAR and an all-digit MD tag (no mismatches), and the other does not, the
+perfect alignment wins. Supplementary alignments suppress the perfect flag for their
+stream. Secondary alignments do not.
 
-3. **Log-likelihood scoring** — when both alignments are imperfect, a per-base
-   log-likelihood score is computed from the CIGAR + MD tag + base quality scores.
-   Mismatches and soft-clips are penalised; indels are penalised with affine gap costs.
-   The fragment score is the sum over all reads in the fragment.
+**Tier 2.5 — CIGAR/MD structural subsumption.** Before full DP scoring, a quick
+comparison of each stream's aggregate mismatch, soft-clip, and indel counts is performed.
+If one stream's alignment profile is a strict subset of the other's across all axes
+(mismatches ≤, clips ≤, indels ≤), the structurally superior stream wins without
+Needleman–Wunsch scoring.
 
-4. **Variant-aware rescue** (optional, `-s` / `-p`) — if a VCF/BCF is supplied, known
-   variants are scored via a Needleman–Wunsch alignment of the alt allele against the
-   read.  A positive score delta (alt allele better supported than reference) is added to
-   the fragment score, potentially rescuing alignments that would otherwise be discarded.
-   Non-overlapping variants are combined with a weighted interval scheduling DP.
+**Tier 3 — Per-base log-likelihood scoring.** A per-base log-likelihood score is computed
+from CIGAR + MD tag + base quality scores. Mismatches and soft-clips are penalised;
+indels use affine gap costs. Supplementary alignments contribute a structural configuration
+penalty (`gap_open + non_clipped_bases × gap_extend`) rather than per-base scoring.
+The decision score is the sum over all primary reads in the fragment.
 
-5. **Decision** — the stream with the higher score wins.  If the Phred-scaled score
-   difference is below `--ambiguous-threshold` (default 0, i.e. disabled), the fragment
-   is written to `--ambiguous-output` instead.
+**Tier 3 — Variant-aware rescue** (optional, `-s` / `-p`). If a VCF/BCF is supplied,
+known variants are scored via Needleman–Wunsch DP of the alt allele against the read.
+A positive score delta (alt allele better supported than reference) is added to the
+fragment score. Non-overlapping variants are combined with weighted interval scheduling
+(`maximize_delta`). `p_variant > 0.5` is required for a rescue delta to be positive.
 
-The optional `XF:C:<phred>` aux tag encodes the Phred-scaled confidence:
-`XF = round(10 × |score_delta| / ln 10)`, capped at 255.
+**Decision.** The stream with the higher score wins. If the Phred-scaled score difference
+is below `--ambiguous-threshold` (default 0) the fragment is written to
+`--ambiguous-output` instead.
+
+The optional `XF:C:<phred>` aux tag encodes the Phred-scaled confidence. When the margin
+came from variant rescue, `XR:C:<phred>` is written instead.
+
+---
+
+## Three matching algorithms
+
+`xenofilters` supports three backend algorithms selectable via `--matching-algorithm`:
+
+**`namesorted` (default).** Both BAMs must be in identical query-name order. Streaming,
+lowest memory, fastest. Supports parallel scoring via `--score-threads`. Ambiguous BED/VCF
+region files are not supported in this mode.
+
+**`hashlookup`.** Accepts position-sorted BAMs with no ordering guarantee between streams.
+Two-pass design: pass 1 reads lightweight `ScoringRecord`s and classifies streams as
+`EarlyKind::AllUnmapped`, `EarlyKind::AllPerfect`, or `Scoring`. Pass 2 seeks via BGZF
+virtual offsets to fetch full records for output. In-memory BED and diagnostic VCF files
+force fragments through full scoring. Single-threaded only. Memory proportional to
+in-flight fragments.
+
+**`collated`.** Each BAM must be internally collated (all records for a name contiguous)
+but the two streams may present fragments in any relative order. A per-stream
+`HashMap` buffers unmatched fragments. Tabix-indexed BED and VCF files are queried
+per fragment. Output order is not guaranteed. Memory proportional to name-order skew.
 
 ---
 
@@ -60,38 +92,37 @@ cargo build --release
 # Binary is at ./target/release/xenofilters
 ```
 
-### Via cargo install (once published)
-
-```bash
-cargo install xenofilters
-```
-
-**Requirements:** Rust 1.85+ (edition 2024). No external C libraries required.
+**Requirements:** Rust 1.88+ (edition 2024, requires `let`-chain syntax).
+No external C libraries required.
 
 ---
 
 ## Quick start
 
 ```bash
-# Align reads to both references first (name-sorted output required)
+# Name-sorted mode (default) — align and sort by name first
 bwa mem -M -t 8 human_ref.fa reads_R1.fq.gz reads_R2.fq.gz \
   | samtools sort -n -@ 4 -o human.bam
 
 bwa mem -M -t 8 mouse_ref.fa reads_R1.fq.gz reads_R2.fq.gz \
   | samtools sort -n -@ 4 -o mouse.bam
 
-# Or use the provided bwa_mem.sh wrapper that does this in one step:
-# ./bwa_mem.sh human_ref.fa mouse_ref.fa output.bam reads_R1.fq reads_R2.fq
-
-# Classify
 xenofilters human.bam mouse.bam \
   --output human_best.bam \
   --output mouse_best.bam \
   --discarded-output human_discarded.bam \
   --discarded-output mouse_discarded.bam \
   --ambiguous-output ambiguous.bam \
-  --threads 8 \
+  --threads 4 \
+  --score-threads 4 \
   --verbose
+
+# Position-sorted mode — no name-sort required
+xenofilters human_coord.bam mouse_coord.bam \
+  --matching-algorithm hashlookup \
+  --ambiguous-regions human_mask.bed mouse_mask.bed \
+  --diagnostic-variants human_diag.bcf mouse_diag.bcf \
+  --output human_best.bam --output mouse_best.bam
 ```
 
 ---
@@ -103,69 +134,81 @@ Usage: xenofilters [OPTIONS] <ALIGNMENT>...
 
 Arguments:
   <ALIGNMENT>...
-      Input alignments (name-sorted BAM). At least two required.
+      Input BAMs. Two required except in --single-alignment-mode.
 
 Options:
   -o, --output <PATH>...
       Output file for winning reads (one per alignment stream).
-      Defaults to stdout for the first stream when omitted.
 
   -f, --discarded-output <PATH>...
-      Output file for reads that lost (one per stream). Default: discard.
+      Output file for reads that lost. Default: discard.
 
   -a, --ambiguous-output <PATH>...
       Output file for reads with equally good alignments. Default: discard.
 
+      --merged-output <PATH>
+      Write all reads (winners, discarded, ambiguous) to a single BAM.
+      Read groups are suffixed with _xenofilt or _xenoambig for non-winners.
+      Mutually exclusive with --output, --discarded-output, --ambiguous-output.
+
   -O, --stdout-format <FORMAT>
-      Output format for stdout [sam | bam | cram]. [default: sam]
+      Output format for stdout [sam|bam|cram]. [default: sam]
 
   -t, --threads <N>
       bgzf (de)compression worker threads. [default: 4]
+
+  -S, --score-threads <N>
+      Parallel scoring worker threads (namesorted only).
+      0 = use all available logical CPUs (up to 16). [default: 1]
+
+      --matching-algorithm <ALG>
+      namesorted | hashlookup | collated [default: namesorted]
 
   -v, --verbose
       Increase verbosity (-v = INFO, -vv = DEBUG). Respects RUST_LOG.
 
   -U, --discard-unmapped
-      Discard fragments that are unmapped in every stream, even from
-      --discarded-output.
+      Discard fragments unmapped in every stream, even from discarded output.
 
-  -m, --mismatch-penalty <F>
-      Mismatch penalty (Phred-scaled, positive). [default: 4]
-
-  -g, --gap-open <F>
-      Gap-open penalty (positive). [default: 6]
-
-  -e, --gap-extend <F>
-      Gap-extend penalty per base (positive). [default: 1]
-
-  -c, --clipping-penalty <F>
-      Soft-clip penalty per clipped base. [default: 5]
+  -m, --mismatch-penalty <F>     [default: 4]
+  -g, --gap-open <F>             [default: 6]
+  -e, --gap-extend <F>           [default: 1]
+  -c, --clipping-penalty <F>     [default: 5]
 
   -a, --ambiguous-threshold <PHRED>
-      Minimum score difference (Phred) to call a winner. Pairs below this
-      go to --ambiguous-output. 0 = disabled. [default: 0]
+      Minimum score difference (Phred) to call a winner. [default: 0]
 
   -s, --sample-variants <[IDX:]FILE>...
-      Sample-specific VCF/BCF for variant-aware rescue. Prefix with stream
-      index (e.g. 0:graft.vcf) or assign positionally.
+      Sample-specific VCF/BCF (FORMAT/GT + FORMAT/GQ).
 
   -p, --population-variants <[IDX:]FILE>...
-      Population-frequency VCF/BCF (INFO/AF field used). Same syntax.
+      Population VCF/BCF (INFO/AF).
 
   -A, --add-decision-tag
-      Attach XF:C:<phred> aux tag to winning records.
+      Write XF:C or XR:C aux tag to winning records.
 
   -P, --no-program-line
-      Suppress the @PG header line in output BAMs.
+      Suppress @PG header line.
 
   -R, --strip-read-suffix <MODE>
-      Handle /1 /2 read-name suffixes [auto|true|false|variable].
-      [default: auto]
+      Handle /1 /2 suffixes [auto|true|false|variable]. [default: auto]
+
+      --ambiguous-regions <FILE>...
+      BED file(s) of regions that force full NW scoring (one per stream).
+      hashlookup: plain BED, loaded into memory.
+      collated: bgzf-compressed + tabix-indexed (.bed.gz + .tbi).
+
+      --diagnostic-variants <FILE>...
+      VCF/BCF of species-diagnostic positions (one per stream).
+      Same format rules as --ambiguous-regions.
 
       --single-alignment-mode
-      Allow a single alignment stream (requires two variant profiles).
+      Allow a single input BAM (requires two variant profiles, one per strain).
 
-  -h, --help     Print help (see --help for full details)
+      --matching-algorithm <ALG>
+      namesorted | hashlookup | collated [default: namesorted]
+
+  -h, --help     Print help
   -V, --version  Print version
 ```
 
@@ -179,29 +222,34 @@ Options:
 | `--discarded-output` | Reads that aligned **worse** (won by another stream) |
 | `--ambiguous-output` | Reads where no stream was clearly better |
 
-All output files are bgzf-compressed BAM. The input BAM header (plus an
-optional `@PG` line) is copied verbatim.
+`--merged-output` combines all three into one file using `RG:Z` tag suffixes.
 
 ---
 
 ## Variant-aware rescue
 
-Provide per-stream VCF/BCF files to enable rescue of reads that carry known
-strain-specific variants. This is especially useful in single-alignment mode
-to separate two strains from one alignment:
-
 ```bash
 xenofilters strain_a.bam strain_b.bam \
   -s 0:strain_a_variants.vcf \
   -s 1:strain_b_variants.vcf \
-  -o best_a.bam -o best_b.bam
+  -o best_a.bam -o best_b.bam \
+  --add-decision-tag
 ```
 
-Requirements for the VCF:
-- Sample VCF: must contain `GT` and `GQ` FORMAT fields.
-- Population VCF: must contain `AF` INFO field.
-- BCF (binary VCF) is preferred for performance.
-- Must be coordinate-sorted (variants within a stream are indexed for O(log n) lookup).
+VCF requirements: BCF preferred for performance. Must be coordinate-sorted.
+Sample VCF: `GT` and `GQ` FORMAT fields. Population VCF: `AF` INFO field.
+`p_variant > 0.5` is required for rescue to produce a positive delta.
+
+---
+
+## Decision tags
+
+When `--add-decision-tag` is set:
+
+| Tag | Meaning |
+|-----|---------|
+| `XF:C:<phred>` | Score-based confidence; phred = round(10 × \|delta\| / ln 10), capped at 255 |
+| `XR:C:<phred>` | Same, but the winning margin came from variant rescue |
 
 ---
 
@@ -209,16 +257,18 @@ Requirements for the VCF:
 
 | Variable | Effect |
 |----------|--------|
-| `RUST_LOG` | Override log level (e.g. `RUST_LOG=xenofilters=debug`) |
+| `RUST_LOG` | Override log level (`xenofilters=debug`) |
 
 ---
 
 ## Performance notes
 
-- **Memory:** O(reads-per-fragment × streams). Typically < 100 MB for paired-end data.
-- **Threads:** bgzf block (de)compression is parallelised with `-t`. The main
-  record-processing loop is sequential by design (name-sorted streaming).
-- **Throughput:** ~300–600 M read-pairs/hour on a 16-core server with fast storage.
+- **Memory:** `namesorted` O(reads-per-fragment × streams). `hashlookup` O(in-flight
+  fragments). `collated` O(name-order skew).
+- **Threads:** bgzf (de)compression via `-t`. Parallel fragment scoring via `-S`
+  (namesorted only; IO thread is always single-threaded).
+- **Throughput:** ~300–600 M read-pairs/hour on a 16-core server with fast storage
+  in `namesorted` sequential mode.
 
 ---
 
