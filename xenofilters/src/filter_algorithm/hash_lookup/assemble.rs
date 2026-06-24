@@ -75,17 +75,26 @@ struct StreamBuf {
 
 impl StreamBuf {
     fn push(&mut self, rec: ScoringRecord) {
-        if rec.is_primary() {
-            self.primary_count += 1;
-        }
+        if rec.is_primary() { self.primary_count += 1; }
         self.records.push(rec);
     }
 
-    /// Evaluate early-assignability once all primaries have arrived.
-    /// Returns `StreamKind::Early` only if every primary is perfect and
-    /// none overlaps an ambiguous BED or diagnostic VCF region.
     fn classify(self, bed: Option<&AmbiguousRegions>, vcf: Option<&DiagnosticVariants>) -> StreamKind {
-        let all_assignable = self.records.iter().filter(|r| r.is_primary()).all(|r| {
+        if self.primary_count == 0 {
+            return StreamKind::Scoring { records: Box::new(self.records) };
+        }
+
+        // Fast-path 1: all primaries unmapped.
+        let all_unmapped = self.records.iter()
+            .filter(|r| r.is_primary())
+            .all(|r| r.is_unmapped());
+        if all_unmapped {
+            let offsets = self.records.iter().map(|r| r.virtual_offset).collect();
+            return StreamKind::Early { kind: EarlyKind::AllUnmapped, virtual_offsets: offsets };
+        }
+
+        // Fast-path 2: all primaries perfect, no region overlap.
+        let all_perfect = self.records.iter().filter(|r| r.is_primary()).all(|r| {
             if !r.is_perfect() { return false; }
             if let Some(b) = bed
                 && b.overlaps(r.ref_id, r.pos, r.pos + r.ref_len) {
@@ -97,13 +106,12 @@ impl StreamBuf {
                 }
             true
         });
-
-        if all_assignable && self.primary_count > 0 {
+        if all_perfect {
             let offsets = self.records.iter().map(|r| r.virtual_offset).collect();
-            StreamKind::Early { virtual_offsets: offsets, kind: EarlyKind::AllPerfect }
-        } else {
-            StreamKind::Scoring { records: Box::new(self.records) }
+            return StreamKind::Early { kind: EarlyKind::AllPerfect, virtual_offsets: offsets };
         }
+
+        StreamKind::Scoring { records: Box::new(self.records) }
     }
 }
 
@@ -111,9 +119,13 @@ impl StreamBuf {
 // StreamKind — post-classification state
 // ---------------------------------------------------------------------------
 
+/// Why a stream was fast-pathed without per-base NW scoring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EarlyKind {
-    AllPerfect,
+    /// Every primary alignment in the stream is unmapped.
     AllUnmapped,
+    /// Every primary alignment is a perfect match and overlaps no BED/VCF region.
+    AllPerfect,
 }
 
 #[derive(Default)]
@@ -135,6 +147,12 @@ impl StreamKind {
     }
     pub(crate) fn is_empty(&self) -> bool {
         matches!(self, StreamKind::Empty)
+    }
+    pub(crate) fn early_kind(&self) -> Option<EarlyKind> {
+        match self {
+            StreamKind::Early { kind, .. } => Some(*kind),
+            _ => None,
+        }
     }
     pub(crate) fn virtual_offsets(&self) -> SmallVec<[u64; 2]> {
         match self {
