@@ -28,7 +28,7 @@ use crate::penalty::Penalty;
 use crate::region::{AmbiguousRegions, DiagnosticVariants};
 use crate::variant::FragEvalVec;
 use anyhow::{anyhow, Result};
-use assemble::{insert, NameTable, PendingFragment, ScoringRecord, StreamKind};
+use assemble::{insert, EarlyKind, NameTable, PendingFragment, ScoringRecord, StreamKind};
 use noodles::sam::alignment::record::Cigar;
 use smallvec::SmallVec;
 use stage::StagedOutput;
@@ -523,7 +523,11 @@ impl<R: SimpleRec> HashLookup<R> {
 
     pub(crate) fn print_counters(&self) {
         for i in 0..2 {
-            eprintln!("hashlookup[discard:{}]: {}", i, self.branch_counters[i << 1]);
+            eprintln!(
+                "hashlookup[discard:{}]: {}",
+                i,
+                self.branch_counters[i << 1]
+            );
             eprintln!(
                 "hashlookup[out:{}]: {}",
                 i,
