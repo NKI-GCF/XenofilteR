@@ -38,7 +38,7 @@
 //! candidate rather than one per read segment.
 
 use super::core::{AlnBuffer, LineByLine, Scratch};
-use crate::alignment::{pre_assess_mcfs, PreAssessResult};
+use crate::alignment::{pre_assess_mcfs, pre_assess_read_space, PreAssessResult};
 use crate::alignment::{FragmentState, MdCigFlags, SimpleRec};
 use crate::filter_algorithm::line_by_line::READ_CT;
 use crate::variant::StoreTrait;
@@ -135,12 +135,17 @@ fn score_bundle(
             Ok(pair) => pair,
             Err(_) => return None,
         };
-
-        // Tier 2.5: CIGAR/MD subsumption.
+        // Tier 2.5a: aggregate subsumption.
         if let PreAssessResult::EarlyDecision(sub_ord) = pre_assess_mcfs(&mcfs1, &mcfs2) {
             drop(mcfs1);
             drop(mcfs2);
             return handle_ordering_owned(best, sub_ord, ctx);
+        }
+        // Tier 2.5b: read-space comparison.
+        if let PreAssessResult::EarlyDecision(rs_ord) = pre_assess_read_space(&mcfs1, &mcfs2) {
+            drop(mcfs1);
+            drop(mcfs2);
+            return handle_ordering_owned(best, rs_ord, ctx);
         }
 
         // Full NW scoring.
@@ -394,9 +399,16 @@ impl<R: SimpleRec> LineByLine<R> {
         if ord.is_none() {
             let (mcfs1, mcfs2) = best[0].cmp_perfect(&best[best.len() - 1], &mut ord)?;
             if ord.is_none() {
-                // Tier 2.5: CIGAR/MD subsumption — shared with Collated and HashLookup.
+                // Tier 2.5a: aggregate CIGAR/MD subsumption.
                 if let PreAssessResult::EarlyDecision(sub_ord) = pre_assess_mcfs(&mcfs1, &mcfs2) {
                     return Ok(Resolution::Ordered(sub_ord));
+                }
+                // Tier 2.5b: read-coordinate-space comparison.
+                // Builds ReadProfiles from the already-decoded MdCigFlags (no extra I/O).
+                if let PreAssessResult::EarlyDecision(rs_ord) =
+                    pre_assess_read_space(&mcfs1, &mcfs2)
+                {
+                    return Ok(Resolution::Ordered(rs_ord));
                 }
                 let (delta, s1_vd, s2_vd) = self.score_delta(best, mcfs1, mcfs2)?;
                 return Ok(Resolution::Scored(delta, s1_vd, s2_vd));

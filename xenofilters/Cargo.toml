@@ -17,7 +17,7 @@ MAX_ALN = "4"
 [dependencies]
 clap               = { version = "4.6.1", features = ["derive"] }
 anyhow             = "1.0.102"
-smallvec           = "1.15.1"
+smallvec           = { version = "1.15.1", features = ["const_generics"] }
 thiserror          = "2.0.18"
 noodles            = { version = "0.111.0", features = ["async", "bam", "bed", "bcf", "bgzf", "core", "cram", "csi", "sam", "tabix", "vcf"] }
 tracing            = "0.1"

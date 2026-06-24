@@ -12,6 +12,9 @@
 //! coordinate comparison is meaningless. Region-restricted scoring is therefore
 //! not implemented.
 
+use crate::alignment::read_profile::{
+    build_read_profile, compare_fragment_profiles, FragmentProfile, ReadSpaceDecision,
+};
 use crate::alignment::MdCigFlags;
 use crate::filter_algorithm::line_by_line::READ_CT;
 use noodles::sam::alignment::record::cigar::op::Kind;
@@ -26,8 +29,8 @@ use std::cmp::Ordering;
 /// Lower values on every axis indicate a better alignment.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct AlignSig {
-    pub(crate) mismatches:  usize,
-    pub(crate) soft_clips:  usize,
+    pub(crate) mismatches: usize,
+    pub(crate) soft_clips: usize,
     pub(crate) indel_bases: usize,
 }
 
@@ -37,9 +40,45 @@ impl AlignSig {
     }
 
     fn add(&mut self, other: AlignSig) {
-        self.mismatches  += other.mismatches;
-        self.soft_clips  += other.soft_clips;
+        self.mismatches += other.mismatches;
+        self.soft_clips += other.soft_clips;
         self.indel_bases += other.indel_bases;
+    }
+}
+
+/// Run Tier 2.5 read-space assessment (LineByLine and Collated).
+///
+/// Called after `pre_assess_mcfs` returns `FullScoring`.  Builds per-mate
+/// `ReadProfile`s from the pre-built `MdCigFlags` slices (no extra I/O) and
+/// delegates to `compare_fragment_profiles`.
+///
+/// Returns `PreAssessResult::FullScoring` whenever the read-space comparison
+/// cannot resolve the fragment (insertions, malformed MD, mate-count mismatch,
+/// or mixed-direction positions where deletion counts conflict).
+pub(crate) fn pre_assess_read_space(
+    mcfs_a: &SmallVec<[MdCigFlags<'_>; READ_CT]>,
+    mcfs_b: &SmallVec<[MdCigFlags<'_>; READ_CT]>,
+) -> PreAssessResult {
+    if mcfs_a.len() != mcfs_b.len() || mcfs_a.is_empty() {
+        return PreAssessResult::FullScoring;
+    }
+
+    let fp_a = FragmentProfile {
+        mates: mcfs_a.iter().map(build_read_profile).collect(),
+    };
+    let fp_b = FragmentProfile {
+        mates: mcfs_b.iter().map(build_read_profile).collect(),
+    };
+
+    match compare_fragment_profiles(&fp_a, &fp_b) {
+        ReadSpaceDecision::EarlyDecision(ord) => PreAssessResult::EarlyDecision(ord),
+        ReadSpaceDecision::PartialScoring { .. } | ReadSpaceDecision::FallThrough => {
+            // PartialScoring: positions identified but quality scores are still
+            // needed; full Tier-3 scoring is already fast (O(read_len) array lookups).
+            // The partial-position indices are not threaded through to the scorer in
+            // this implementation; pass them when the scorer supports it.
+            PreAssessResult::FullScoring
+        }
     }
 }
 
@@ -55,9 +94,9 @@ pub(crate) fn alignment_sig(mcfs: &SmallVec<[MdCigFlags<'_>; READ_CT]>) -> Align
         sig.mismatches += md_mismatches(mcf.get_md());
         for op in mcf.get_cigar().iter().filter_map(|r| r.ok()) {
             match op.kind() {
-                Kind::SoftClip                   => sig.soft_clips  += op.len(),
+                Kind::SoftClip => sig.soft_clips += op.len(),
                 Kind::Insertion | Kind::Deletion => sig.indel_bases += op.len(),
-                _                                => {}
+                _ => {}
             }
         }
     }
@@ -70,12 +109,12 @@ pub(crate) fn alignment_sig_raw(cigar_bytes: &[u8], md: &[u8]) -> AlignSig {
     let mut sig = AlignSig::perfect();
     for chunk in cigar_bytes.chunks_exact(4) {
         let enc = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        let op  = enc & 0xF;
+        let op = enc & 0xF;
         let len = (enc >> 4) as usize;
         match op {
-            4 | 5 => sig.soft_clips  += len,  // SoftClip, HardClip
-            1 | 2 => sig.indel_bases += len,  // Insertion, Deletion
-            _     => {}
+            4 | 5 => sig.soft_clips += len,  // SoftClip, HardClip
+            1 | 2 => sig.indel_bases += len, // Insertion, Deletion
+            _ => {}
         }
     }
     sig.mismatches = md_mismatches(md);
@@ -115,16 +154,16 @@ fn md_mismatches(md: &[u8]) -> usize {
 /// `Some(Greater)` = `a` is better, `Some(Less)` = `b` is better,
 /// `Some(Equal)` = identical, `None` = incomparable (NW needed).
 pub(crate) fn subsumes(a: &AlignSig, b: &AlignSig) -> Option<Ordering> {
-    let a_dom = a.mismatches  <= b.mismatches
-        && a.soft_clips  <= b.soft_clips
+    let a_dom = a.mismatches <= b.mismatches
+        && a.soft_clips <= b.soft_clips
         && a.indel_bases <= b.indel_bases;
-    let b_dom = b.mismatches  <= a.mismatches
-        && b.soft_clips  <= a.soft_clips
+    let b_dom = b.mismatches <= a.mismatches
+        && b.soft_clips <= a.soft_clips
         && b.indel_bases <= a.indel_bases;
     match (a_dom, b_dom) {
-        (true,  false) => Some(Ordering::Greater),
-        (false, true)  => Some(Ordering::Less),
-        (true,  true)  => Some(Ordering::Equal),
+        (true, false) => Some(Ordering::Greater),
+        (false, true) => Some(Ordering::Less),
+        (true, true) => Some(Ordering::Equal),
         (false, false) => None,
     }
 }
@@ -161,7 +200,7 @@ pub(crate) fn pre_assess_mcfs(
     let sig_b = alignment_sig(mcfs_b);
     match subsumes(&sig_a, &sig_b) {
         Some(ord) => PreAssessResult::EarlyDecision(ord),
-        None      => PreAssessResult::FullScoring,
+        None => PreAssessResult::FullScoring,
     }
 }
 
@@ -174,16 +213,16 @@ pub(crate) fn pre_assess_scoring_records(
     recs_a: &[crate::filter_algorithm::hash_lookup::assemble::ScoringRecord],
     recs_b: &[crate::filter_algorithm::hash_lookup::assemble::ScoringRecord],
 ) -> PreAssessResult {
-    let primaries_a: SmallVec<[_; 2]> = recs_a.iter()
+    let primaries_a: SmallVec<[_; 2]> = recs_a
+        .iter()
         .filter(|r| r.is_primary() && !r.is_unmapped())
         .collect();
-    let primaries_b: SmallVec<[_; 2]> = recs_b.iter()
+    let primaries_b: SmallVec<[_; 2]> = recs_b
+        .iter()
         .filter(|r| r.is_primary() && !r.is_unmapped())
         .collect();
 
-    if primaries_a.is_empty()
-        || primaries_a.len() != primaries_b.len()
-    {
+    if primaries_a.is_empty() || primaries_a.len() != primaries_b.len() {
         return PreAssessResult::FullScoring;
     }
 
@@ -198,7 +237,7 @@ pub(crate) fn pre_assess_scoring_records(
 
     match subsumes(&sig_a, &sig_b) {
         Some(ord) => PreAssessResult::EarlyDecision(ord),
-        None      => PreAssessResult::FullScoring,
+        None => PreAssessResult::FullScoring,
     }
 }
 
@@ -211,23 +250,33 @@ mod tests {
     use super::*;
 
     fn sig(mis: usize, clips: usize, indels: usize) -> AlignSig {
-        AlignSig { mismatches: mis, soft_clips: clips, indel_bases: indels }
+        AlignSig {
+            mismatches: mis,
+            soft_clips: clips,
+            indel_bases: indels,
+        }
     }
 
     #[test]
     fn perfect_subsumes_anything() {
-        assert_eq!(subsumes(&sig(0,0,0), &sig(3,2,1)), Some(Ordering::Greater));
+        assert_eq!(
+            subsumes(&sig(0, 0, 0), &sig(3, 2, 1)),
+            Some(Ordering::Greater)
+        );
     }
 
     #[test]
     fn equal_sigs_are_equal() {
-        assert_eq!(subsumes(&sig(2,1,0), &sig(2,1,0)), Some(Ordering::Equal));
+        assert_eq!(
+            subsumes(&sig(2, 1, 0), &sig(2, 1, 0)),
+            Some(Ordering::Equal)
+        );
     }
 
     #[test]
     fn incomparable_returns_none() {
         // a has fewer mismatches but more clips
-        assert_eq!(subsumes(&sig(1,5,0), &sig(3,1,0)), None);
+        assert_eq!(subsumes(&sig(1, 5, 0), &sig(3, 1, 0)), None);
     }
 
     #[test]

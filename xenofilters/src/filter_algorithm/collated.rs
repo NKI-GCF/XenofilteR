@@ -31,7 +31,8 @@ use noodles::sam::alignment::record_buf::RecordBuf;
 use reader::{canonical_name, CollatedReader};
 use smallvec::SmallVec;
 use std::collections::HashMap;
-use crate::alignment::{pre_assess_mcfs, PreAssessResult};
+use crate::alignment::{pre_assess_mcfs, pre_assess_read_space, PreAssessResult};
+
 
 pub(crate) struct CollatedMatcher<R: SimpleRec> {
     a: CollatedReader<R>,
@@ -228,6 +229,14 @@ impl<R: SimpleRec> CollatedMatcher<R> {
                 drop(mcfs1);
                 drop(mcfs2);
                 return self.apply_ordered(a, b, sub_ord);
+            }
+            // Tier 2.5b: read-coordinate-space comparison.
+            if let PreAssessResult::EarlyDecision(rs_ord) =
+                pre_assess_read_space(&mcfs1, &mcfs2)
+            {
+                drop(mcfs1);
+                drop(mcfs2);
+                return self.apply_ordered(a, b, rs_ord);
             }
         }
 
