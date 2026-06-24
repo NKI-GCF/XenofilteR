@@ -31,6 +31,7 @@ use noodles::sam::alignment::record_buf::RecordBuf;
 use reader::{canonical_name, CollatedReader};
 use smallvec::SmallVec;
 use std::collections::HashMap;
+use crate::alignment::{pre_assess_mcfs, PreAssessResult};
 
 pub(crate) struct CollatedMatcher<R: SimpleRec> {
     a: CollatedReader<R>,
@@ -198,20 +199,19 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         }
         Ok(false)
     }
-
     fn score_pair(&mut self, a: FragmentState<R>, b: FragmentState<R>) -> Result<()> {
-        // Tier 1: unmapped fast-path — no region check needed when one stream is entirely unmapped.
+        // Tier 1: unmapped fast-path — before BED/VCF I/O.
         let mut ord = a.partial_cmp(&b);
         if let Some(o) = ord {
             return self.apply_ordered(a, b, o);
         }
 
-        // Both streams have mapped reads; now check BED/VCF region overlap.
         let a_needs_scoring = self.fragment_overlaps_region(&a, 0)?;
         let b_needs_scoring = self.fragment_overlaps_region(&b, 1)?;
 
         let (mcfs1, mcfs2) = a.cmp_perfect(&b, &mut ord)?;
 
+        // Tier 2: perfect-match fast-path (no region forces scoring).
         if let Some(o) = ord {
             if !a_needs_scoring && !b_needs_scoring {
                 drop(mcfs1);
@@ -220,7 +220,18 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             }
         }
 
-        // Full NW scoring.
+        // Tier 2.5: CIGAR/MD structural subsumption.
+        // Only when no BED/VCF region forces full scoring — if a diagnostic
+        // variant overlaps we must run NW to properly account for rescue.
+        if !a_needs_scoring && !b_needs_scoring {
+            if let PreAssessResult::EarlyDecision(sub_ord) = pre_assess_mcfs(&mcfs1, &mcfs2) {
+                drop(mcfs1);
+                drop(mcfs2);
+                return self.apply_ordered(a, b, sub_ord);
+            }
+        }
+
+        // Tier 3: full NW scoring.
         let s1 = self.score_one(&a, mcfs1, 0)?;
         let s2 = self.score_one(&b, mcfs2, 1)?;
         let delta = s1 - s2;

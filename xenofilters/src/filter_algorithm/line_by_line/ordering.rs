@@ -38,6 +38,7 @@
 //! candidate rather than one per read segment.
 
 use super::core::{AlnBuffer, LineByLine, Scratch};
+use crate::alignment::{pre_assess_mcfs, PreAssessResult};
 use crate::alignment::{FragmentState, MdCigFlags, SimpleRec};
 use crate::filter_algorithm::line_by_line::READ_CT;
 use crate::variant::StoreTrait;
@@ -49,56 +50,6 @@ use smallvec::{smallvec, SmallVec};
 use std::cmp::Ordering;
 use std::sync::Arc;
 use std::thread;
-
-/// Alignment quality signature for subsumption comparison.
-/// Lower is better on all three axes.
-struct AlignSig {
-    mismatches: usize,
-    soft_clips: usize,
-    indel_bases: usize,
-}
-
-fn alignment_sig(mcfs: &SmallVec<[MdCigFlags<'_>; READ_CT]>) -> AlignSig {
-    let mut mis = 0usize;
-    let mut clp = 0usize;
-    let mut ind = 0usize;
-    for mcf in mcfs {
-        for b in mcf.get_md() {
-            if matches!(b, b'A' | b'C' | b'G' | b'T' | b'N') {
-                mis += 1;
-            }
-        }
-        for op in mcf.get_cigar().iter().filter_map(|r| r.ok()) {
-            match op.kind() {
-                Kind::SoftClip => clp += op.len(),
-                Kind::Insertion | Kind::Deletion => ind += op.len(),
-                _ => {}
-            }
-        }
-    }
-    AlignSig {
-        mismatches: mis,
-        soft_clips: clp,
-        indel_bases: ind,
-    }
-}
-
-/// `Some(Greater)` = a is better, `Some(Less)` = b is better,
-/// `Some(Equal)` = identical, `None` = incomparable (NW needed).
-fn subsumes(a: &AlignSig, b: &AlignSig) -> Option<Ordering> {
-    let a_dom = a.mismatches <= b.mismatches
-        && a.soft_clips <= b.soft_clips
-        && a.indel_bases <= b.indel_bases;
-    let b_dom = b.mismatches <= a.mismatches
-        && b.soft_clips <= a.soft_clips
-        && b.indel_bases <= a.indel_bases;
-    match (a_dom, b_dom) {
-        (true, false) => Some(Ordering::Greater),
-        (false, true) => Some(Ordering::Less),
-        (true, true) => Some(Ordering::Equal),
-        (false, false) => None,
-    }
-}
 
 // -- Public decision type ------------------------------------------------------
 
@@ -185,19 +136,23 @@ fn score_bundle(
             Err(_) => return None,
         };
 
-        if ord.is_none() {
-            // Slow path: full per-base log-likelihood + optional variant scoring.
-            let first = best.first().unwrap();
-            let last = best.last().unwrap();
-            let store1 = stores.get(first.get_nr()).and_then(|s| s.as_deref());
-            let store2 = stores.get(last.get_nr()).and_then(|s| s.as_deref());
-
-            let s1 = score_candidate_owned(first, mcfs1, store1, ctx, scratch).ok()?;
-            let s1_vd = scratch.last_variant_delta;
-            let s2 = score_candidate_owned(last, mcfs2, store2, ctx, scratch).ok()?;
-            let s2_vd = scratch.last_variant_delta;
-            return apply_delta_owned(best, s1 - s2, s1_vd, s2_vd, ctx);
+        // Tier 2.5: CIGAR/MD subsumption.
+        if let PreAssessResult::EarlyDecision(sub_ord) = pre_assess_mcfs(&mcfs1, &mcfs2) {
+            drop(mcfs1);
+            drop(mcfs2);
+            return handle_ordering_owned(best, sub_ord, ctx);
         }
+
+        // Full NW scoring.
+        let first = best.first().unwrap();
+        let last = best.last().unwrap();
+        let store1 = stores.get(first.get_nr()).and_then(|s| s.as_deref());
+        let store2 = stores.get(last.get_nr()).and_then(|s| s.as_deref());
+        let s1 = score_candidate_owned(first, mcfs1, store1, ctx, scratch).ok()?;
+        let s1_vd = scratch.last_variant_delta;
+        let s2 = score_candidate_owned(last, mcfs2, store2, ctx, scratch).ok()?;
+        let s2_vd = scratch.last_variant_delta;
+        return apply_delta_owned(best, s1 - s2, s1_vd, s2_vd, ctx);
     }
 
     handle_ordering_owned(best, ord.unwrap(), ctx)
@@ -439,15 +394,9 @@ impl<R: SimpleRec> LineByLine<R> {
         if ord.is_none() {
             let (mcfs1, mcfs2) = best[0].cmp_perfect(&best[best.len() - 1], &mut ord)?;
             if ord.is_none() {
-                // Tier 2.5: CIGAR/MD subsumption — skip NW when one stream structurally dominates.
-                // Only valid when both sides cover the same number of primary segments
-                // (otherwise the signature comparison is not meaningful).
-                if mcfs1.len() == mcfs2.len() {
-                    let sig1 = alignment_sig(&mcfs1);
-                    let sig2 = alignment_sig(&mcfs2);
-                    if let Some(sub_ord) = subsumes(&sig1, &sig2) {
-                        return Ok(Resolution::Ordered(sub_ord));
-                    }
+                // Tier 2.5: CIGAR/MD subsumption — shared with Collated and HashLookup.
+                if let PreAssessResult::EarlyDecision(sub_ord) = pre_assess_mcfs(&mcfs1, &mcfs2) {
+                    return Ok(Resolution::Ordered(sub_ord));
                 }
                 let (delta, s1_vd, s2_vd) = self.score_delta(best, mcfs1, mcfs2)?;
                 return Ok(Resolution::Scored(delta, s1_vd, s2_vd));
