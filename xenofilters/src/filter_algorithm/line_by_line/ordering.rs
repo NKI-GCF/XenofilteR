@@ -43,6 +43,7 @@ use crate::filter_algorithm::line_by_line::READ_CT;
 use crate::variant::StoreTrait;
 use anyhow::{anyhow, ensure, Result};
 use crossbeam_channel::{bounded, Receiver, Sender};
+use noodles::sam::alignment::record::cigar::op::Kind;
 use noodles::sam::alignment::RecordBuf;
 use smallvec::{smallvec, SmallVec};
 use std::cmp::Ordering;
@@ -182,6 +183,7 @@ fn score_candidate_owned(
     let has_variants = store.is_some();
 
     let mut dvnt: FragEvalVec<'_> = SmallVec::new();
+    let mut supplementary_penalty = 0.0;
 
     for idx in state.order_mates() {
         let rec = &state.get_records()[idx];
@@ -189,10 +191,25 @@ fn score_candidate_owned(
             .flags(idx)
             .ok_or_else(|| anyhow!("No flags for record index {idx}"))?;
 
+        // Supplementaries: structural penalty, excluded from NW.
+        if flags.is_supplementary() {
+            if let Some(mcf) = mcfs_opt[idx].take() {
+                let clipped: usize = mcf
+                    .get_cigar()
+                    .iter()
+                    .filter_map(|op| op.ok())
+                    .filter(|op| matches!(op.kind(), Kind::SoftClip | Kind::HardClip))
+                    .map(|op| op.len())
+                    .sum();
+                let read_len = rec.quality_scores().as_ref().len();
+                let non_clipped = read_len.saturating_sub(clipped);
+                supplementary_penalty +=
+                    ctx.penalties.gap_open + (non_clipped as f64) * ctx.penalties.gap_extend;
+            }
+            continue;
+        }
+
         if flags.is_unmapped() || !has_variants {
-            // No variant lookup: push an empty eval vec.
-            // When has_variants is false this branch is always taken, so the
-            // compiler can constant-fold the entire variant-lookup block away.
             dvnt.push(SmallVec::new());
         } else {
             let tid = rec
@@ -228,7 +245,11 @@ fn score_candidate_owned(
         }
     }
 
-    Fragment::new(&ctx.penalties, segment, seg_mcfs)?
+    if segment.is_empty() {
+        return Ok(supplementary_penalty);
+    }
+
+    let base_score = Fragment::new(&ctx.penalties, segment, seg_mcfs)?
         .score(scratch, &mut dvnt)
         .map_err(|e| {
             anyhow!(
@@ -240,7 +261,8 @@ fn score_candidate_owned(
                     .collect::<Vec<_>>()
                     .join("\n")
             )
-        })
+        })?;
+    Ok(base_score + supplementary_penalty)
 }
 
 fn apply_delta_owned(
