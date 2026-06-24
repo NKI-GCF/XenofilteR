@@ -19,6 +19,7 @@ pub(crate) mod stage;
 #[cfg(test)]
 pub(crate) mod tests;
 
+use crate::alignment::{pre_assess_scoring_records, PreAssessResult};
 use crate::alignment::{Fragment, MdCigFlags, SimpleRec};
 use crate::aln_stream::AlignmentStream;
 use crate::config::{Config, StripReadSuffix};
@@ -32,6 +33,7 @@ use assemble::{insert, EarlyKind, NameTable, PendingFragment, ScoringRecord, Str
 use noodles::sam::alignment::record::Cigar;
 use smallvec::SmallVec;
 use stage::StagedOutput;
+use std::cmp::Ordering;
 
 // ---------------------------------------------------------------------------
 // ScoredFragment
@@ -408,6 +410,49 @@ impl<R: SimpleRec> HashLookup<R> {
         offsets_b: SmallVec<[u64; 2]>,
         supp_offsets: [SmallVec<[u64; 1]>; 2],
     ) -> Result<ScoredFragment> {
+        // Tier 2.5: CIGAR/MD structural subsumption.
+        // Borrows recs_a/recs_b immutably — both are still available for score_records below.
+        match pre_assess_scoring_records(&recs_a, &recs_b) {
+            PreAssessResult::EarlyDecision(ord) => {
+                let off_a: SmallVec<[(usize, u64); 2]> =
+                    offsets_a.iter().map(|&o| (0, o)).collect();
+                let off_b: SmallVec<[(usize, u64); 2]> =
+                    offsets_b.iter().map(|&o| (1, o)).collect();
+                return match ord {
+                    Ordering::Greater => Ok(ScoredFragment {
+                        winner_offsets: off_a,
+                        loser_offsets: off_b,
+                        supp_offsets,
+                        decision: self.add_decision_tag.then_some(Decision::First),
+                        winner_nr: 0,
+                        is_ambiguous: false,
+                    }),
+                    Ordering::Less => Ok(ScoredFragment {
+                        winner_offsets: off_b,
+                        loser_offsets: off_a,
+                        supp_offsets,
+                        decision: self.add_decision_tag.then_some(Decision::Last),
+                        winner_nr: 1,
+                        is_ambiguous: false,
+                    }),
+                    Ordering::Equal => {
+                        let mut both = off_a;
+                        both.extend(off_b);
+                        Ok(ScoredFragment {
+                            winner_offsets: both,
+                            loser_offsets: SmallVec::new(),
+                            supp_offsets,
+                            decision: self.add_decision_tag.then_some(Decision::Ambiguous),
+                            winner_nr: 0,
+                            is_ambiguous: true,
+                        })
+                    }
+                };
+            }
+            PreAssessResult::FullScoring => {}
+        }
+
+        // Full NW scoring.
         let score_a = self.score_records(&recs_a, 0)?;
         let score_b = self.score_records(&recs_b, 1)?;
         let delta = score_a - score_b;
@@ -437,10 +482,10 @@ impl<R: SimpleRec> HashLookup<R> {
             })
         } else {
             let dec = self.add_decision_tag.then_some(Decision::Ambiguous);
-            let mut winner_offsets = off_a;
-            winner_offsets.extend(off_b);
+            let mut both = off_a;
+            both.extend(off_b);
             Ok(ScoredFragment {
-                winner_offsets,
+                winner_offsets: both,
                 loser_offsets: SmallVec::new(),
                 supp_offsets,
                 decision: dec,
