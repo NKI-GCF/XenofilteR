@@ -385,4 +385,16 @@ mod tests {
         // Driving overlaps ambiguous region → NeedsScoring despite being perfect.
         assert!(matches!(frag.driving, StreamKind::Scoring { .. }));
     }
+
+    #[test]
+    fn test_all_unmapped_classified_early() {
+        let mut frag = PendingFragment::new(0);
+        // flags 0x4 = unmapped, single-end
+        let complete = frag.push(rec(0x4, false, 0, 0), 0, None, None);
+        assert!(!complete);
+        let complete = frag.push(rec(0x4, false, 0, 0), 1, None, None);
+        assert!(complete);
+        assert!(matches!(&frag.driving, StreamKind::Early { kind: EarlyKind::AllUnmapped, .. }));
+        assert!(matches!(&frag.lookup,  StreamKind::Early { kind: EarlyKind::AllUnmapped, .. }));
+    }
 }
