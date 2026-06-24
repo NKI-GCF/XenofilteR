@@ -213,13 +213,12 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         let (mcfs1, mcfs2) = a.cmp_perfect(&b, &mut ord)?;
 
         // Tier 2: perfect-match fast-path (no region forces scoring).
-        if let Some(o) = ord {
-            if !a_needs_scoring && !b_needs_scoring {
+        if let Some(o) = ord
+            && !a_needs_scoring && !b_needs_scoring {
                 drop(mcfs1);
                 drop(mcfs2);
                 return self.apply_ordered(a, b, o);
             }
-        }
 
         // Tier 2.5: CIGAR/MD structural subsumption.
         // Only when no BED/VCF region forces full scoring — if a diagnostic

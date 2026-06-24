@@ -23,7 +23,7 @@
 //! needed here.
 
 use crate::alignment::{BaseOp, MdCigFlags, ScoreOpIter};
-use smallvec::{Array, SmallVec};
+use smallvec::SmallVec;
 use std::cmp::Ordering;
 
 /// Operation at a single read position in 5′→3′ read space.
@@ -138,7 +138,7 @@ pub(crate) enum ReadSpaceDecision {
         /// Positions (read index) where A = Match and B ≠ Match (A is better).
         a_better: SmallVec<[usize; 16]>,
         /// Positions where B = Match and A ≠ Match (B is better).
-        b_better: SmallVec<[usize; 16]>,
+        b_better: Box<SmallVec<[usize; 16]>>,
         /// Signed counts for quality-independent deletion contribution.
         del: DelCounts,
     },
@@ -248,7 +248,7 @@ fn compare_mate_profiles(a: &ReadProfile, b: &ReadProfile) -> ReadSpaceDecision 
 
     ReadSpaceDecision::PartialScoring {
         a_better,
-        b_better,
+        b_better: Box::new(b_better),
         del,
     }
 }
@@ -339,7 +339,7 @@ pub(crate) fn compare_fragment_profiles(
 
     ReadSpaceDecision::PartialScoring {
         a_better: combined_a_better,
-        b_better: combined_b_better,
+        b_better: Box::new(combined_b_better),
         del: combined_del,
     }
 }
