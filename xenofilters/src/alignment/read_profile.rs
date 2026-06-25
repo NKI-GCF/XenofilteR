@@ -48,6 +48,13 @@ pub(crate) struct ReadProfile {
     pub(crate) has_insertions: bool,
     /// False when `ScoreOpIter` returned an error (malformed MD/CIGAR).
     pub(crate) valid: bool,
+    /// Whether this profile was built from a supplementary alignment record.
+    /// When true, `supp_count` is forced to zero (supplementary records list
+    /// siblings in their own SA tags, not additional supplementaries).
+    pub(crate) is_supplementary: bool,
+    /// Number of supplementary alignments for this read (SA:Z semicolons),
+    /// set only for PRIMARY records; zero for supplementary records themselves.
+    pub(crate) supp_count: usize,
 }
 
 /// Build a `ReadProfile` by walking the existing `ScoreOpIter`.
@@ -58,6 +65,7 @@ pub(crate) fn build_read_profile(mcf: &MdCigFlags<'_>) -> ReadProfile {
     let mut del_events = 0u32;
     let mut del_bases = 0u32;
     let mut has_insertions = false;
+    let is_supplementary = mcf.is_supplementary();
 
     for op_result in ScoreOpIter::new(mcf) {
         match op_result {
@@ -68,6 +76,8 @@ pub(crate) fn build_read_profile(mcf: &MdCigFlags<'_>) -> ReadProfile {
                     del_bases,
                     has_insertions,
                     valid: false,
+                    is_supplementary,
+                    supp_count: 0,
                 };
             }
             Ok(BaseOp::Match) => ops.push(ReadOp::Match),
@@ -100,6 +110,12 @@ pub(crate) fn build_read_profile(mcf: &MdCigFlags<'_>) -> ReadProfile {
         del_bases,
         has_insertions,
         valid: true,
+        is_supplementary,
+        supp_count: if is_supplementary {
+            0
+        } else {
+            mcf.supp_count()
+        },
     }
 }
 
@@ -352,6 +368,8 @@ mod tests {
             del_bases,
             has_insertions: false,
             valid: true,
+            is_supplementary: false,
+            supp_count: 0,
         }
     }
 
@@ -446,6 +464,8 @@ mod tests {
             del_bases: 0,
             has_insertions: true,
             valid: true,
+            is_supplementary: false,
+            supp_count: 0,
         };
         let b = profile(&[ReadOp::Match, ReadOp::Match, ReadOp::Match], 0, 0);
         assert!(matches!(

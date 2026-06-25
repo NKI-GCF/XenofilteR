@@ -32,6 +32,7 @@ use reader::{canonical_name, CollatedReader};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use crate::alignment::{pre_assess_alignments, PreAssessResult};
+use noodles::sam::alignment::record::cigar::op::Kind;
 
 
 pub(crate) struct CollatedMatcher<R: SimpleRec> {
@@ -304,15 +305,34 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             self.b.variant_store()
         };
         let mut dvnt: FragEvalVec<'_> = SmallVec::new();
+        let mut supplementary_penalty = 0.0;
 
         for idx in state.order_mates() {
             let rec = &state.get_records()[idx];
             let flags = state
                 .flags(idx)
                 .ok_or_else(|| anyhow!("No flags for record {idx}"))?;
+
             if flags.is_unmapped() {
                 dvnt.push(SmallVec::new());
             } else {
+                if flags.is_supplementary() {
+                    let clipped: usize = mcfs_opt[idx]
+                        .as_ref()
+                        .map(|mcf| {
+                            mcf.get_cigar()
+                                .iter()
+                                .filter_map(|op| op.ok())
+                                .filter(|op| matches!(op.kind(), Kind::SoftClip | Kind::HardClip))
+                                .map(|op| op.len())
+                                .sum::<usize>()
+                        })
+                        .unwrap_or(0);
+                    let non_clipped = rec.quality_scores().as_ref().len().saturating_sub(clipped);
+                    supplementary_penalty +=
+                        self.penalties.gap_open + (non_clipped as f64) * self.penalties.gap_extend;
+                    // Supplementary also enters the NW segment below (no early return).
+                }
                 let tid = rec
                     .ref_seq_id()
                     .transpose()?
@@ -346,7 +366,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             }
         }
 
-        Fragment::new(&self.penalties, segment, seg_mcfs)?
+        let base_score = Fragment::new(&self.penalties, segment, seg_mcfs)?
             .score(&mut self.scratch, &mut dvnt)
             .map_err(|e| {
                 anyhow!(
@@ -359,7 +379,8 @@ impl<R: SimpleRec> CollatedMatcher<R> {
                         .collect::<Vec<_>>()
                         .join("\n")
                 )
-            })
+            })?;
+        Ok(base_score + supplementary_penalty)
     }
 
     fn emit_discarded(&mut self, mut frag: FragmentState<R>) -> Result<()> {

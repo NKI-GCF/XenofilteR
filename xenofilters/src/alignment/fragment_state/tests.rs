@@ -206,3 +206,65 @@ fn test_order_mates_sorts_by_segment_then_secondary_then_tid_then_pos() -> Resul
     assert_eq!(order, expected);
     Ok(())
 }
+
+#[test]
+fn test_fragment_state_flags_boundary_and_value() -> Result<()> {
+    // Use a non-default flag (e.g., 0x40 for first segment)
+    let rec = segment(b"read", 0x40, 0, 100)?;
+    let state = FragmentState::from_record(rec, 0)?;
+
+    // Kills the leak/default mutant by ensuring valid index matches exact flags
+    assert_eq!(state.flags(0), Some(&Flags::from_bits(0x40).unwrap()));
+
+    // Kills the mutant by ensuring out-of-bounds correctly evaluates to None
+    assert_eq!(state.flags(1), None);
+    Ok(())
+}
+
+#[test]
+fn test_order_mates_ord_math_isolation() -> Result<()> {
+    // Record A: is_last_segment = false, is_secondary = true -> valid ord = 1
+    // We give it a higher tid/pos so if ord ties under mutation, it sorts incorrectly.
+    let rec_a = segment(b"r", 0x100, 1, 500)?;
+
+    // Record B: is_last_segment = true, is_secondary = false -> valid ord = 2
+    // We give it a lower tid/pos so if ord ties under mutation, it sorts incorrectly.
+    let rec_b = segment(b"r", 0x80, 0, 100)?;
+
+    // Insert B first, then A
+    let mut state = FragmentState::from_record(rec_b, 0)?;
+    state.add_record(rec_a)?;
+
+    let order = state.order_mates();
+    // Expected: Record A (idx 1, ord 1) MUST sort before Record B (idx 0, ord 2)
+    // If operators switch (+ <-> *), ord values tie, and tid forces [0, 1] instead.
+    let expected: SmallVec<[usize; 2]> = smallvec![1, 0];
+    assert_eq!(order, expected);
+    Ok(())
+}
+
+#[test]
+fn test_order_mates_reverse_complement_pos_math() -> Result<()> {
+    // We need values where (start1 + len1 < start2 + len2) BUT (start1 * len1 > start2 * len2)
+    // Record 1: start = 5, cigar ops len = 5 ("1M1M1M1M1M") -> true pos = 10, mutated pos = 25
+    let mut rec1 = create_record(b"r", "1M1M1M1M1M", &[], &[], "5", false)?;
+    *rec1.flags_mut() = Flags::from_bits(0x10).unwrap(); // Reverse complemented
+    *rec1.reference_sequence_id_mut() = Some(0);
+    *rec1.alignment_start_mut() = Some(Position::new(5).unwrap());
+
+    // Record 2: start = 1, cigar ops len = 10 ("1M1M1M1M1M1M1M1M1M1M") -> true pos = 11, mutated pos = 10
+    let mut rec2 = create_record(b"r", "1M1M1M1M1M1M1M1M1M1M", &[], &[], "10", false)?;
+    *rec2.flags_mut() = Flags::from_bits(0x10).unwrap(); // Reverse complemented
+    *rec2.reference_sequence_id_mut() = Some(0);
+    *rec2.alignment_start_mut() = Some(Position::new(1).unwrap());
+
+    // Insert rec2 (idx 0) then rec1 (idx 1)
+    let mut state = FragmentState::from_record(rec2, 0)?;
+    state.add_record(rec1)?;
+
+    let order = state.order_mates();
+    // Expected: rec1 (idx 1, true pos 10) comes before rec2 (idx 0, true pos 11)
+    let expected: SmallVec<[usize; 2]> = smallvec![1, 0];
+    assert_eq!(order, expected);
+    Ok(())
+}

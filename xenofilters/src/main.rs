@@ -283,9 +283,6 @@ pub(crate) mod tests {
         assert!(result[0].is_none());
         assert!(result[1].is_none());
     }
-    // You will need to construct a Config with dummy paths.
-    // Even if it fails to open the stream and returns an Error,
-    // the mutant is often killed because the branch evaluates differently.
 
     #[test]
     fn test_namesorted_sequential_single_alignment() {

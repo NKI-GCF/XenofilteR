@@ -312,7 +312,6 @@ fn test_validate_non_namesorted_allows_only_one_score_thread() {
     c.matching_algorithm = MatchingAlgorithm::Collated;
     c.score_threads = 1;
 
-    // Kills: replace == with != in self.score_threads == 1
     assert!(
         c.validate_and_init().is_ok(),
         "Collated matching algorithm with exactly 1 score thread must be valid"
@@ -328,7 +327,6 @@ fn test_validate_non_namesorted_allows_only_one_score_thread() {
 
 #[test]
 fn test_zero_gap_penalties_do_not_flip_sign() {
-    // Kills: replace > with >= for self.gap_open > 0.0
     let mut c = base_config();
     c.gap_open = 0.0;
 
@@ -340,7 +338,6 @@ fn test_zero_gap_penalties_do_not_flip_sign() {
         "Mutant killed: gap_open > 0.0 changed to >= 0.0 (flipped 0.0 to -0.0)"
     );
 
-    // Kills: replace > with >= for self.gap_extend > 0.0
     let mut c2 = base_config();
     c2.gap_extend = 0.0; // A gap_extend of 0.0 is perfectly valid
 

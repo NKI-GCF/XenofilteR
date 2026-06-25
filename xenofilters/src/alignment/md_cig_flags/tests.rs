@@ -83,13 +83,10 @@ fn test_partial_ord_and_eq() -> Result<()> {
 
     // --- Testing PartialEq ---
 
-    // Kills: replace eq with false
     assert!(md_p1 == md_p2, "perfect == perfect should be true");
 
-    // Kills: replace eq with true, and replace == with !=
     assert!(md_p1 != md_i1, "perfect != imperfect should be true");
 
-    // Kills: replacing eq logic that misses the None handling
     assert!(
         !(md_i1 == md_i2),
         "imperfect == imperfect defaults to None, so eq is false"
@@ -97,7 +94,6 @@ fn test_partial_ord_and_eq() -> Result<()> {
 
     // --- Testing PartialOrd ---
 
-    // Kills: replace partial_cmp -> Option<Ordering> with None
     assert_eq!(md_p1.partial_cmp(&md_p2), Some(Ordering::Equal));
     assert_eq!(md_p1.partial_cmp(&md_i1), Some(Ordering::Less));
     assert_eq!(md_i1.partial_cmp(&md_p1), Some(Ordering::Greater));

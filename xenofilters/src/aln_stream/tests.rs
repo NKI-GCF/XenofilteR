@@ -252,14 +252,36 @@ fn test_aln_stream_init_writers_multi_and_merged() -> Result<()> {
 
 #[test]
 fn test_aln_stream_fetch_by_virtual_offset() -> Result<()> {
+    use noodles::bam;
+    use noodles::sam;
+    use noodles::sam::alignment::io::Write;
+    use tempfile::NamedTempFile;
+
+    // 1. Create file on disk
+    let temp_file = NamedTempFile::new()?;
+    let path = temp_file.path().to_owned();
+
+    // 2. Write a valid header AND an empty reference sequence dictionary
+    {
+        // An empty list of references is required for a valid BAM file
+        let header = sam::Header::builder()
+            .set_reference_sequences(sam::header::ReferenceSequences::default())
+            .build();
+
+        let mut writer = bam::io::Writer::from(std::fs::File::create(&path)?);
+        writer.write_header(&header)?;
+        writer.finish(&header)?;
+    }
+
+    // 3. Initialize config
     let mut config = Config {
-        alignment: vec!["tests/data/test_input_1_a.bam".to_string()],
+        alignment: vec![path.to_str().unwrap().to_string()],
         ..Default::default()
     };
+
     let mut stream = AlnStream::<RecordBuf>::new(&mut config, 0)?;
 
-    // Passing a deliberately invalid large virtual offset should trigger an error.
-    // If the mutant returns Ok(Default), this assert will fail and kill it.
+    // 4. Test the invalid offset
     let res = stream.fetch_by_virtual_offset(u64::MAX);
     assert!(res.is_err(), "Invalid virtual offset should produce an Err");
 

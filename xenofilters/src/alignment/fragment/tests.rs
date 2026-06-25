@@ -1,10 +1,12 @@
 use super::*;
+use crate::alignment::fragment::SimpleRec;
 use crate::alignment::MdCigFlags;
 use crate::config::Config;
 use crate::penalty::Penalty;
 use crate::tests::create_record;
 use crate::variant::{Eval, Variant};
 use anyhow::Result;
+use noodles::sam::alignment::record::Flags;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::{smallvec, SmallVec};
 
@@ -53,6 +55,130 @@ fn make_eval<'a>(v: &'a dyn Variant) -> Eval<'a> {
     let mut e = Eval::new();
     e.set_variant(v);
     e
+}
+/* conversion to Record not possible
+#[test]
+fn test_simple_rec_for_bam_record() -> Result<()> {
+    use noodles::bam;
+    use noodles::sam::Header;
+
+    let header = Header::default();
+    let mut buf = RecordBuf::default();
+    *buf.reference_sequence_id_mut() = Some(42);
+    *buf.quality_scores_mut() =
+        noodles::sam::alignment::record_buf::QualityScores::from(vec![30, 31, 32]);
+
+    // Convert to a BAM record
+    let bam_record = bam::Record::try_from_alignment_record(&header, &buf)?;
+
+    assert_eq!(bam_record.ref_seq_id().unwrap()?, 42);
+
+    assert_eq!(bam_record.quality_at(0), Some(30));
+    assert_eq!(bam_record.quality_at(2), Some(32));
+    assert_eq!(bam_record.quality_at(3), None);
+
+    let converted = bam_record.as_record_buf(&header)?;
+    assert_eq!(converted.reference_sequence_id(), Some(42));
+
+    Ok(())
+}*/
+
+#[test]
+fn test_fragment_requires_revcmp() -> Result<()> {
+    let rec_fwd = create_record(b"read1", "5M", b"AAAAA", &[30; 5], "5", false)?;
+    let mut rec_rev = create_record(b"read1", "5M", b"AAAAA", &[30; 5], "10", false)?;
+    *rec_rev.flags_mut() = Flags::from_bits(0x10).unwrap(); // Reverse complemented
+
+    let flags_fwd = rec_fwd.flags();
+    let flags_rev = rec_rev.flags();
+
+    let p = setup_penalties();
+    let mut fragment = Fragment::new(
+        &p,
+        smallvec![&rec_fwd, &rec_rev],
+        smallvec![
+            MdCigFlags::try_from_record(&rec_fwd, &flags_fwd)?,
+            MdCigFlags::try_from_record(&rec_rev, &flags_rev)?
+        ],
+    )?;
+
+    // fragment is initialized with seg_i = 0 (the forward segment)
+
+    assert!(!fragment.requires_revcmp(0)); // Same segment -> false
+
+    assert!(fragment.requires_revcmp(1)); // Other segment has different ori -> true
+
+    // Move to the revcmp segment
+    fragment.seg_i = 1;
+    assert!(fragment.requires_revcmp(0)); // Other segment has different ori -> true
+    assert!(!fragment.requires_revcmp(1)); // Same segment -> false
+
+    Ok(())
+}
+
+#[test]
+fn test_score_variants_in_window_boundaries() -> Result<()> {
+    // Start the read at position 1. Spans reference [1, 11).
+    let rec = create_record(b"read1", "10M", &[b'A'; 10], &[30; 10], "1", false)?;
+    let flags = rec.flags();
+    let p = setup_penalties();
+    let fragment = Fragment::new(
+        &p,
+        smallvec![&rec],
+        smallvec![MdCigFlags::try_from_record(&rec, &flags)?],
+    )?;
+
+    // We create three variants around the right edge of a window ending at 6:
+    // v1: fully inside the window (start=3, ref_end=4)
+    // v2: overlapping the right edge (start=5, ref_end=7)
+    // v3: starts exactly on the right edge (start=6, ref_end=7) -> should NOT be processed
+    let v1 = TestVariant::new(3, 1, 0.1);
+    let v2 = TestVariant::new(5, 2, 0.1);
+    let v3 = TestVariant::new(6, 1, 0.1);
+
+    let mut dvnt: FragEvalVec =
+        smallvec![smallvec![make_eval(&v1), make_eval(&v2), make_eval(&v3)]];
+    let mut finished: FragEvalVec = smallvec![smallvec![]];
+    let mut scratch = Scratch::new();
+
+    // Create a WindowCtx that covers [1, 6)
+    let ctx = WindowCtx::new(0, 0, 1, 6, 0.0);
+
+    fragment.score_variants_in_window(&mut scratch, &mut dvnt, &mut finished, ctx)?;
+
+    // v1 is fully processed (ref_end 4 <= 6). It gets moved to `finished`.
+    assert_eq!(finished[0].len(), 1);
+    assert_eq!(finished[0][0].start(), 3);
+
+    // dvnt should now hold v2 and v3.
+    // v2 was partially processed (start 5 < 6, but ref_end 7 > 6), so it remains in `dvnt`.
+    // v3 was NOT processed because its start (6) is NOT < ctx.ref_end (6).
+    assert_eq!(dvnt[0].len(), 2);
+    assert_eq!(dvnt[0][0].start(), 5);
+    assert_eq!(dvnt[0][1].start(), 6);
+
+    Ok(())
+}
+
+#[test]
+fn maximize_delta_exact_zero_mutant() {
+    let mut dvnt: FragEvalVec = smallvec![smallvec![mk_eval(10, 1, 1, 0.0)]];
+    let mut dp = SmallVec::new();
+
+    // If it were >=, the variant with delta 0.0 would be included and processed.
+    assert_eq!(maximize_delta(&mut dvnt, &mut dp), 0.0);
+    assert!(
+        dp.is_empty(),
+        "dp should be empty because variants with <= 0 delta should be filtered out"
+    );
+}
+
+#[test]
+fn test_simple_rec_for_sam_record_buf() {
+    let mut buf = RecordBuf::default();
+    *buf.reference_sequence_id_mut() = Some(15);
+
+    assert_eq!(buf.ref_seq_id().unwrap().unwrap(), 15);
 }
 
 #[test]
@@ -219,7 +345,11 @@ fn snp_alt_support_gives_positive_delta() -> Result<()> {
     let rec = create_record(b"read1", "5M", b"AAGAA", &[30; 5], "5", false)?;
     let flags = rec.flags();
     let p = setup_penalties();
-    let mut frag = Fragment::new(&p, smallvec![&rec], smallvec![MdCigFlags::try_from_record(&rec, &flags)?])?;
+    let mut frag = Fragment::new(
+        &p,
+        smallvec![&rec],
+        smallvec![MdCigFlags::try_from_record(&rec, &flags)?],
+    )?;
 
     // p_variant must exceed 0.5 for the current formula to ever favor alt
     // over the weighted-reference baseline (delta = (2p-1)*(lm-lmm)).
@@ -229,7 +359,10 @@ fn snp_alt_support_gives_positive_delta() -> Result<()> {
     let mut scratch = Scratch::new();
     let score = frag.score(&mut scratch, &mut dvnt)?;
 
-    assert!(score > 0.0, "Expected positive score for read supporting alt allele, got {score}");
+    assert!(
+        score > 0.0,
+        "Expected positive score for read supporting alt allele, got {score}"
+    );
     Ok(())
 }
 
@@ -332,9 +465,19 @@ fn snp_no_alt_support_gives_nonpositive_delta() -> Result<()> {
 
 #[test]
 fn test_test_variant_p_variant_reflects_constructed_field() {
-    let v = TestVariant { pos: 0, ref_a: b"A".to_vec(), alt_a: b"G".to_vec(), p_variant: 1.0 };
+    let v = TestVariant {
+        pos: 0,
+        ref_a: b"A".to_vec(),
+        alt_a: b"G".to_vec(),
+        p_variant: 1.0,
+    };
     assert_eq!(v.p_variant(), 1.0);
-    let v2 = TestVariant { pos: 0, ref_a: b"A".to_vec(), alt_a: b"G".to_vec(), p_variant: 0.25 };
+    let v2 = TestVariant {
+        pos: 0,
+        ref_a: b"A".to_vec(),
+        alt_a: b"G".to_vec(),
+        p_variant: 0.25,
+    };
     assert_eq!(v2.p_variant(), 0.25);
 }
 
@@ -343,12 +486,19 @@ fn snp_alt_support_with_low_prior_is_not_rescued() -> Result<()> {
     let rec = create_record(b"read1", "5M", b"AAGAA", &[30; 5], "5", false)?;
     let flags = rec.flags();
     let p = setup_penalties();
-    let mut frag = Fragment::new(&p, smallvec![&rec], smallvec![MdCigFlags::try_from_record(&rec, &flags)?])?;
+    let mut frag = Fragment::new(
+        &p,
+        smallvec![&rec],
+        smallvec![MdCigFlags::try_from_record(&rec, &flags)?],
+    )?;
     let v = TestVariant::new(3, 1, 0.1);
     let mut dvnt = smallvec![smallvec![make_eval(&v)]];
     let mut scratch = Scratch::new();
     let score = frag.score(&mut scratch, &mut dvnt)?;
-    assert!(score <= 0.0, "expected no rescue at p_variant <= 0.5, got {score}");
+    assert!(
+        score <= 0.0,
+        "expected no rescue at p_variant <= 0.5, got {score}"
+    );
     Ok(())
 }
 
@@ -357,7 +507,11 @@ fn snp_alt_support_boundary_p_variant_half_gives_zero_delta() -> Result<()> {
     let rec = create_record(b"read1", "5M", b"AAGAA", &[30; 5], "5", false)?;
     let flags = rec.flags();
     let p = setup_penalties();
-    let mut frag = Fragment::new(&p, smallvec![&rec], smallvec![MdCigFlags::try_from_record(&rec, &flags)?])?;
+    let mut frag = Fragment::new(
+        &p,
+        smallvec![&rec],
+        smallvec![MdCigFlags::try_from_record(&rec, &flags)?],
+    )?;
     let v = TestVariant::new(3, 1, 0.5);
     let mut dvnt = smallvec![smallvec![make_eval(&v)]];
     let mut scratch = Scratch::new();

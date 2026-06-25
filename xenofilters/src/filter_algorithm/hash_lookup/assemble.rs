@@ -38,6 +38,8 @@ pub(crate) struct ScoringRecord {
     pub(crate) qualities: Vec<u8>,
     /// BGZF virtual offset — used in pass 2 for direct seek.
     pub(crate) virtual_offset: u64,
+    /// Supplementary alignment count from the SA:Z tag (semicolons counted).
+    pub(crate) supp_count:     usize,
 }
 
 impl ScoringRecord {
@@ -52,7 +54,7 @@ impl ScoringRecord {
     }
     /// True iff single-op CIGAR (all-Match) and MD is all digits (no mismatches).
     pub(crate) fn is_perfect(&self) -> bool {
-        if self.is_unmapped() {
+        if self.is_unmapped() || self.supp_count > 0 {
             return false;
         }
         // BAM CIGAR: each op is a u32le; low 4 bits = op code (0 = Match).
@@ -308,8 +310,16 @@ mod tests {
             md,
             qualities: vec![30; 10],
             virtual_offset: pos as u64 * 1000,
+            supp_count: 0,
         }
     }
+    #[test]
+    fn test_is_perfect_suppressed_by_sa_tag() {
+        let mut r = rec(0, true, 0, 100);
+        r.supp_count = 1;
+        assert!(!r.is_perfect(), "SA:Z present → must not be perfect");
+    }
+
     #[test]
     fn test_single_end_perfect_both_streams_classified() {
         let mut frag = PendingFragment::new(0);

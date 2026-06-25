@@ -34,22 +34,31 @@ impl<R: SimpleRec> LineByLine<R> {
                 .flags(idx)
                 .ok_or_else(|| anyhow!("No flags for record index {idx} in alignment {aln_idx}"))?;
 
-            // Supplementaries: structural penalty only, excluded from NW segment.
+            // Supplementary alignments contribute BOTH:
+            //   1. A chimeric-junction structural penalty:
+            //      gap_open + non_clipped_bases × gap_extend
+            //      (ensures they rank below a clean non-supplementary alignment of
+            //       the same mapped bases, regardless of per-base quality scores)
+            //   2. Per-base NW scoring via the segment below
+            //      (so their actual alignment quality is still reflected in the score)
             if flags.is_supplementary() {
-                if let Some(mcf) = mcfs_opt[idx].take() {
-                    let clipped: usize = mcf
-                        .get_cigar()
-                        .iter()
-                        .filter_map(|op| op.ok())
-                        .filter(|op| matches!(op.kind(), Kind::SoftClip | Kind::HardClip))
-                        .map(|op| op.len())
-                        .sum();
-                    let read_len = rec.quality_scores().as_ref().len();
-                    let non_clipped = read_len.saturating_sub(clipped);
-                    supplementary_penalty +=
-                        self.penalties.gap_open + (non_clipped as f64) * self.penalties.gap_extend;
-                }
-                continue; // do NOT push to dvnt or segment
+                let clipped: usize = mcfs_opt[idx]
+                    .as_ref()
+                    .map(|mcf| {
+                        mcf.get_cigar()
+                            .iter()
+                            .filter_map(|op| op.ok())
+                            .filter(|op| matches!(op.kind(), Kind::SoftClip | Kind::HardClip))
+                            .map(|op| op.len())
+                            .sum::<usize>()
+                    })
+                    .unwrap_or(0);
+                let read_len = rec.quality_scores().as_ref().len();
+                let non_clipped = read_len.saturating_sub(clipped);
+                supplementary_penalty +=
+                    self.penalties.gap_open + (non_clipped as f64) * self.penalties.gap_extend;
+                // NOTE: no `continue` — fall through to add the supplementary to
+                // the NW segment so its per-base alignment quality is scored too.
             }
 
             if flags.is_unmapped() || !has_variants {

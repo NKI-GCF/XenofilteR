@@ -235,6 +235,16 @@ impl<R: SimpleRec> HashLookup<R> {
             .iter()
             .collect::<Result<Vec<u8>, std::io::Error>>()?;
 
+        // SA:Z: pending supplementary alignments for this read.
+        // Each supplementary entry ends with ';', so semicolon count == count.
+        let supp_count = match rec.data().get(&Tag::OTHER_ALIGNMENTS).transpose()? {
+            Some(Value::String(s)) => {
+                let b: &[u8] = s.as_ref();
+                b.iter().filter(|&&c| c == b';').count()
+            }
+            _ => 0,
+        };
+
         // Use a per-stream counter so fetch_by_virtual_offset(offset) correctly
         // indexes into stream[nr].original_reads[offset] for both real and mock streams.
         let virtual_offset = self.record_counters[nr];
@@ -251,6 +261,7 @@ impl<R: SimpleRec> HashLookup<R> {
                 md,
                 qualities,
                 virtual_offset,
+                supp_count,
             },
         )))
     }
