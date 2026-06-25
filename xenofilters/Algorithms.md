@@ -16,41 +16,77 @@ arrives; `Namesorted` always waits for records from every stream before deciding
 
 ### Tier 2 — Perfect-match fast-path
 
-`FragmentState::cmp_perfect` builds `MdCigFlags` for every record and checks:
+`FragmentState::cmp_perfect` builds `MdCigFlags` for every **primary** record and
+checks three conditions simultaneously:
 
 ```
-is_perfect ≡ cigar.len() == 1  &&  md.bytes().all(is_ascii_digit)
+is_perfect ≡ cigar.len() == 1              (single-operation CIGAR, no gaps or clips)
+           ∧ md.bytes().all(is_ascii_digit) (MD tag is all digits, no mismatch letters)
+           ∧ SA:Z: tag absent               (no supplementary alignments pending)
 ```
 
-**Supplementary** records (non-overlapping chimeric segments) suppress the `is_perfect`
-flag for their stream. **Secondary** records (overlapping alternative alignments) do not.
+The third condition is critical. The SA:Z: tag (stored in `MdCigFlags` as
+`has_supplementary`, read from `Tag::OTHER_ALIGNMENTS` during construction) encodes
+the alignments of any supplementary records for that fragment. Its presence guarantees
+supplementary records will follow in the stream; supplementaries always add a structural
+penalty to the total score, so the fragment can never be "perfect" for fast-path
+purposes. Only primary records need to be checked: primaries always precede their
+supplementaries in the BAM stream, so checking SA:Z: on primaries is sufficient and
+correct.
 
-- One stream perfect, other not → perfect wins; no scoring.
+Supplementary records themselves do **not** have their own SA tag checked; the
+per-primary SA:Z: count (`b.iter().filter(|&&c| c == b';').count()`) can be stored
+alongside `MdCigFlags` in a `SmallVec<[usize; READ_CT]>` for downstream use during
+scoring.
+
+Decision outcomes:
+- One stream perfect (and SA:Z:-free), other not → perfect wins; no scoring.
 - Both perfect → tie.
 - Neither perfect → Tier 2.5.
 
-BED/VCF region overlap (`Collated` and `HashLookup` only) forces fall-through to Tier 3
-even when Tier 2 would otherwise resolve the fragment.
+BED/VCF region overlap (`Collated` and `HashLookup` only) forces fall-through to
+Tier 3 even when Tier 2 would otherwise resolve the fragment.
 
-### Tier 2.5 — CIGAR/MD structural subsumption
+### Tier 2.5 — Effective-match-count domination
 
-Before running full NW DP, `alignment_sig` computes aggregate mismatch count, soft-clip
-count, and indel base count for each stream's `MdCigFlags`. `subsumes` then checks
-whether one stream's signature is dominated on all three axes simultaneously:
+Before running full NW DP, the pre-assessment computes the **effective match count**
+for each stream from the `ReadProfile` already built during the single CIGAR+MD walk
+(no additional parsing). An effective match is a read-coordinate position classified
+as `ReadOp::Match` — a CIGAR M base confirmed by the MD tag as correctly aligned.
+For a fragment that includes supplementary alignments, the structural penalty for each
+supplementary reduces the stream's effective match advantage:
 
 ```
-a dominates b ≡ a.mismatches ≤ b.mismatches
-              ∧ a.soft_clips  ≤ b.soft_clips
-              ∧ a.indel_bases ≤ b.indel_bases
+effective_matches(stream) =
+    Σ ReadOp::Match positions over all primary records
+  − Σ structural_penalty_units(supplementary records)
 ```
 
-If one stream strictly dominates, it wins without any per-base scoring. If both
-dominate equally (tie), the result is `Ordering::Equal` → ambiguous. If neither
-dominates, Tier 3 runs.
+where the structural penalty unit for one supplementary is
+`|gap_open| + non_clipped_bases × |gap_extend|`, expressed in the same per-base cost
+space as a mismatch. This means a stream with supplementaries must overcome their
+penalty to dominate.
 
-Subsumption is only applied when both sides have the same number of primary segments;
-mismatched split structures fall through to full NW unconditionally.
+Domination rules derived from `compare_fragment_profiles`:
+- If all per-mate positions where A and B differ favour A, and A's deletion counts
+  are not worse than B's, A wins without NW (EarlyDecision Greater).
+- Symmetrically for B.
+- If both streams have positions that favour them (PartialScoring), or if either
+  stream has insertions of differing length, fall through to full NW.
+- If both streams are identical position-by-position, deletion counts break the tie;
+  if those are also equal, the result is Equal → ambiguous.
 
+This formulation is strictly more powerful than a three-axis aggregate check
+(mismatches ≤, clips ≤, indels ≤) because it operates at per-position granularity,
+handles paired-end fragments across both mates, and correctly accounts for the case
+where one stream has more mismatches but fewer clips while the other has fewer
+mismatches but more clips — situations the three-axis aggregate leaves as incomparable
+but where a per-position comparison often resolves cleanly.
+
+For `HashLookup`, which operates on raw `ScoringRecord` bytes before any `RecordBuf`
+construction, a lighter aggregate check (mismatch count from raw MD + clip/indel count
+from raw CIGAR bytes) is used as a pre-filter. If it fires, the fragment is resolved
+without NW; otherwise `score_records` runs and builds full profiles internally.
 ### Tier 3 — Per-base log-likelihood scoring
 
 `Fragment::score` iterates `ScoreOpIter` (CIGAR + MD joint iterator) and accumulates
@@ -66,20 +102,27 @@ per-base log-likelihood penalties:
 
 Quality scores index the penalty arrays (Phred-capped at `MAX_Q = 93`).
 
-**Supplementary alignment structural penalty.** Supplementary records are excluded from
-the per-base NW segment. Instead, each supplementary contributes:
+**Supplementary alignment scoring.** Supplementary records (chimeric read segments)
+contribute to scoring in two additive components:
 
-```
-penalty = gap_open + non_clipped_bases × gap_extend
-```
+1. **Per-base NW score** — the supplementary's aligned bases are scored through the
+   standard log-likelihood pipeline, using the sequence and quality scores from the
+   primary record. The primary is guaranteed to be soft-clipped (not hard-clipped), so
+   the full read sequence is always available.
+2. **Structural penalty** — an additional cost of `gap_open + non_clipped_bases × gap_extend`
+   is added to account for the chimeric junction. `non_clipped_bases` is the read
+   length minus the count of soft- and hard-clipped bases in the supplementary's own
+   CIGAR.
 
-where `non_clipped_bases = read_length − clip_count` (soft + hard clips from the
-supplementary record's own CIGAR). This accounts for the chimeric junction without
-double-penalising the primary mapping's soft clips.
+The two components combine so that even a supplementary with perfectly-aligning bases
+always produces a lower total score than the same bases aligned without a chimeric
+break, and always scores lower than a single-base indel with equal matched content.
+This ensures supplementaries penalise their stream appropriately without being ignored.
+Secondary alignments (overlapping alternatives, flag 0x100) tag along with their
+stream's decision without contributing to scoring.
 
-The total fragment score is the sum of per-base NW scores over primary records plus
-structural penalties over supplementary records.
-
+The total fragment score is the sum of per-base NW scores over all primary and
+supplementary records, plus structural penalties over supplementary records.
 ### Tier 3 — Variant-aware rescue (optional)
 
 When a VCF is supplied per stream, `Fragment::score` additionally runs
@@ -153,9 +196,9 @@ The IO thread walks streams in round-robin order. Records are appended to
 `AlnBuffer<FragmentState>` until a new qname is seen; the new record is pushed back via
 `un_next`. When `best.len() > 1` the cascade runs.
 
-`resolve()` applies the cascade in order: `partial_cmp` → `cmp_perfect` →
-subsumption → `score_delta`. Each tier short-circuits the ones below it.
-
+`resolve()` applies the cascade in order: `partial_cmp` → `cmp_perfect` (including
+SA:Z: check) → `pre_assess_alignments` (Tier 2.5, single CIGAR+MD walk) → `score_delta`
+(full NW). Each tier short-circuits the ones below it.
 ### Sequential mode (`score_threads == 1`)
 
 `process_sequential` — one thread; output order is deterministic.
@@ -193,6 +236,7 @@ streams. Two-pass. Single-threaded only.
 ```
 AllUnmapped  ← all primaries have is_unmapped flag set
 AllPerfect   ← all primaries: is_perfect() == true  AND  no BED/VCF overlap
+               (is_perfect includes the SA:Z:-absent check)
 Scoring      ← otherwise (retain ScoringRecord bodies for NW)
 ```
 
@@ -221,8 +265,7 @@ virtual offset. No sequence. Records insert into `NameTable`
 `primary_count >= expected_primaries` before the fragment is complete and classifies.
 
 Supplementary records never count as primaries; their virtual offsets are stored
-separately in `supplementary_offsets`.
-
+separately in `supplementary_offsets` for pass-2 retrieval and scoring.
 ### Pass 2 — Selective seek
 
 `StagedOutput` holds a `BTreeMap<u64, ScoredFragment>` keyed by driving-stream sequence
@@ -268,8 +311,12 @@ next_fragment()      next_fragment()
 2. **BED/VCF region check** — `fragment_overlaps_region` queries `TabixBed` /
    `TabixVcf` for each mapped primary. A hit forces full NW even if `cmp_perfect`
    would resolve the pair.
-3. **Tier 2 perfect-match fast-path** — `cmp_perfect`; bypassed if region overlap.
-4. **Tier 3 full NW** — `score_one` on both fragments.
+3. **Tier 2 perfect-match fast-path** — `cmp_perfect` (SA:Z:-aware); bypassed if
+   region overlap.
+4. **Tier 2.5 effective-match-count domination** — `pre_assess_alignments` builds
+   `ReadProfile`s in a single CIGAR+MD walk; supplementary penalty units are
+   subtracted from effective match counts before comparison.
+5. **Tier 3 full NW** — `score_one` on both fragments.
 
 ### Region overlap (Collated-specific)
 
@@ -292,18 +339,18 @@ O(name-order skew between streams). Scales cleanly to N > 2 via N waiting maps.
 
 ## Algorithm Comparison
 
-| Property                | Namesorted                                    | HashLookup                    | Collated                              |
-|-------------------------|-----------------------------------------------|-------------------------------|---------------------------------------|
-| BAM sort order required | identical name order, all streams             | position-sorted               | collated (name-grouped) per stream    |
-| Inter-stream order      | must match                                    | arbitrary                     | arbitrary                             |
-| Output order            | deterministic (sequential) / non- (parallel)  | driving-stream order          | unordered                             |
-| Parallelism             | IO + N scoring workers (crossbeam)            | single-threaded (seek-IO stub)| IO + N thread pool (stub)             |
-| Memory                  | O(fragment)                                   | O(in-flight fragments)        | O(name-order skew)                    |
-| Region files            | not supported                                 | in-memory BED/VCF             | tabix-indexed BED/VCF                 |
-| Pass count              | 1                                             | 2 (scan + seek)               | 1                                     |
-| Variant rescue          | yes                                           | yes                           | yes                                   |
-| BAM index needed        | no                                            | yes (BGZF virtual offsets)    | no (tabix for region files only)      |
-| EarlyKind fast-path     | Tier 1 + Tier 2 (no explicit EarlyKind)       | AllUnmapped / AllPerfect      | Tier 1 unmapped before tabix I/O      |
-| Supplementary penalty   | yes (sequential + parallel)                   | yes (score_records)           | yes (score_one)                       |
-| Subsumption (Tier 2.5)  | yes (LineByLine::resolve)                     | no (uses EarlyKind instead)   | no (uses TabixBed/Vcf instead)        |
-| N > 2 streams           | architecturally ready                         | high-memory risk              | architecturally ready                 |
+| Property                | Namesorted                                     | HashLookup                       | Collated                              |
+|-------------------------|------------------------------------------------|----------------------------------|---------------------------------------|
+| BAM sort order required | identical name order, all streams              | position-sorted                  | collated (name-grouped) per stream    |
+| Inter-stream order      | must match                                     | arbitrary                        | arbitrary                             |
+| Output order            | deterministic (sequential) / non- (parallel)   | driving-stream order             | unordered                             |
+| Parallelism             | IO + N scoring workers (crossbeam)             | single-threaded (seek-IO stub)   | IO + N thread pool (stub)             |
+| Memory                  | O(fragment)                                    | O(in-flight fragments)           | O(name-order skew)                    |
+| Region files            | not supported                                  | in-memory BED/VCF                | tabix-indexed BED/VCF                 |
+| Pass count              | 1                                              | 2 (scan + seek)                  | 1                                     |
+| Variant rescue          | yes                                            | yes                              | yes                                   |
+| BAM index needed        | no                                             | yes (BGZF virtual offsets)       | no (tabix for region files only)      |
+| EarlyKind fast-path     | Tier 1 + Tier 2 (SA:Z:-aware)                  | AllUnmapped / AllPerfect         | Tier 1 unmapped before tabix I/O      |
+| Supplementary scoring   | per-base NW + structural penalty               | per-base NW + structural penalty | per-base NW + structural penalty      |
+| Subsumption (Tier 2.5)  | effective match count (ReadProfile)            | aggregate raw-byte pre-check     | effective match count (ReadProfile)   |
+| N > 2 streams           | architecturally ready                          | high-memory risk                 | architecturally ready                 |
