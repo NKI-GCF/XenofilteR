@@ -3,3 +3,4 @@ xenofilters/*.profdata
 xenofilters/tests
 xenofilters/tags
 xenofilters/target*/
+xenofilters/mutants.out*

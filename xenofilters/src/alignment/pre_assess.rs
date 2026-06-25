@@ -1,41 +1,36 @@
-//! Tier 2.5 pre-assessment: CIGAR/MD structural subsumption.
+//! Tier 2.5 pre-assessment: unified structural + read-space alignment comparison.
 //!
-//! When both streams fail the perfect-match fast-path (Tier 2), this module
-//! checks whether one stream's aggregate alignment penalty profile is a strict
-//! subset of the other's. If so, the superior stream wins without Needleman–Wunsch
-//! scoring.
+//! Two public entry points:
 //!
-//! # Coordinate-space note
-//! Subsumption operates on per-read aggregate counts (mismatches, clips, indels),
-//! not on reference coordinates. This is intentional: in the xenograft use case
-//! Stream A and Stream B align to *different* reference genomes, so direct
-//! coordinate comparison is meaningless. Region-restricted scoring is therefore
-//! not implemented.
+//! * [`pre_assess_alignments`] — for `LineByLine` and `Collated`. Builds `ReadProfile`s
+//!   **once** (single CIGAR+MD walk per record) then runs Tier 2.5a (aggregate subsumption)
+//!   and Tier 2.5b (per-position read-space comparison) from the same data.
+//!
+//! * [`pre_assess_scoring_records`] — for `HashLookup`. Operates on raw BAM CIGAR bytes
+//!   and MD byte slices stored in `ScoringRecord`; aggregate check only, avoiding the
+//!   `RecordBuf` construction that happens later in `score_records`.
 
-use crate::alignment::read_profile::{
-    build_read_profile, compare_fragment_profiles, FragmentProfile, ReadSpaceDecision,
+use super::read_profile::{
+    build_read_profile, compare_fragment_profiles, FragmentProfile, ReadOp, ReadSpaceDecision,
 };
 use crate::alignment::MdCigFlags;
 use crate::filter_algorithm::line_by_line::READ_CT;
-use noodles::sam::alignment::record::cigar::op::Kind;
 use smallvec::SmallVec;
 use std::cmp::Ordering;
 
 // ---------------------------------------------------------------------------
-// AlignSig
+// AlignSig — aggregate alignment quality signature (private to this module)
 // ---------------------------------------------------------------------------
 
-/// Aggregate alignment quality signature.
-/// Lower values on every axis indicate a better alignment.
 #[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct AlignSig {
-    pub(crate) mismatches: usize,
-    pub(crate) soft_clips: usize,
-    pub(crate) indel_bases: usize,
+struct AlignSig {
+    mismatches: usize,
+    soft_clips: usize,
+    indel_bases: usize,
 }
 
 impl AlignSig {
-    pub(crate) fn perfect() -> Self {
+    fn perfect() -> Self {
         Self::default()
     }
 
@@ -46,66 +41,31 @@ impl AlignSig {
     }
 }
 
-/// Run Tier 2.5 read-space assessment (LineByLine and Collated).
-///
-/// Called after `pre_assess_mcfs` returns `FullScoring`.  Builds per-mate
-/// `ReadProfile`s from the pre-built `MdCigFlags` slices (no extra I/O) and
-/// delegates to `compare_fragment_profiles`.
-///
-/// Returns `PreAssessResult::FullScoring` whenever the read-space comparison
-/// cannot resolve the fragment (insertions, malformed MD, mate-count mismatch,
-/// or mixed-direction positions where deletion counts conflict).
-pub(crate) fn pre_assess_read_space(
-    mcfs_a: &SmallVec<[MdCigFlags<'_>; READ_CT]>,
-    mcfs_b: &SmallVec<[MdCigFlags<'_>; READ_CT]>,
-) -> PreAssessResult {
-    if mcfs_a.len() != mcfs_b.len() || mcfs_a.is_empty() {
-        return PreAssessResult::FullScoring;
-    }
-
-    let fp_a = FragmentProfile {
-        mates: mcfs_a.iter().map(build_read_profile).collect(),
-    };
-    let fp_b = FragmentProfile {
-        mates: mcfs_b.iter().map(build_read_profile).collect(),
-    };
-
-    match compare_fragment_profiles(&fp_a, &fp_b) {
-        ReadSpaceDecision::EarlyDecision(ord) => PreAssessResult::EarlyDecision(ord),
-        ReadSpaceDecision::PartialScoring { .. } | ReadSpaceDecision::FallThrough => {
-            // PartialScoring: positions identified but quality scores are still
-            // needed; full Tier-3 scoring is already fast (O(read_len) array lookups).
-            // The partial-position indices are not threaded through to the scorer in
-            // this implementation; pass them when the scorer supports it.
-            PreAssessResult::FullScoring
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
-// Signature computation
+// Internal helpers
 // ---------------------------------------------------------------------------
 
-/// Compute an `AlignSig` from a pre-built `MdCigFlags` slice.
-/// Used by `LineByLine` and `Collated` where `MdCigFlags` already exist.
-pub(crate) fn alignment_sig(mcfs: &SmallVec<[MdCigFlags<'_>; READ_CT]>) -> AlignSig {
+/// Derive an `AlignSig` from an already-built `FragmentProfile`.
+/// No additional CIGAR/MD parsing required.
+fn sig_from_fragment_profile(fp: &FragmentProfile) -> AlignSig {
     let mut sig = AlignSig::perfect();
-    for mcf in mcfs {
-        sig.mismatches += md_mismatches(mcf.get_md());
-        for op in mcf.get_cigar().iter().filter_map(|r| r.ok()) {
-            match op.kind() {
-                Kind::SoftClip => sig.soft_clips += op.len(),
-                Kind::Insertion | Kind::Deletion => sig.indel_bases += op.len(),
-                _ => {}
+    for mate in &fp.mates {
+        for &op in &mate.ops {
+            match op {
+                ReadOp::Mismatch => sig.mismatches += 1,
+                ReadOp::SoftClip => sig.soft_clips += 1,
+                ReadOp::Insertion => sig.indel_bases += 1,
+                ReadOp::Match => {}
             }
         }
+        sig.indel_bases += mate.del_bases as usize;
     }
     sig
 }
 
 /// Compute an `AlignSig` from raw BAM-encoded CIGAR bytes + raw MD bytes.
 /// Used by `HashLookup` where records are stored as `ScoringRecord`.
-pub(crate) fn alignment_sig_raw(cigar_bytes: &[u8], md: &[u8]) -> AlignSig {
+fn alignment_sig_raw(cigar_bytes: &[u8], md: &[u8]) -> AlignSig {
     let mut sig = AlignSig::perfect();
     for chunk in cigar_bytes.chunks_exact(4) {
         let enc = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
@@ -123,7 +83,7 @@ pub(crate) fn alignment_sig_raw(cigar_bytes: &[u8], md: &[u8]) -> AlignSig {
 
 /// Count mismatch bases from a raw MD tag byte string.
 /// Digit runs (matches) and `^`-prefixed deletion letters are skipped.
-/// Returns 0 on empty or malformed input — never panics.
+/// Never panics; returns 0 on empty or malformed input.
 fn md_mismatches(md: &[u8]) -> usize {
     let mut count = 0;
     let mut i = 0;
@@ -133,7 +93,6 @@ fn md_mismatches(md: &[u8]) -> usize {
             i += 1;
         } else if b == b'^' {
             i += 1;
-            // Skip reference bases shown in the deletion block.
             while i < md.len() && !md[i].is_ascii_digit() {
                 i += 1;
             }
@@ -147,13 +106,9 @@ fn md_mismatches(md: &[u8]) -> usize {
     count
 }
 
-// ---------------------------------------------------------------------------
-// Subsumption predicate
-// ---------------------------------------------------------------------------
-
 /// `Some(Greater)` = `a` is better, `Some(Less)` = `b` is better,
-/// `Some(Equal)` = identical, `None` = incomparable (NW needed).
-pub(crate) fn subsumes(a: &AlignSig, b: &AlignSig) -> Option<Ordering> {
+/// `Some(Equal)` = identical metrics, `None` = incomparable (NW needed).
+fn subsumes(a: &AlignSig, b: &AlignSig) -> Option<Ordering> {
     let a_dom = a.mismatches <= b.mismatches
         && a.soft_clips <= b.soft_clips
         && a.indel_bases <= b.indel_bases;
@@ -169,46 +124,87 @@ pub(crate) fn subsumes(a: &AlignSig, b: &AlignSig) -> Option<Ordering> {
 }
 
 // ---------------------------------------------------------------------------
-// PreAssessResult and unified entry points
+// PreAssessResult
 // ---------------------------------------------------------------------------
 
 /// Outcome of a pre-NW structural assessment.
 #[derive(Debug)]
 pub(crate) enum PreAssessResult {
     /// Structural dominance resolved the fragment; skip NW scoring.
-    /// The ordering follows `score(a).cmp(&score(b))`: `Greater` means stream A wins.
+    /// `Greater` = stream A wins, `Less` = stream B wins, `Equal` = tie.
     EarlyDecision(Ordering),
-    /// No structural dominance found; fall through to full NW.
+    /// No dominance found; fall through to full NW scoring.
     FullScoring,
 }
 
-/// Run Tier 2.5 against pre-built `MdCigFlags` (LineByLine, Collated).
+// ---------------------------------------------------------------------------
+// Public entry points
+// ---------------------------------------------------------------------------
+
+/// Unified Tier 2.5 pre-assessment for `LineByLine` and `Collated`.
 ///
-/// Precondition: caller has already run Tier 2 (`cmp_perfect`) and received
-/// `None` (both streams are imperfect). Subsumption is only meaningful when
-/// both sides present the same number of primary segments.
+/// Builds `ReadProfile`s from `MdCigFlags` **once** (a single `ScoreOpIter` walk
+/// per primary record) and runs both tiers from the same data:
 ///
-/// Falls back to `FullScoring` on any parse error or segment-count mismatch.
-pub(crate) fn pre_assess_mcfs(
+/// * **Tier 2.5a** — aggregate subsumption: derived from the profiles at zero
+///   extra parsing cost. Fires when every alignment metric of one stream is ≤ the
+///   other's on all three axes (mismatches, soft-clips, indel bases).
+///
+/// * **Tier 2.5b** — read-space comparison: if all per-read-position differences
+///   favour the same stream and deletion counts are consistent, an early decision
+///   is returned without NW DP.
+///
+/// Graceful fallback to `FullScoring` on segment-count mismatch, malformed MD/CIGAR,
+/// insertions of differing length, or mixed-direction position evidence.
+///
+/// # Note on `PartialScoring`
+/// When positions favouring A and positions favouring B are both present, full Tier-3
+/// NW scoring is currently used. The `PartialScoring` position lists from Tier 2.5b
+/// can be threaded into `Fragment::score` in a future refactor to skip identical bases.
+pub(crate) fn pre_assess_alignments(
     mcfs_a: &SmallVec<[MdCigFlags<'_>; READ_CT]>,
     mcfs_b: &SmallVec<[MdCigFlags<'_>; READ_CT]>,
 ) -> PreAssessResult {
     if mcfs_a.len() != mcfs_b.len() || mcfs_a.is_empty() {
         return PreAssessResult::FullScoring;
     }
-    let sig_a = alignment_sig(mcfs_a);
-    let sig_b = alignment_sig(mcfs_b);
-    match subsumes(&sig_a, &sig_b) {
-        Some(ord) => PreAssessResult::EarlyDecision(ord),
-        None => PreAssessResult::FullScoring,
+
+    // Single CIGAR+MD walk per record — both tiers consume these profiles.
+    let fp_a = FragmentProfile {
+        mates: mcfs_a.iter().map(build_read_profile).collect(),
+    };
+    let fp_b = FragmentProfile {
+        mates: mcfs_b.iter().map(build_read_profile).collect(),
+    };
+
+    // Malformed MD/CIGAR: graceful fallback, no crash.
+    if !fp_a.valid() || !fp_b.valid() {
+        return PreAssessResult::FullScoring;
+    }
+
+    // Tier 2.5a: aggregate subsumption — free, derived from already-built profiles.
+    let sig_a = sig_from_fragment_profile(&fp_a);
+    let sig_b = sig_from_fragment_profile(&fp_b);
+    if let Some(ord) = subsumes(&sig_a, &sig_b) {
+        return PreAssessResult::EarlyDecision(ord);
+    }
+
+    // Tier 2.5b: read-space comparison — reuses same profiles, no extra I/O.
+    match compare_fragment_profiles(&fp_a, &fp_b) {
+        ReadSpaceDecision::EarlyDecision(ord) => PreAssessResult::EarlyDecision(ord),
+        ReadSpaceDecision::PartialScoring { .. } | ReadSpaceDecision::FallThrough => {
+            PreAssessResult::FullScoring
+        }
     }
 }
 
-/// Run Tier 2.5 against raw `ScoringRecord` data (HashLookup).
+/// Tier 2.5 aggregate pre-assessment for `HashLookup`.
 ///
-/// Only considers primary, mapped records. Unmapped records always have
-/// all-zero signatures and would produce misleading subsumption results,
-/// so they are excluded. Returns `FullScoring` when primary counts differ.
+/// Operates on the raw BAM-encoded CIGAR bytes and MD byte slices stored in
+/// `ScoringRecord`, short-circuiting before any `RecordBuf` construction.
+/// Only the aggregate subsumption check (Tier 2.5a) is applied; building full
+/// `ReadProfile`s from raw bytes requires per-base decoding that is better done
+/// once inside `score_records` when full scoring is unavoidable.
 pub(crate) fn pre_assess_scoring_records(
     recs_a: &[crate::filter_algorithm::hash_lookup::assemble::ScoringRecord],
     recs_b: &[crate::filter_algorithm::hash_lookup::assemble::ScoringRecord],
@@ -275,13 +271,11 @@ mod tests {
 
     #[test]
     fn incomparable_returns_none() {
-        // a has fewer mismatches but more clips
         assert_eq!(subsumes(&sig(1, 5, 0), &sig(3, 1, 0)), None);
     }
 
     #[test]
     fn md_mismatches_counts_snvs_not_deletions() {
-        // "3A2^AT1C1" → A and C are mismatches; ^AT is deletion block
         assert_eq!(md_mismatches(b"3A2^AT1C1"), 2);
     }
 
@@ -296,17 +290,16 @@ mod tests {
     }
 
     #[test]
-    fn alignment_sig_raw_counts_clips_and_indels() {
-        // 5S5M: SoftClip(5) = 0x54_00_00_00, Match(5) = 0x50_00_00_00
+    fn alignment_sig_raw_clips_and_indels() {
         let cigar: Vec<u8> = {
             let mut v = Vec::new();
             v.extend_from_slice(&(5u32 << 4 | 4).to_le_bytes()); // 5S
             v.extend_from_slice(&(5u32 << 4 | 0).to_le_bytes()); // 5M
             v
         };
-        let sig = alignment_sig_raw(&cigar, b"5");
-        assert_eq!(sig.soft_clips, 5);
-        assert_eq!(sig.mismatches, 0);
-        assert_eq!(sig.indel_bases, 0);
+        let s = alignment_sig_raw(&cigar, b"5");
+        assert_eq!(s.soft_clips, 5);
+        assert_eq!(s.mismatches, 0);
+        assert_eq!(s.indel_bases, 0);
     }
 }

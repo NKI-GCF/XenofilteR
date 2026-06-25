@@ -158,13 +158,6 @@ pub(crate) struct DelCounts {
 }
 
 impl DelCounts {
-    /// Signed delta: positive means A paid more deletion penalty (B better).
-    pub(crate) fn delta(&self, gap_open: f64, gap_extend: f64) -> f64 {
-        let a = (self.a_events as f64) * gap_open + (self.a_bases as f64) * gap_extend;
-        let b = (self.b_events as f64) * gap_open + (self.b_bases as f64) * gap_extend;
-        a - b // positive → A penalised more
-    }
-
     /// Whether deletion counts alone suggest one stream is better.
     /// `None` when equal; `Some(Greater)` when A has fewer deletions.
     fn sign_only(&self) -> Option<Ordering> {

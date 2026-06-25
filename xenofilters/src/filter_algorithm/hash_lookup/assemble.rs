@@ -142,9 +142,6 @@ pub(crate) enum StreamKind {
 }
 
 impl StreamKind {
-    pub(crate) fn is_early(&self) -> bool {
-        matches!(self, StreamKind::Early { .. })
-    }
     pub(crate) fn is_empty(&self) -> bool {
         matches!(self, StreamKind::Empty)
     }

@@ -4,7 +4,7 @@ mod fragment_state;
 mod md_cig_flags;
 mod ops;
 pub(crate) mod pre_assess;
-pub(crate) mod read_profile;
+mod read_profile; // private — used only by pre_assess
 mod variant_window;
 
 pub(crate) use errors::AlignmentError;
@@ -12,10 +12,7 @@ pub(crate) use fragment::{Fragment, SimpleRec};
 pub(crate) use fragment_state::FragmentState;
 pub(crate) use md_cig_flags::MdCigFlags;
 pub(crate) use ops::{BaseOp, ScoreOpIter};
-pub(crate) use pre_assess::{
-    alignment_sig, alignment_sig_raw, pre_assess_mcfs, pre_assess_read_space,
-    pre_assess_scoring_records, subsumes, AlignSig, PreAssessResult,
-};
+pub(crate) use pre_assess::{pre_assess_alignments, pre_assess_scoring_records, PreAssessResult};
 pub(crate) use variant_window::{align_alt_to_read, weighted_ref_score, VariantWindow};
 
 use noodles::sam::alignment::record::cigar::op::Kind;

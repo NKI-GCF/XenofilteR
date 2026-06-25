@@ -1,4 +1,3 @@
-use crate::alignment::{BaseOp, ScoreOpIter};
 use anyhow::{anyhow, ensure, Result};
 use noodles::sam::alignment::record::{data::field::Tag, data::field::Value, Cigar, Flags, Record};
 use std::cmp::Ordering;

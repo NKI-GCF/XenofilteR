@@ -2,7 +2,6 @@ use crate::aln_stream::tests::MockStream;
 use crate::aln_stream::AlignmentStream;
 use crate::config::{Config, StripReadSuffix};
 use crate::filter_algorithm::hash_lookup::HashLookup;
-use crate::region::{AmbiguousRegions, DiagnosticVariants};
 use crate::tests::create_record;
 use anyhow::Result;
 use noodles::sam::alignment::record_buf::RecordBuf;

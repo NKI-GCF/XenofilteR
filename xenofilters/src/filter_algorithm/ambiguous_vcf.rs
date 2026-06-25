@@ -10,6 +10,7 @@ use crate::filter_algorithm::line_by_line::ordering::Decision;
 /// Tier-3 scoring when the evidence is deterministic.
 ///
 /// Intended usage: called after `cmp_perfect` returns `None` but before NW DP.
+#[allow(dead_code)]
 pub(crate) trait AmbiguousVcfEvaluator {
     /// Evaluate whether variant evidence at `positions` (genomic coords) is
     /// sufficient to determine a winner without per-base alignment scoring.

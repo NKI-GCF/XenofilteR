@@ -31,7 +31,7 @@ use noodles::sam::alignment::record_buf::RecordBuf;
 use reader::{canonical_name, CollatedReader};
 use smallvec::SmallVec;
 use std::collections::HashMap;
-use crate::alignment::{pre_assess_mcfs, pre_assess_read_space, PreAssessResult};
+use crate::alignment::{pre_assess_alignments, PreAssessResult};
 
 
 pub(crate) struct CollatedMatcher<R: SimpleRec> {
@@ -213,31 +213,23 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         let (mcfs1, mcfs2) = a.cmp_perfect(&b, &mut ord)?;
 
         // Tier 2: perfect-match fast-path (no region forces scoring).
-        if let Some(o) = ord
-            && !a_needs_scoring && !b_needs_scoring {
-                drop(mcfs1);
-                drop(mcfs2);
-                return self.apply_ordered(a, b, o);
-            }
+        if let Some(o) = ord && !a_needs_scoring && !b_needs_scoring {
+            drop(mcfs1);
+            drop(mcfs2);
+            return self.apply_ordered(a, b, o);
+        }
 
-        // Tier 2.5: CIGAR/MD structural subsumption.
-        // Only when no BED/VCF region forces full scoring — if a diagnostic
-        // variant overlaps we must run NW to properly account for rescue.
-        if !a_needs_scoring && !b_needs_scoring {
-            if let PreAssessResult::EarlyDecision(sub_ord) = pre_assess_mcfs(&mcfs1, &mcfs2) {
-                drop(mcfs1);
-                drop(mcfs2);
-                return self.apply_ordered(a, b, sub_ord);
-            }
-            // Tier 2.5b: read-coordinate-space comparison.
-            if let PreAssessResult::EarlyDecision(rs_ord) =
-                pre_assess_read_space(&mcfs1, &mcfs2)
+        // Tier 2.5: unified pre-assessment — single CIGAR+MD walk per record.
+        // Guard: only when no BED/VCF region forces full scoring (diagnostic variants
+        // must be scored via NW to properly account for variant rescue).
+        if !a_needs_scoring && !b_needs_scoring
+            && let PreAssessResult::EarlyDecision(pa_ord) =
+                pre_assess_alignments(&mcfs1, &mcfs2)
             {
                 drop(mcfs1);
                 drop(mcfs2);
-                return self.apply_ordered(a, b, rs_ord);
+                return self.apply_ordered(a, b, pa_ord);
             }
-        }
 
         // Tier 3: full NW scoring.
         let s1 = self.score_one(&a, mcfs1, 0)?;
