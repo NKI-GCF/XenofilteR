@@ -61,3 +61,47 @@ fn test_try_from_record_missing_md_tag_errors() -> Result<()> {
     assert!(MdCigFlags::try_from_record(&rec, &flags).is_err());
     Ok(())
 }
+
+#[test]
+fn test_partial_ord_and_eq() -> Result<()> {
+    // Two perfect records
+    let p1 = create_record(b"r1", "10M", &[], &[], "10", false)?;
+    let p2 = create_record(b"r2", "10M", &[], &[], "10", false)?;
+
+    // Two imperfect records (containing mismatches in MD tag)
+    let i1 = create_record(b"r3", "10M", &[], &[], "5A4", false)?;
+    let i2 = create_record(b"r4", "10M", &[], &[], "5A4", false)?;
+
+    let p1_flags = p1.flags();
+    let md_p1 = MdCigFlags::try_from_record(&p1, &p1_flags)?;
+    let p2_flags = p2.flags();
+    let md_p2 = MdCigFlags::try_from_record(&p2, &p2_flags)?;
+    let i1_flags = i1.flags();
+    let md_i1 = MdCigFlags::try_from_record(&i1, &i1_flags)?;
+    let i2_flags = i2.flags();
+    let md_i2 = MdCigFlags::try_from_record(&i2, &i2_flags)?;
+
+    // --- Testing PartialEq ---
+
+    // Kills: replace eq with false
+    assert!(md_p1 == md_p2, "perfect == perfect should be true");
+
+    // Kills: replace eq with true, and replace == with !=
+    assert!(md_p1 != md_i1, "perfect != imperfect should be true");
+
+    // Kills: replacing eq logic that misses the None handling
+    assert!(
+        !(md_i1 == md_i2),
+        "imperfect == imperfect defaults to None, so eq is false"
+    );
+
+    // --- Testing PartialOrd ---
+
+    // Kills: replace partial_cmp -> Option<Ordering> with None
+    assert_eq!(md_p1.partial_cmp(&md_p2), Some(Ordering::Equal));
+    assert_eq!(md_p1.partial_cmp(&md_i1), Some(Ordering::Less));
+    assert_eq!(md_i1.partial_cmp(&md_p1), Some(Ordering::Greater));
+    assert_eq!(md_i1.partial_cmp(&md_i2), None);
+
+    Ok(())
+}

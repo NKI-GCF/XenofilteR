@@ -304,3 +304,52 @@ fn test_merged_output_mutually_exclusive_with_ambiguous() {
         .to_string()
         .contains("Cannot use --merged-output in combination"));
 }
+
+#[test]
+fn test_validate_non_namesorted_allows_only_one_score_thread() {
+    let mut c = base_config();
+    // Entering the non-namesorted branch
+    c.matching_algorithm = MatchingAlgorithm::Collated;
+    c.score_threads = 1;
+
+    // Kills: replace == with != in self.score_threads == 1
+    assert!(
+        c.validate_and_init().is_ok(),
+        "Collated matching algorithm with exactly 1 score thread must be valid"
+    );
+
+    // Ensure > 1 threads correctly trigger the validation error
+    c.score_threads = 2;
+    assert!(
+        c.validate_and_init().is_err(),
+        "Collated matching algorithm with > 1 score threads must be invalid"
+    );
+}
+
+#[test]
+fn test_zero_gap_penalties_do_not_flip_sign() {
+    // Kills: replace > with >= for self.gap_open > 0.0
+    let mut c = base_config();
+    c.gap_open = 0.0;
+
+    // Validation will error out later in the function because gap_open == 0.0 is invalid,
+    // but the mutant's sign-flipping side effect would have already executed.
+    let _ = c.validate_and_init();
+    assert!(
+        !c.gap_open.is_sign_negative(),
+        "Mutant killed: gap_open > 0.0 changed to >= 0.0 (flipped 0.0 to -0.0)"
+    );
+
+    // Kills: replace > with >= for self.gap_extend > 0.0
+    let mut c2 = base_config();
+    c2.gap_extend = 0.0; // A gap_extend of 0.0 is perfectly valid
+
+    assert!(
+        c2.validate_and_init().is_ok(),
+        "gap_extend = 0.0 is valid and should pass initialization"
+    );
+    assert!(
+        !c2.gap_extend.is_sign_negative(),
+        "Mutant killed: gap_extend > 0.0 changed to >= 0.0 (flipped 0.0 to -0.0)"
+    );
+}
