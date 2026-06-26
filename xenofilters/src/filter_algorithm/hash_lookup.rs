@@ -66,7 +66,7 @@ pub(crate) struct HashLookup<R: SimpleRec> {
     record_counters: [u64; 2],
     penalties: Penalty,
     scratch: Scratch,
-    pub(crate) routing_counters: [u64; 32],
+    pub(crate) routing_counters: SmallVec<[u64; 8]>,
     add_decision_tag: bool,
     ambiguous_log_threshold: f64,
     strip: StripReadSuffix,
@@ -106,6 +106,7 @@ impl<R: SimpleRec> HashLookup<R> {
             0 => 0.0,
             t => (t as f64) * std::f64::consts::LN_10 / 10.0,
         };
+        let aln_len = aln.len();
         for (i, a) in aln.iter_mut().enumerate() {
             a.init_writers(&config, i)?;
         }
@@ -117,7 +118,7 @@ impl<R: SimpleRec> HashLookup<R> {
             record_counters: [0, 0],
             penalties: config.to_penalties(),
             scratch: Scratch::new(),
-            routing_counters: [0u64; 32],
+            routing_counters: SmallVec::from_elem(0, aln_len * 4),
             add_decision_tag: config.add_decision_tag,
             ambiguous_log_threshold,
             strip: config.strip_read_suffix,
@@ -413,6 +414,12 @@ impl<R: SimpleRec> HashLookup<R> {
         }
     }
 
+    /// Run Tier 2.5 pre-assessment then, if necessary, full NW scoring for a
+    /// pair of `ScoringRecord` sets, and return a fully resolved `ScoredFragment`.
+    ///
+    /// Decision path:
+    ///   1. `pre_assess_scoring_records` → `EarlyDecision` → return immediately.
+    ///   2. Otherwise: `nw_score_records` on both sets → compare delta → route.
     fn evaluate_scoring_pair(
         &mut self,
         recs_a: SmallVec<[ScoringRecord; 2]>,
@@ -512,6 +519,7 @@ impl<R: SimpleRec> HashLookup<R> {
             Decision::PhredConfidence(p.min(255) as u8)
         })
     }
+
     fn nw_score_records(
         &mut self,
         records: &SmallVec<[ScoringRecord; 2]>,
@@ -524,26 +532,16 @@ impl<R: SimpleRec> HashLookup<R> {
             data::field::Value as BufValue, Cigar, Data, QualityScores, RecordBuf, Sequence,
         };
 
-        // Structural penalty for supplementary alignments (not scored via NW).
-        let supplementary_penalty: f64 = records
-            .iter()
-            .filter(|r| r.is_supplementary())
-            .map(|sr| {
-                let clipped = clips_from_cigar_bytes(&sr.cigar_bytes);
-                let non_clipped = sr.qualities.len().saturating_sub(clipped);
-                self.penalties.gap_open + (non_clipped as f64) * self.penalties.gap_extend
-            })
-            .sum();
-
-        let primaries: SmallVec<[&ScoringRecord; 2]> =
-            records.iter().filter(|r| r.is_primary()).collect();
-
-        if primaries.is_empty() {
-            return Ok(supplementary_penalty);
-        }
+        let mut penalty = 0.0;
 
         let mut bufs: SmallVec<[RecordBuf; 2]> = SmallVec::new();
-        for sr in &primaries {
+        for sr in records.iter() {
+            if sr.flags.is_secondary() {
+                continue;
+            }
+            if sr.is_supplementary() {
+                penalty += self.penalties.chimeric_junction_penalty;
+            }
             let mut buf = RecordBuf::default();
             *buf.flags_mut() = sr.flags;
             *buf.reference_sequence_id_mut() = Some(sr.ref_id);
@@ -618,10 +616,10 @@ impl<R: SimpleRec> HashLookup<R> {
             }
         }
 
-        let base_score = Fragment::new(&self.penalties, seg, mcfs)?
+        penalty += Fragment::new(&self.penalties, seg, mcfs)?
             .score(&mut self.scratch, &mut dvnt)
             .map_err(|e| anyhow!("Score error stream {aln_idx}: {e}"))?;
-        Ok(base_score + supplementary_penalty)
+        Ok(penalty)
     }
 
     fn emit_unmatched(&mut self, pending: PendingFragment) -> Result<()> {
@@ -651,20 +649,15 @@ impl<R: SimpleRec> HashLookup<R> {
         );
         Ok(())
     }
-
     pub(crate) fn print_counters(&self) {
-        for i in 0..2 {
-            eprintln!(
-                "hashlookup[discard:{}]: {}",
-                i,
-                self.routing_counters[i << 1]
-            );
-            eprintln!(
-                "hashlookup[out:{}]: {}",
-                i,
-                self.routing_counters[1 + (i << 1)]
-            );
-            eprintln!("hashlookup[ambig:{}]: {}", i, self.routing_counters[16 + i]);
+        let len = self.routing_counters.len();
+        for nr in 0..(len / 4) {
+            for (i, set) in ["discard", "out", "ambig"].iter().enumerate() {
+                eprintln!(
+                    "collated[{set}:{i}]: {}",
+                    self.routing_counters[i + (nr * 4)]
+                );
+            }
         }
     }
 }

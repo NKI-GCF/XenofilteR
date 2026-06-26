@@ -254,24 +254,26 @@ fn test_aln_stream_init_writers_multi_and_merged() -> Result<()> {
 fn test_aln_stream_fetch_by_virtual_offset() -> Result<()> {
     use noodles::bam;
     use noodles::sam;
-    use noodles::sam::alignment::io::Write;
+    use noodles::sam::alignment::io::Write; // Required for write_alignment_record
     use tempfile::NamedTempFile;
 
-    // 1. Create file on disk
+    // 1. Create a file on disk
     let temp_file = NamedTempFile::new()?;
     let path = temp_file.path().to_owned();
 
-    // 2. Write a valid header AND an empty reference sequence dictionary
+    // 2. Write a complete BAM file WITH ONE dummy record
     {
-        // An empty list of references is required for a valid BAM file
-        let header = sam::Header::builder()
-            .set_reference_sequences(sam::header::ReferenceSequences::default())
-            .build();
-
+        let header = sam::Header::default();
         let mut writer = bam::io::Writer::from(std::fs::File::create(&path)?);
+
         writer.write_header(&header)?;
+
+        // Write a single unmapped/empty record so AlnStream::new doesn't hit unexpected EOF
+        let dummy_record = RecordBuf::default();
+        writer.write_alignment_record(&header, &dummy_record)?;
+
         writer.finish(&header)?;
-    }
+    } // Writer and File drop here, flushing everything to disk safely
 
     // 3. Initialize config
     let mut config = Config {
@@ -279,10 +281,13 @@ fn test_aln_stream_fetch_by_virtual_offset() -> Result<()> {
         ..Default::default()
     };
 
+    // AlnStream can now successfully read the header and peek the first record!
     let mut stream = AlnStream::<RecordBuf>::new(&mut config, 0)?;
 
     // 4. Test the invalid offset
     let res = stream.fetch_by_virtual_offset(u64::MAX);
+
+    // If the mutant returns Ok(), res.is_err() evaluates to false and panics, killing the mutant.
     assert!(res.is_err(), "Invalid virtual offset should produce an Err");
 
     Ok(())

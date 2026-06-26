@@ -247,8 +247,11 @@ where
         if let Some(ref path) = opt.merged_output {
             if i == 0 {
                 // Stream 0 owns the single merged writer.
-                // TODO: lift MergedOutput above AlnStream level (into LineByLine) and route
-                // records from all streams through it. Currently only stream 0 writes.
+                // KNOWN LIMITATION: MergedOutput is owned per-stream (stream 0 only).
+                // Correct multi-stream merged output requires lifting MergedOutput into
+                // LineByLine and routing records from all streams through a shared writer
+                // (Arc<Mutex<MergedOutput>> or caller-level aggregation).
+                // Tracked in TODO_rust.md.
                 use crate::bam::{expand_header, MergedOutput};
                 let expanded = expand_header(self.header.clone());
                 self.output_mode =

@@ -58,6 +58,17 @@ struct VariantCtx {
     ref_end: usize,
 }
 
+/// Weighted Interval Scheduling over variant `Eval` entries with positive delta.
+///
+/// Sorts by `Eval::end()` then runs the classic O(n log n) WIS recurrence:
+///   dp[i] = max(dp[i-1], delta_i + dp[latest non-overlapping predecessor])
+///
+/// Returns the maximum total rescue delta achievable with a non-overlapping
+/// subset of variants.  Only entries with `delta() > 0.0` are considered;
+/// entries with zero or negative delta cannot contribute to rescue.
+///
+/// `p_variant > 0.5` is a structural precondition for any entry to have
+/// a positive delta; callers need not filter further.
 pub(super) fn wis_max_rescue_delta<'v>(
     dvnt: &mut FragEvalVec<'v>,
     dp: &mut SmallVec<[f64; READ_CT]>,
@@ -145,6 +156,13 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         Ok(score + variant_delta)
     }
 
+    /// Score all aligned bases in segment `seg_i` and evaluate any overlapping
+    /// variants from `dvnt[dvnt_i]`.
+    ///
+    /// Per-base scores accumulate into the return value.  Variants whose
+    /// reference span falls fully within a scored window are moved to `finished`
+    /// to prevent double-counting across adjacent windows; `wis_max_rescue_delta`
+    /// merges them back before weighted-interval scheduling.
     fn score_segment<'v>(
         &mut self,
         scratch: &mut Scratch,

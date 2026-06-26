@@ -42,7 +42,7 @@ pub(crate) struct CollatedMatcher<R: SimpleRec> {
     waiting_b: HashMap<Box<[u8]>, FragmentState<R>>,
     penalties: Penalty,
     scratch: Scratch,
-    pub(crate) routing_counters: [u64; 32],
+    pub(crate) routing_counters: SmallVec<[u64; 8]>,
     add_decision_tag: bool,
     ambiguous_log_threshold: f64,
     strip: StripReadSuffix,
@@ -70,6 +70,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         let strip = config.strip_read_suffix;
         let add_decision_tag = config.add_decision_tag;
 
+        let aln_len = aln.len();
         for (i, a) in aln.iter_mut().enumerate() {
             a.init_writers(&config, i)?;
         }
@@ -85,7 +86,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             waiting_b: HashMap::new(),
             penalties,
             scratch: Scratch::new(),
-            routing_counters: [0u64; 32],
+            routing_counters: SmallVec::from_elem(0, aln_len * 4),
             add_decision_tag,
             ambiguous_log_threshold,
             strip,
@@ -93,18 +94,18 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             vcf,
         })
     }
-    // CONCURRENCY STUB — CollatedMatcher Thread Pool
+    // CONCURRENCY STUB — CollatedMatcher parallel worker pool
     //
-    // `score_pair` is embarrassingly parallel: matched pairs are independent once
-    // extracted from the waiting maps. A crossbeam thread pool can process them:
+    // `score_pair` / `nw_score_fragment` are embarrassingly parallel once a pair
+    // has been extracted from `waiting_a` / `waiting_b`.  A crossbeam bounded
+    // channel can dispatch pairs to N workers:
     //
-    //   let (work_tx, work_rx) = crossbeam_channel::bounded(pool_size * 2);
-    //   // Workers call score_pair on received (FragmentState, FragmentState) tuples.
-    //   // Writers still run on the IO thread (writers need no Mutex this way).
+    //   let (work_tx, work_rx) = bounded::<(FragmentState<R>, FragmentState<R>)>(N*2);
+    //   Workers call score_pair and send ScoredFragment back to the IO thread.
+    //   Writers remain on the IO thread (no Mutex needed).
     //
-    // Output order is NOT guaranteed (acceptable for Collated mode).
-    // N-STREAM SUPPORT: Collated scales cleanly to N streams via N waiting maps,
-    // one per stream pair. Memory is O(name-order skew), manageable for N ≤ 4.
+    // Output order is NOT guaranteed (acceptable for Collated).
+    // N-STREAM: scales to N waiting maps; memory is O(name-order skew × streams).
     pub(crate) fn process(&mut self) -> Result<()> {
         loop {
             let fa = self.a.next_fragment()?;
@@ -308,30 +309,25 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         let mut supplementary_penalty = 0.0;
 
         for idx in state.order_mates() {
-            let rec = &state.get_records()[idx];
             let flags = state
                 .flags(idx)
                 .ok_or_else(|| anyhow!("No flags for record {idx}"))?;
+
+            if flags.is_secondary() {
+                // secondary alignments are not scored, but may be included in the output
+                // after ordering, secondary alignments are always after the primary
+                if flags.is_last_segment() {
+                    break;
+                }
+                continue;
+            }
+            let rec = &state.get_records()[idx];
 
             if flags.is_unmapped() {
                 dvnt.push(SmallVec::new());
             } else {
                 if flags.is_supplementary() {
-                    let clipped: usize = mcfs_opt[idx]
-                        .as_ref()
-                        .map(|mcf| {
-                            mcf.get_cigar()
-                                .iter()
-                                .filter_map(|op| op.ok())
-                                .filter(|op| matches!(op.kind(), Kind::SoftClip | Kind::HardClip))
-                                .map(|op| op.len())
-                                .sum::<usize>()
-                        })
-                        .unwrap_or(0);
-                    let non_clipped = rec.quality_scores().as_ref().len().saturating_sub(clipped);
-                    supplementary_penalty +=
-                        self.penalties.gap_open + (non_clipped as f64) * self.penalties.gap_extend;
-                    // Supplementary also enters the NW segment below (no early return).
+                    supplementary_penalty += self.penalties.chimeric_junction_penalty;
                 }
                 let tid = rec
                     .ref_seq_id()
@@ -354,16 +350,12 @@ impl<R: SimpleRec> CollatedMatcher<R> {
                 };
                 dvnt.push(delta_vars);
             }
-            if !flags.is_secondary() {
-                segment.push(rec);
-                seg_mcfs.push(
-                    mcfs_opt[idx]
-                        .take()
-                        .ok_or_else(|| anyhow!("MdCigFlags consumed for {idx}"))?,
-                );
-            } else if flags.is_last_segment() {
-                break;
-            }
+            segment.push(rec);
+            seg_mcfs.push(
+                mcfs_opt[idx]
+                    .take()
+                    .ok_or_else(|| anyhow!("MdCigFlags consumed for {idx}"))?,
+            );
         }
 
         let base_score = Fragment::new(&self.penalties, segment, seg_mcfs)?
@@ -388,7 +380,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         for r in frag.drain_records() {
             let stream = if nr == 0 { &mut self.a } else { &mut self.b };
             let rec = r.as_record_buf(stream.header())?;
-            self.routing_counters[nr << 1] += 1;
+            self.routing_counters[nr * 4] += 1;
             stream.write_record(rec, Some(false))?;
         }
         Ok(())
@@ -415,9 +407,9 @@ impl<R: SimpleRec> CollatedMatcher<R> {
                     }
                     _ => {}
                 }
-                self.routing_counters[1 + (nr << 1)] += 1;
+                self.routing_counters[1 + (nr * 4)] += 1;
             } else {
-                self.routing_counters[16 + nr] += 1;
+                self.routing_counters[2 + (nr * 4)] += 1;
             }
             stream.write_record(rec, best_state)?;
         }
@@ -425,14 +417,11 @@ impl<R: SimpleRec> CollatedMatcher<R> {
     }
 
     pub(crate) fn print_counters(&self) {
-        for i in 0..2 {
-            eprintln!("collated[discard:{}]: {}", i, self.routing_counters[i << 1]);
-            eprintln!(
-                "collated[out:{}]: {}",
-                i,
-                self.routing_counters[1 + (i << 1)]
-            );
-            eprintln!("collated[ambig:{}]: {}", i, self.routing_counters[16 + i]);
+        let len = self.routing_counters.len();
+        for nr in 0..(len / 4) {
+            for (i, set) in ["discard", "out", "ambig"].iter().enumerate() {
+                eprintln!("collated[{set}:{i}]: {}", self.routing_counters[i + (nr * 4)]);
+            }
         }
     }
 }

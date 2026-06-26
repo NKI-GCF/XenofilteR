@@ -16,14 +16,18 @@ arrives; `Namesorted` always waits for records from every stream before deciding
 
 ### Tier 2 — Perfect-match fast-path
 
-`FragmentState::cmp_perfect` builds `MdCigFlags` for every **primary** record and
-checks three conditions simultaneously:
+`FragmentState::cmp_perfect` builds `MdCigFlags` for every record and checks:
 
 ```
-is_perfect ≡ cigar.len() == 1              (single-operation CIGAR, no gaps or clips)
-           ∧ md.bytes().all(is_ascii_digit) (MD tag is all digits, no mismatch letters)
-           ∧ SA:Z: tag absent               (no supplementary alignments pending)
+is_perfect ≡ supp_count == 0        (SA:Z tag absent — no chimeric segments pending)
+           ∧ cigar.len() == 1       (single alignment operation, end-to-end)
+           ∧ md.bytes().all(digit)  (zero mismatches against the reference)
 ```
+
+The `SA:Z` check is required because any primary record with a non-empty `SA:Z`
+tag will be followed by supplementary records carrying chimeric-junction penalties.
+A fragment with pending supplementaries cannot be declared perfect even if its
+primary CIGAR and MD are flawless.
 
 The third condition is critical. The SA:Z: tag (stored in `MdCigFlags` as
 `has_supplementary`, read from `Tag::OTHER_ALIGNMENTS` during construction) encodes

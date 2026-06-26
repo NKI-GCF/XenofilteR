@@ -13,24 +13,25 @@ use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::SmallVec;
 use std::collections::BTreeMap;
 
-// CONCURRENCY STUB — HashLookup Pass-2 Seek-IO Thread
+// CONCURRENCY STUB — HashLookup pass-2 seek-IO thread
 //
-// When fragment volume is high, `fetch_by_virtual_offset` calls in `emit_scored`
-// serialise on disk seeks. To overlap seeks with scoring work, offload them to a
-// dedicated seek thread via a crossbeam_channel:
+// In `emit_scored`, each `fetch_by_virtual_offset` call serialises on disk
+// seeks.  To overlap seeks with scoring work, offload to a dedicated thread:
 //
-//   let (seek_tx, seek_rx) = crossbeam_channel::unbounded::<(usize, u64, crossbeam_channel::Sender<RecordBuf>)>();
-//   std::thread::spawn(move || {
-//       for (nr, voffset, result_tx) in seek_rx {
-//           let rec = aln[nr].fetch_by_virtual_offset(voffset).unwrap();
-//           let _ = result_tx.send(rec);
+//   let (seek_tx, seek_rx) =
+//       crossbeam_channel::unbounded::<(usize, u64, Sender<RecordBuf>)>();
+//   thread::spawn(move || {
+//       for (stream_nr, voffset, reply_tx) in seek_rx {
+//           let rec = aln[stream_nr].fetch_by_virtual_offset(voffset).unwrap();
+//           let _ = reply_tx.send(rec);
 //       }
 //   });
 //
-// Writers remain on the IO thread (no Mutex required); the seek thread owns the BAM
-// reader handles. Bounded capacity on the work channel provides backpressure.
-// N-STREAM NOTE: HashLookup FragmentTable memory scales as O(in-flight fragments × streams).
-// Beyond 2 streams the table can exhaust RAM on large skews; profile before enabling.
+// Writers stay on the IO thread (no Mutex); the seek thread owns BAM handles.
+// Bounded work-channel capacity provides back-pressure.
+//
+// N-STREAM NOTE: `FragmentTable` memory scales as O(in-flight × streams).
+// Beyond 2 streams the table can exhaust RAM; profile before enabling.
 pub(crate) struct StagedOutput {
     next_emit: u64,
     pending: BTreeMap<u64, ScoredFragment>,
@@ -51,7 +52,7 @@ impl StagedOutput {
     pub(crate) fn flush<R: SimpleRec>(
         &mut self,
         aln: &mut SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
-        routing_counters: &mut [u64; 32],
+        routing_counters: &mut SmallVec<[u64; 8]>,
         add_decision_tag: bool,
     ) -> Result<()> {
         while let Some(&min_key) = self.pending.keys().next() {
@@ -68,7 +69,7 @@ impl StagedOutput {
     pub(crate) fn flush_all<R: SimpleRec>(
         &mut self,
         aln: &mut SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
-        routing_counters: &mut [u64; 32],
+        routing_counters: &mut SmallVec<[u64; 8]>,
         add_decision_tag: bool,
     ) -> Result<()> {
         let keys: Vec<u64> = self.pending.keys().copied().collect();
@@ -83,13 +84,13 @@ impl StagedOutput {
 fn emit_scored<R: SimpleRec>(
     sf: ScoredFragment,
     aln: &mut SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
-    routing_counters: &mut [u64; 32],
+    routing_counters: &mut SmallVec<[u64; 8]>,
     add_decision_tag: bool,
 ) -> Result<()> {
     if sf.is_ambiguous {
         for (nr, voffset) in sf.winner_offsets.iter().chain(sf.loser_offsets.iter()) {
             let rec = fetch(aln, *nr, *voffset)?;
-            routing_counters[16 + nr] += 1;
+            routing_counters[2 + (nr * 4)] += 1;
             aln[*nr].write_record(rec, None)?;
         }
     } else {
@@ -98,12 +99,12 @@ fn emit_scored<R: SimpleRec>(
             if add_decision_tag {
                 apply_tag(&mut rec, sf.decision.as_ref());
             }
-            routing_counters[1 + (nr << 1)] += 1;
+            routing_counters[1 + (nr * 4)] += 1;
             aln[*nr].write_record(rec, Some(true))?;
         }
         for (nr, voffset) in &sf.loser_offsets {
             let rec = fetch(aln, *nr, *voffset)?;
-            routing_counters[nr << 1] += 1;
+            routing_counters[nr * 4] += 1;
             aln[*nr].write_record(rec, Some(false))?;
         }
     }
@@ -123,11 +124,11 @@ fn emit_scored<R: SimpleRec>(
                 apply_tag(&mut rec, sf.decision.as_ref());
             }
             if sf.is_ambiguous {
-                routing_counters[16 + stream_nr] += 1;
+                routing_counters[2 + (stream_nr * 4)] += 1;
             } else if is_winner_stream {
-                routing_counters[1 + (stream_nr << 1)] += 1;
+                routing_counters[1 + (stream_nr * 4)] += 1;
             } else {
-                routing_counters[stream_nr << 1] += 1;
+                routing_counters[stream_nr * 4] += 1;
             }
             aln[stream_nr].write_record(rec, best_state)?;
         }

@@ -5,6 +5,7 @@ use crate::{
 use anyhow::{ensure, Result};
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
+use crate::filter_algorithm::line_by_line::MAX_STREAMS;
 
 const ARG_MAX: usize = 4;
 
@@ -47,11 +48,14 @@ pub(crate) enum MatchingAlgorithm {
 pub(crate) struct Config {
     /// Input alignments to compare. If the same readnames are consecutive and in the same order for
     /// all inputs, a low memory non-hashing strategy is adopted.
-    #[arg(required = true, num_args = 1..ARG_MAX)]
+    #[arg(required = true, num_args = 1..MAX_STREAMS)]
     pub(crate) alignment: Vec<String>,
 
+    // FIXME: make this merged_output, and not discarded_output, ambiguous_output, and output.
+    // Then we can have a single output file for all alignments, and the user can choose to discard
+    // or keep the discarded and ambiguous reads based on read groups.
     /// Assign fragments matching alignment to these respective files. Writes first alignment to stdout when omitted
-    #[arg(short, long, num_args = 1..ARG_MAX)]
+    #[arg(short, long, num_args = 1..MAX_STREAMS)]
     pub(crate) output: Vec<PathBuf>,
 
     /// Output file for all alignments (winners, discarded, and ambiguous).
@@ -181,6 +185,17 @@ pub(crate) struct Config {
     /// Same indexing and compression rules as --ambiguous-regions.
     #[arg(long, num_args = 0..=2)]
     pub(crate) diagnostic_variants: Vec<String>,
+
+    /// Base-length constant used in the supplementary-alignment chimeric-junction
+    /// penalty:  penalty = gap_open + chimeric_junction_bases × gap_extend.
+    ///
+    /// This value replaces the per-record non-clipped base count used in earlier
+    /// versions.  The default of 20 is chosen to make one supplementary alignment
+    /// of typical chimeric span costlier than a 20-base insertion but cheaper
+    /// than mapping to the wrong species entirely.
+    #[arg(short = 'J', long, default_value = "20",
+          value_parser = clap::value_parser!(u32).range(0..=10000))]
+    pub(crate) chimeric_junction_bases: u32,
 }
 
 impl Config {
@@ -233,6 +248,17 @@ impl Config {
                 aln_count >= 2,
                 "At least two alignments required when not running in single alignment mode."
             );
+            if aln_count > 2 {
+                ensure!(
+                    self.matching_algorithm == MatchingAlgorithm::Namesorted,
+                    "More than 2 alignment streams requires --matching-algorithm namesorted \
+                     (hashlookup and collated are limited to 2 streams by design)"
+                );
+                ensure!(
+                    aln_count <= MAX_STREAMS,
+                    "namesorted supports at most {MAX_STREAMS} alignment streams (got {aln_count})"
+                );
+            }
         }
         if self.merged_output.is_some() {
             ensure!(
@@ -377,6 +403,8 @@ impl Config {
             gap_extend: self.gap_extend,
             log_likelihood_mismatch,
             log_likelihood_match,
+            chimeric_junction_penalty: self.gap_open
+            + (self.chimeric_junction_bases as f64) * self.gap_extend,
         }
     }
 }

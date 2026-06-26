@@ -49,7 +49,10 @@ impl<R: SimpleRec> FragmentState<R> {
     pub(crate) fn flags(&self, i: usize) -> Option<&Flags> {
         self.flags.get(i)
     }
-    // Rationale: if all unmapped, the first is unmapped and its mate also, when paired-end
+    // Sufficient check: for properly paired BAM the mate-unmapped flag mirrors
+    // the mate's state, so reading only the first record's flags is valid.
+    // Supplementary records cannot be unmapped by definition; they are never
+    // present when all primaries are unmapped (SA:Z is absent on unmapped primaries).
     fn is_all_unmapped(&self) -> bool {
         let f = &self.flags[0];
         f.is_unmapped() && (!f.is_segmented() || f.is_mate_unmapped())

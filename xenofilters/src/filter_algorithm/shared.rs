@@ -1,6 +1,6 @@
-//! Scoring helpers intentionally not used — the new backends (collated,
-//! hash_lookup) each implement scoring inline to avoid lifetime conflicts
-//! arising from the `AlignmentStream` trait combining reading and writing.
+//! Reserved for scoring abstractions shared across all three backends.
 //!
-//! This file is retained as a placeholder. If a clean abstraction becomes
-//! possible in a future refactor it can be populated here.
+//! Backend-specific scoring (LineByLine, HashLookup, Collated) lives in
+//! each module. Cross-backend logic that does not require `AlignmentStream`
+//! access — Tier 2.5 pre-assessment, read-space comparison, WIS scheduling
+//! — lives in `crate::alignment::pre_assess` and `crate::alignment::read_profile`.

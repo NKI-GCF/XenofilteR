@@ -9,16 +9,16 @@
 //!
 //! ```text
 //!  IO thread (main)
-//!  ----------------------------------------------------------------
-//!  read records → assemble FragmentBundle → work_tx ------------->.
-//!                                                                 | N workers
-//!  result_rx <-- ScoredFragment <-------------------------------- +
-//!  |                                                              |
-//!  +-> write output (writers stay on IO thread; no Mutex needed)  |
-//!                                                                 |
-//!  Worker threads  (one per --score-threads)                      |
-//!  ---------------------------------------------                  |
-//!  <--------------------------------------------------------------'
+//!  ------------------------------------------------------------------
+//!  ingest_record() per stream → assemble FragmentBundle → work_tx ->.
+//!                                                                   | N workers
+//!  result_rx <-- ScoredFragment <---------------------------------- +
+//!  |                                                                |
+//!  +-> write output (writers stay on IO thread; no Mutex needed)    |
+//!                                                                   |
+//!  Worker threads  (one per --score-threads)                        |
+//!  ---------------------------------------------                    |
+//!  <----------------------------------------------------------------'
 //!  own Scratch (DP tables)
 //!  read Arc<Penalty> + Arc<dyn StoreTrait>  (shared, immutable)
 //!  compute compute_score_delta + decision
@@ -44,10 +44,10 @@ use crate::filter_algorithm::line_by_line::READ_CT;
 use crate::variant::StoreTrait;
 use anyhow::{anyhow, ensure, Result};
 use crossbeam_channel::{bounded, Receiver, Sender};
-use noodles::sam::alignment::record::cigar::op::Kind;
 use noodles::sam::alignment::RecordBuf;
 use smallvec::{smallvec, SmallVec};
 use std::cmp::Ordering;
+use std::f64::consts::LN_10;
 use std::sync::Arc;
 use std::thread;
 
@@ -126,35 +126,48 @@ fn score_bundle(
     ctx: &ScoringContext,
     scratch: &mut Scratch,
 ) -> Option<Decision> {
-    // Fast path 1: unmapped vs mapped.
-    let mut ord = best[0].partial_cmp(&best[best.len() - 1]);
+    while best.len() > 1 {
+        let len_before = best.len();
 
-    if ord.is_none() {
-        // Fast path 2: perfect vs imperfect alignment.
-        let (mcfs1, mcfs2) = match best[0].cmp_perfect(&best[best.len() - 1], &mut ord) {
-            Ok(pair) => pair,
-            Err(_) => return None,
-        };
-        // Tier 2.5: single CIGAR+MD walk.
-        if let PreAssessResult::EarlyDecision(pa_ord) = pre_assess_alignments(&mcfs1, &mcfs2) {
-            drop(mcfs1);
-            drop(mcfs2);
-            return apply_ordering_owned(best, pa_ord, ctx);
+        let mut ord = best[0].partial_cmp(&best[1]);
+        if ord.is_none() {
+            let (mcfs1, mcfs2) = match best[0].cmp_perfect(&best[1], &mut ord) {
+                Ok(pair) => pair,
+                Err(_) => return None,
+            };
+            if ord.is_none() {
+                if let PreAssessResult::EarlyDecision(pa_ord) =
+                    pre_assess_alignments(&mcfs1, &mcfs2)
+                {
+                    drop(mcfs1);
+                    drop(mcfs2);
+                    let dec = apply_ordering_owned(best, pa_ord, ctx);
+                    if best.len() == len_before {
+                        return dec;
+                    }
+                    continue;
+                }
+                let a = &best[0];
+                let b = &best[1];
+                let store1 = stores.get(a.get_nr()).and_then(|s| s.as_deref());
+                let store2 = stores.get(b.get_nr()).and_then(|s| s.as_deref());
+                let s1 = score_candidate_owned(a, mcfs1, store1, ctx, scratch).ok()?;
+                let s1_vd = scratch.last_variant_delta;
+                let s2 = score_candidate_owned(b, mcfs2, store2, ctx, scratch).ok()?;
+                let s2_vd = scratch.last_variant_delta;
+                let dec = decide_from_delta_owned(best, s1 - s2, s1_vd, s2_vd, ctx);
+                if best.len() == len_before {
+                    return dec;
+                }
+                continue;
+            }
         }
-
-        // Full NW scoring.
-        let first = best.first().unwrap();
-        let last = best.last().unwrap();
-        let store1 = stores.get(first.get_nr()).and_then(|s| s.as_deref());
-        let store2 = stores.get(last.get_nr()).and_then(|s| s.as_deref());
-        let s1 = score_candidate_owned(first, mcfs1, store1, ctx, scratch).ok()?;
-        let s1_vd = scratch.last_variant_delta;
-        let s2 = score_candidate_owned(last, mcfs2, store2, ctx, scratch).ok()?;
-        let s2_vd = scratch.last_variant_delta;
-        return decide_from_delta_owned(best, s1 - s2, s1_vd, s2_vd, ctx);
+        let dec = apply_ordering_owned(best, ord.unwrap(), ctx);
+        if best.len() == len_before {
+            return dec;
+        }
     }
-
-    apply_ordering_owned(best, ord.unwrap(), ctx)
+    None
 }
 
 /// Score one candidate using its owned [`RecordBuf`]s.
@@ -190,27 +203,20 @@ fn score_candidate_owned(
     let mut supplementary_penalty = 0.0;
 
     for idx in state.order_mates() {
-        let rec = &state.get_records()[idx];
         let flags = state
             .flags(idx)
             .ok_or_else(|| anyhow!("No flags for record index {idx}"))?;
 
-        // Supplementaries: structural penalty, excluded from NW.
-        if flags.is_supplementary() {
-            if let Some(mcf) = mcfs_opt[idx].take() {
-                let clipped: usize = mcf
-                    .get_cigar()
-                    .iter()
-                    .filter_map(|op| op.ok())
-                    .filter(|op| matches!(op.kind(), Kind::SoftClip | Kind::HardClip))
-                    .map(|op| op.len())
-                    .sum();
-                let read_len = rec.quality_scores().as_ref().len();
-                let non_clipped = read_len.saturating_sub(clipped);
-                supplementary_penalty +=
-                    ctx.penalties.gap_open + (non_clipped as f64) * ctx.penalties.gap_extend;
-            }
+        if flags.is_secondary() {
             continue;
+        }
+        let rec = &state.get_records()[idx];
+
+        // Supplementary alignments contribute BOTH a chimeric-junction
+        // penalty (gap_open + chimeric_junction_bases × gap_extend) AND per-base NW
+        // scoring.
+        if flags.is_supplementary() {
+            supplementary_penalty += ctx.penalties.chimeric_junction_penalty;
         }
 
         if flags.is_unmapped() || !has_variants {
@@ -237,16 +243,12 @@ fn score_candidate_owned(
             );
         }
 
-        if !flags.is_secondary() {
-            segment.push(rec);
-            seg_mcfs.push(
-                mcfs_opt[idx]
-                    .take()
-                    .ok_or_else(|| anyhow!("MdCigFlags already consumed for index {idx}"))?,
-            );
-        } else if flags.is_last_segment() {
-            break;
-        }
+        segment.push(rec);
+        seg_mcfs.push(
+            mcfs_opt[idx]
+                .take()
+                .ok_or_else(|| anyhow!("MdCigFlags already consumed for index {idx}"))?,
+        );
     }
 
     if segment.is_empty() {
@@ -278,11 +280,9 @@ fn decide_from_delta_owned(
 ) -> Option<Decision> {
     match delta {
         d if d > ctx.ambiguous_log_threshold => {
-            best.pop(); // first wins; drop last
+            best.remove(1); // best[0] wins; discard challenger
             if ctx.add_decision_tag {
-                let phred = (10.0 * delta / std::f64::consts::LN_10) as u32;
-                let phred = phred.min(255) as u8;
-                // First stream won; use VariantRescued if its margin came from rescue.
+                let phred = (10.0 * delta / LN_10).min(255.0) as u8;
                 return Some(if s1_vd > 0.0 {
                     Decision::VariantRescued(phred)
                 } else {
@@ -291,12 +291,10 @@ fn decide_from_delta_owned(
             }
         }
         d if d < -ctx.ambiguous_log_threshold => {
-            let n = best.len() - 1;
-            best.drain(0..n); // last wins; drop all before
+            best.remove(0); // best[1] wins; discard leader
             delta = -delta;
             if ctx.add_decision_tag {
-                let phred = (10.0 * delta / std::f64::consts::LN_10) as u32;
-                let phred = phred.min(255) as u8;
+                let phred = (10.0 * delta / LN_10).min(255.0) as u8;
                 return Some(if s2_vd > 0.0 {
                     Decision::VariantRescued(phred)
                 } else {
@@ -316,12 +314,11 @@ fn apply_ordering_owned(
 ) -> Option<Decision> {
     match ord {
         Ordering::Greater => {
-            best.pop();
+            best.remove(1);
             ctx.add_decision_tag.then_some(Decision::First)
         }
         Ordering::Less => {
-            let n = best.len() - 1;
-            best.drain(0..n);
+            best.remove(0);
             ctx.add_decision_tag.then_some(Decision::Last)
         }
         Ordering::Equal => ctx.add_decision_tag.then_some(Decision::Ambiguous),
@@ -344,12 +341,38 @@ impl<R: SimpleRec> LineByLine<R> {
             }
             let mut decision = None;
             if best.len() > 1 {
-                decision = match self.resolve(&best)? {
-                    Resolution::Early(ord) => self.apply_ordering(&mut best, ord)?,
-                    Resolution::NwDelta(delta, s1_vd, s2_vd) => {
-                        self.decide_from_delta(&mut best, delta, s1_vd, s2_vd)?
+                // Champion-vs-challenger sequential tournament.
+                //
+                // Each round compares best[0] (current leader) vs best[1] (next challenger).
+                //   • Leader wins  → discard_at(1); leader stays at position 0.
+                //   • Challenger wins → discard_at(0); challenger shifts to position 0
+                //                       and becomes the new leader for the next round.
+                //   • Tie detected → break; ALL remaining streams go to ambiguous output.
+                //
+                // Correctness: visiting pairs in order means a stream that beats [0]
+                // immediately becomes the new [0] and must defeat every subsequent
+                // challenger before being declared the winner.  No stream is silently
+                // skipped.
+                //
+                // Known limitation: if best[0] = best[1] (tie) but best[2] > both,
+                // best[2] never participates — all three go to ambiguous. A full
+                // round-robin N-way tournament is tracked in ROADMAP v0.4.
+                while best.len() > 1 {
+                    let len_before = best.len();
+                    decision = match self.resolve(&best)? {
+                        Resolution::Early(ord) => self.apply_ordering(&mut best, ord)?,
+                        Resolution::NwDelta(d, s1_vd, s2_vd) => {
+                            self.decide_from_delta(&mut best, d, s1_vd, s2_vd)?
+                        }
+                    };
+                    // If best.len() did not decrease, no stream was eliminated:
+                    // the result was Equal / within ambiguous_threshold. Break to
+                    // avoid an infinite loop; emit_winners will route all remaining
+                    // streams to ambiguous output.
+                    if best.len() == len_before {
+                        break;
                     }
-                };
+                }
                 assert!(!best.is_empty());
             }
             i += 1;
@@ -374,36 +397,39 @@ impl<R: SimpleRec> LineByLine<R> {
 
     fn compute_score_delta<'b>(
         &mut self,
-        best: &'b FragmentBuffer<R>,
+        state_a: &'b FragmentState<R>,
+        state_b: &'b FragmentState<R>,
         mcfs1: SmallVec<[MdCigFlags<'b>; READ_CT]>,
         mcfs2: SmallVec<[MdCigFlags<'b>; READ_CT]>,
     ) -> Result<(f64, f64, f64)> {
-        // (delta, s1_variant_delta, s2_variant_delta)
-        let first = best.first().unwrap();
-        let last = best.last().unwrap();
-        let s1 = self.score_candidate(first, mcfs1, first.get_nr())?;
+        let s1 = self.score_candidate(state_a, mcfs1, state_a.get_nr())?;
         let s1_vd = self.scratch.last_variant_delta;
-        let s2 = self.score_candidate(last, mcfs2, last.get_nr())?;
+        let s2 = self.score_candidate(state_b, mcfs2, state_b.get_nr())?;
         let s2_vd = self.scratch.last_variant_delta;
         Ok((s1 - s2, s1_vd, s2_vd))
     }
 
     fn resolve(&mut self, best: &FragmentBuffer<R>) -> Result<Resolution> {
-        let mut ord = best[0].partial_cmp(&best[best.len() - 1]);
+        debug_assert!(best.len() >= 2, "resolve() requires at least 2 candidates");
+        // Always compare the current leader (best[0]) against the next
+        // challenger (best[1]).  The tournament loop in process_sequential
+        // ensures these are the only two streams in play per round.
+        let a = &best[0];
+        let b = &best[1];
+        let mut ord = a.partial_cmp(b);
         if ord.is_none() {
-            let (mcfs1, mcfs2) = best[0].cmp_perfect(&best[best.len() - 1], &mut ord)?;
+            let (mcfs1, mcfs2) = a.cmp_perfect(b, &mut ord)?;
             if ord.is_none() {
-                // Tier 2.5: single CIGAR+MD walk — runs 2.5a and 2.5b from one ReadProfile build.
                 if let PreAssessResult::EarlyDecision(pa_ord) =
                     pre_assess_alignments(&mcfs1, &mcfs2)
                 {
                     return Ok(Resolution::Early(pa_ord));
                 }
-                let (delta, s1_vd, s2_vd) = self.compute_score_delta(best, mcfs1, mcfs2)?;
+                let (delta, s1_vd, s2_vd) = self.compute_score_delta(a, b, mcfs1, mcfs2)?;
                 return Ok(Resolution::NwDelta(delta, s1_vd, s2_vd));
             }
         }
-        Ok(Resolution::Early(ord.expect("must be Some")))
+        Ok(Resolution::Early(ord.unwrap()))
     }
 
     fn decide_from_delta(
@@ -415,11 +441,9 @@ impl<R: SimpleRec> LineByLine<R> {
     ) -> Result<Option<Decision>> {
         match delta {
             d if d > self.ambiguous_log_threshold => {
-                self.discard_last(best)?;
+                self.discard_at(best, 1)?; // best[0] wins; discard challenger
                 if self.add_decision_tag {
-                    let phred = (10.0 * delta / std::f64::consts::LN_10) as u32;
-                    let phred = phred.min(255) as u8;
-                    // First stream won; use VariantRescued if its margin came from rescue.
+                    let phred = (10.0 * delta / LN_10).min(255.0) as u8;
                     return Ok(Some(if s1_vd > 0.0 {
                         Decision::VariantRescued(phred)
                     } else {
@@ -428,11 +452,10 @@ impl<R: SimpleRec> LineByLine<R> {
                 }
             }
             d if d < -self.ambiguous_log_threshold => {
-                self.discard_leading(best)?;
+                self.discard_at(best, 0)?; // best[1] wins; discard leader
                 delta = -delta;
                 if self.add_decision_tag {
-                    let phred = (10.0 * delta / std::f64::consts::LN_10) as u32;
-                    let phred = phred.min(255) as u8;
+                    let phred = (10.0 * delta / LN_10).min(255.0) as u8;
                     return Ok(Some(if s2_vd > 0.0 {
                         Decision::VariantRescued(phred)
                     } else {
@@ -445,19 +468,39 @@ impl<R: SimpleRec> LineByLine<R> {
         Ok(None)
     }
 
+    /// Emit stream at position `idx` in `best` as filtered output and remove it.
+    /// O(N) shift; N ≤ MAX_STREAMS = 32 so this is acceptable.
+    fn discard_at(&mut self, best: &mut FragmentBuffer<R>, idx: usize) -> Result<()> {
+        let mut loser = best.remove(idx);
+        let nr = loser.get_nr();
+        loser.drain_records().try_for_each(|r| {
+            self.write_record(nr, r.as_record_buf(self.aln[nr].header())?, Some(false))
+        })
+    }
+
     fn apply_ordering(
         &mut self,
         best: &mut FragmentBuffer<R>,
         ord: Ordering,
     ) -> Result<Option<Decision>> {
         match ord {
-            Ordering::Greater => self
-                .discard_last(best)
-                .map(|()| self.add_decision_tag.then_some(Decision::First)),
-            Ordering::Less => self
-                .discard_leading(best)
-                .map(|()| self.add_decision_tag.then_some(Decision::Last)),
-            Ordering::Equal => Ok(self.add_decision_tag.then_some(Decision::Ambiguous)),
+            Ordering::Greater => {
+                // best[0] (current leader) beats best[1] (current challenger).
+                self.discard_at(best, 1)?;
+                Ok(self.add_decision_tag.then_some(Decision::First))
+            }
+            Ordering::Less => {
+                // best[1] (challenger) beats best[0] (leader).
+                // Removing position 0 shifts the challenger to position 0,
+                // making it the new leader for the next tournament round.
+                self.discard_at(best, 0)?;
+                Ok(self.add_decision_tag.then_some(Decision::Last))
+            }
+            Ordering::Equal => {
+                // Tie: caller breaks the tournament loop; remaining streams
+                // (including any not yet compared) all route to ambiguous output.
+                Ok(self.add_decision_tag.then_some(Decision::Ambiguous))
+            }
         }
     }
 
@@ -510,13 +553,17 @@ impl<R: SimpleRec> LineByLine<R> {
         })
     }
 
-    fn emit_winners(&mut self, best: &mut FragmentBuffer<R>, decision: Option<Decision>) -> Result<()> {
+    fn emit_winners(
+        &mut self,
+        best: &mut FragmentBuffer<R>,
+        decision: Option<Decision>,
+    ) -> Result<()> {
         let best_state = (best.len() == 1).then_some(true);
         best.drain(..).try_for_each(|mut b| {
             let nr = b.get_nr();
             b.drain_records().try_for_each(|r| {
                 if best_state.is_none() && (self.is_unmapped_skipped)(&r)? {
-                    self.routing_counters[24 + nr] += 1;
+                    self.routing_counters[3 + (4 * nr)] += 1;
                     return Ok(());
                 }
                 let header = self
@@ -709,7 +756,7 @@ impl LineByLine<RecordBuf> {
             let nr = b.get_nr();
             b.drain_records().try_for_each(|mut r| {
                 if best_state.is_none() && (self.is_unmapped_skipped)(&r)? {
-                    self.routing_counters[24 + nr] += 1;
+                    self.routing_counters[3 + (4 * nr)] += 1;
                     return Ok(());
                 }
                 match decision {
@@ -723,9 +770,13 @@ impl LineByLine<RecordBuf> {
     }
 }
 
+/// Outcome of `resolve()`: either an early decision from Tiers 1–2.5,
+/// or a full NW score triple from Tier 3.
 enum Resolution {
+    /// Tiers 1, 2, or 2.5 produced a definitive ordering without NW DP.
     Early(Ordering),
-    NwDelta(f64, f64, f64), // (delta, s1_vd, s2_vd)
+    /// Full NW scoring completed; carries (delta, s1_variant_delta, s2_variant_delta).
+    NwDelta(f64, f64, f64),
 }
 
 #[cfg(test)]

@@ -65,10 +65,14 @@ impl<'r> MdCigFlags<'r> {
         })
     }
 
-    /// True only when ALL of the following hold for this primary record:
-    /// - No supplementary alignments pending (`SA:Z` absent or empty).
-    /// - Exactly one CIGAR operation (all read bases aligned end-to-end).
-    /// - MD tag is all digits (zero mismatches relative to the reference).
+    /// Returns `true` only when ALL of the following hold:
+    ///  - `SA:Z` tag absent (no supplementary alignments pending in the stream).
+    ///  - Exactly one CIGAR operation (read aligns end-to-end with no gaps or clips).
+    ///  - MD tag is all digits (zero mismatches against the reference).
+    ///
+    /// Any supplementary record that would follow in the BAM stream carries a
+    /// chimeric-junction penalty; a fragment with pending supplementaries therefore
+    /// cannot be fast-pathed as perfect.
     pub(crate) fn is_perfect(&self) -> bool {
         self.supp_count == 0 && self.cig.len() == 1 && self.md.iter().all(|&b| b.is_ascii_digit())
     }

@@ -35,30 +35,12 @@ impl<R: SimpleRec> LineByLine<R> {
                 .ok_or_else(|| anyhow!("No flags for record index {idx} in alignment {aln_idx}"))?;
 
             // Supplementary alignments contribute BOTH:
-            //   1. A chimeric-junction structural penalty:
-            //      gap_open + non_clipped_bases × gap_extend
-            //      (ensures they rank below a clean non-supplementary alignment of
-            //       the same mapped bases, regardless of per-base quality scores)
+            //   1. A chimeric-junction penalty:
+            //      gap_open + chimeric_junction_bases × gap_extend
             //   2. Per-base NW scoring via the segment below
             //      (so their actual alignment quality is still reflected in the score)
             if flags.is_supplementary() {
-                let clipped: usize = mcfs_opt[idx]
-                    .as_ref()
-                    .map(|mcf| {
-                        mcf.get_cigar()
-                            .iter()
-                            .filter_map(|op| op.ok())
-                            .filter(|op| matches!(op.kind(), Kind::SoftClip | Kind::HardClip))
-                            .map(|op| op.len())
-                            .sum::<usize>()
-                    })
-                    .unwrap_or(0);
-                let read_len = rec.quality_scores().as_ref().len();
-                let non_clipped = read_len.saturating_sub(clipped);
-                supplementary_penalty +=
-                    self.penalties.gap_open + (non_clipped as f64) * self.penalties.gap_extend;
-                // NOTE: no `continue` — fall through to add the supplementary to
-                // the NW segment so its per-base alignment quality is scored too.
+                supplementary_penalty += self.penalties.chimeric_junction_penalty;
             }
 
             if flags.is_unmapped() || !has_variants {

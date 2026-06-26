@@ -10,6 +10,5 @@ pub(crate) mod ordering;
 #[cfg(test)]
 mod tests;
 
-
 // Re-export the main type and the most important items
-pub(crate) use core::{LineByLine, READ_CT, Scratch};
+pub(crate) use core::{LineByLine, Scratch, MAX_STREAMS, READ_CT};

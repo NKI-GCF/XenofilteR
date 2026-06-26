@@ -107,7 +107,7 @@ fn test_branch_counters_and_skipping() -> Result<()> {
         ..Config::default()
     };
 
-    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(config.clone(), smallvec![])?;
+    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(config.clone(), setup_mock_streams())?;
 
     let mut unmapped_fwd = create_record(b"u", "*", &[], &[], "10", false)?;
     *unmapped_fwd.flags_mut() = Flags::from_bits(0x45).unwrap(); // unmapped, paired, first in
@@ -126,22 +126,20 @@ fn test_branch_counters_and_skipping() -> Result<()> {
     assert!(lbl.write_record(0, unmapped_rev.clone(), None).is_ok());
     assert!(lbl.write_record(0, unmapped_single, Some(false)).is_ok());
     lbl.print_counters(0);
-    assert_eq!(lbl.routing_counters[16], 2); // ambiguous:0: 2
+    assert_eq!(lbl.routing_counters[2], 2); // ambiguous:0: 2
     assert_eq!(lbl.routing_counters[0], 1); // discard:0:
-                                           // ingest_record should skip secondary
+                                            // ingest_record should skip secondary
     let mut best: FragmentBuffer<RecordBuf> = smallvec![];
-    let finished = lbl
-        .ingest_record(0, secondary, &mut best)
-        .unwrap();
+    let finished = lbl.ingest_record(0, secondary, &mut best).unwrap();
     assert!(!finished);
     assert!(best.is_empty());
 
     config.discard_unmapped = false;
-    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(config, smallvec![])?;
+    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(config, setup_mock_streams())?;
     assert!(lbl.write_record(0, unmapped_fwd, None).is_ok());
     assert!(lbl.write_record(0, unmapped_rev, None).is_ok());
     lbl.print_counters(0);
-    assert_eq!(lbl.routing_counters[16], 2); // ambiguous:0: 2
+    assert_eq!(lbl.routing_counters[2], 2); // ambiguous:0: 2
 
     Ok(())
 }
@@ -158,14 +156,14 @@ fn test_process_multi_stream_sync_r4() -> Result<()> {
 
     lbl.process_sequential()?;
 
-    assert_eq!(lbl.routing_counters[2], 0); // discard:1:
-    assert_eq!(lbl.routing_counters[3], 1); // out:1: R4
-    assert_eq!(lbl.routing_counters[17], 0); // ambiguous:1:
-    assert_eq!(lbl.routing_counters[25], 0); // unmapped:1:
+    assert_eq!(lbl.routing_counters[4], 0); // discard:1:
+    assert_eq!(lbl.routing_counters[5], 1); // out:1: R4
+    assert_eq!(lbl.routing_counters[6], 0); // ambiguous:1:
+    assert_eq!(lbl.routing_counters[3], 0); // unmapped:1:
     assert_eq!(lbl.routing_counters[0], 1); // discard:0: R4
     assert_eq!(lbl.routing_counters[1], 0); // out:0:
-    assert_eq!(lbl.routing_counters[16], 0); // ambiguous:0:
-    assert_eq!(lbl.routing_counters[24], 0); // unmapped:0:
+    assert_eq!(lbl.routing_counters[2], 0); // ambiguous:0:
+    assert_eq!(lbl.routing_counters[3], 0); // unmapped:0:
     Ok(())
 }
 
@@ -194,22 +192,23 @@ fn test_process_multi_stream_sync() -> Result<()> {
 
     lbl.process_sequential()?;
     // this is the order of printing, first aln 1 then aln 0
-    assert_eq!(lbl.routing_counters[2], 4); // discard:1: R0, R1, R3, R8
-    assert_eq!(lbl.routing_counters[3], 2); // out:1: R2, R4
-    assert_eq!(lbl.routing_counters[17], 2); // ambiguous:1: R5, R6
-    assert_eq!(lbl.routing_counters[25], 1); // unmapped:1: R7
+    assert_eq!(lbl.routing_counters[4], 4); // discard:1: R0, R1, R3, R8
+    assert_eq!(lbl.routing_counters[5], 2); // out:1: R2, R4
+    assert_eq!(lbl.routing_counters[6], 2); // ambiguous:1: R5, R6
+    assert_eq!(lbl.routing_counters[3], 1); // unmapped:1: R7
 
     assert_eq!(lbl.routing_counters[0], 2); // discard:0: R2, R4
     assert_eq!(lbl.routing_counters[1], 4); // out:0: R0, R1, R3, R8
-    assert_eq!(lbl.routing_counters[16], 2); // ambiguous:0: R5, R6
-    assert_eq!(lbl.routing_counters[24], 1); // unmapped:0: R7
+    assert_eq!(lbl.routing_counters[2], 2); // ambiguous:0: R5, R6
+    assert_eq!(lbl.routing_counters[3], 1); // unmapped:0: R7
 
     Ok(())
 }
 
 #[test]
 fn test_handle_ordering_logic() -> Result<()> {
-    let lbl_setup: LineByLine<RecordBuf> = LineByLine::new(Config::default(), smallvec![])?;
+    let lbl_setup: LineByLine<RecordBuf> =
+        LineByLine::new(Config::default(), setup_mock_streams())?;
     // Test logic in apply_ordering requires mocked AlnStream for write_record calls.
     // Direct testing of routing_counters incrementation via write_record:
     let mut lbl: LineByLine<RecordBuf> = lbl_setup;
@@ -223,15 +222,16 @@ fn test_handle_ordering_logic() -> Result<()> {
 
     assert_eq!(lbl.routing_counters[1], 1); // 1 + (0 << 1)
     assert_eq!(lbl.routing_counters[0], 1); // (0 << 1)
-    assert_eq!(lbl.routing_counters[16], 1); // 16 + 0
+    assert_eq!(lbl.routing_counters[2], 1); // 16 + 0
     Ok(())
 }
 
 #[test]
 fn test_fragment_finished_transitions() -> Result<()> {
-    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(Config::default(), smallvec![])?;
+    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(Config::default(), setup_mock_streams())?;
     let rec = create_record(b"R1", "M10", &[], &[], "10", false)?;
-    let mut best: FragmentBuffer<RecordBuf> = smallvec![FragmentState::from_record(rec.clone(), 0)?];
+    let mut best: FragmentBuffer<RecordBuf> =
+        smallvec![FragmentState::from_record(rec.clone(), 0)?];
 
     // Same QName: continues fragment
     let fin = lbl.ingest_record(0, rec, &mut best)?;
@@ -262,7 +262,7 @@ fn test_handle_ordering_drain_logic() -> Result<()> {
 
     assert_eq!(best.len(), 1);
     assert_eq!(best[0].get_nr(), 0);
-    assert_eq!(lbl.routing_counters[1 + 1], 1); // stream 1 discarded
+    assert_eq!(lbl.routing_counters[4], 1); // stream 1 discarded
     eprintln!("Writing best fragment from stream {}", best[0].get_nr());
     lbl.emit_winners(&mut best, None)?;
     lbl.print_counters(0);
@@ -348,14 +348,14 @@ fn test_observed_pe_scoring1() -> Result<()> {
         LineByLine::new(config, setup_mock_streams_observed_examples())?;
 
     lbl.process_sequential()?;
-    assert_eq!(lbl.routing_counters[2], 2); // discard:1: both reads
-    assert_eq!(lbl.routing_counters[3], 0); // out:1:
-    assert_eq!(lbl.routing_counters[17], 0); // ambiguous:1:
-    assert_eq!(lbl.routing_counters[25], 0); // unmapped:1:
+    assert_eq!(lbl.routing_counters[4], 2); // discard:1: both reads
+    assert_eq!(lbl.routing_counters[5], 0); // out:1:
+    assert_eq!(lbl.routing_counters[6], 0); // ambiguous:1:
+    assert_eq!(lbl.routing_counters[3], 0); // unmapped:1:
     assert_eq!(lbl.routing_counters[0], 0); // discard:0:
     assert_eq!(lbl.routing_counters[1], 2); // out:0: both reads
-    assert_eq!(lbl.routing_counters[16], 0); // ambiguous:0:
-    assert_eq!(lbl.routing_counters[24], 0); // unmapped:0:
+    assert_eq!(lbl.routing_counters[2], 0); // ambiguous:0:
+    assert_eq!(lbl.routing_counters[3], 0); // unmapped:0:
     Ok(())
 }
 
@@ -440,7 +440,7 @@ fn test_handle_ordering_ambiguous_when_below_threshold_and_negative_delta() -> R
     ];
     let mut ord = None;
     let (mcfs1, mcfs2) = best[0].cmp_perfect(&best[1], &mut ord)?;
-    let (delta, s1_vd, s2_vd) = lbl.compute_score_delta(&best, mcfs1, mcfs2)?;
+    let (delta, s1_vd, s2_vd) = lbl.compute_score_delta(&best[0], &best[1], mcfs1, mcfs2)?;
     let decision = lbl.decide_from_delta(&mut best, delta, s1_vd, s2_vd)?;
     assert!(matches!(decision, Some(Decision::Ambiguous)));
 
@@ -452,7 +452,7 @@ fn test_handle_ordering_ambiguous_when_below_threshold_and_negative_delta() -> R
         FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0)?,
     ];
     let (mcfs1, mcfs2) = best_flipped[0].cmp_perfect(&best_flipped[1], &mut ord)?;
-    let (delta, s1_vd, s2_vd) = lbl.compute_score_delta(&best, mcfs1, mcfs2)?;
+    let (delta, s1_vd, s2_vd) = lbl.compute_score_delta(&best[0], &best[1], mcfs1, mcfs2)?;
     let decision_flipped = lbl.decide_from_delta(&mut best, delta, s1_vd, s2_vd)?;
     assert!(matches!(decision_flipped, Some(Decision::Ambiguous)));
 
@@ -473,7 +473,7 @@ fn test_handle_ordering_when_decision_tag_is_disabled() -> Result<()> {
     ];
     let mut ord = None;
     let (mcfs1, mcfs2) = best[0].cmp_perfect(&best[1], &mut ord)?;
-    let (delta, s1_vd, s2_vd) = lbl.compute_score_delta(&best, mcfs1, mcfs2)?;
+    let (delta, s1_vd, s2_vd) = lbl.compute_score_delta(&best[0], &best[1], mcfs1, mcfs2)?;
     let decision = lbl.decide_from_delta(&mut best, delta, s1_vd, s2_vd)?;
     assert!(decision.is_none()); // no Decision object when tag is off
 

@@ -113,7 +113,10 @@ pub(crate) fn align_alt_to_read(
             );
 
             scratch.curr[j].m = per_base_score
-                + scratch.prev[j - 1].m.max(scratch.prev[j - 1].i).max(scratch.prev[j - 1].d);
+                + scratch.prev[j - 1]
+                    .m
+                    .max(scratch.prev[j - 1].i)
+                    .max(scratch.prev[j - 1].d);
             scratch.curr[j].i = (scratch.curr[j - 1].m + pen.gap_open + pen.gap_extend)
                 .max(scratch.curr[j - 1].i + pen.gap_extend);
             scratch.curr[j].d = (scratch.prev[j].m + pen.gap_open + pen.gap_extend)
@@ -122,7 +125,10 @@ pub(crate) fn align_alt_to_read(
         scratch.swap_nw();
     }
 
-    let alt_score = scratch.prev[m].m.max(scratch.prev[m].i).max(scratch.prev[m].d);
+    let alt_score = scratch.prev[m]
+        .m
+        .max(scratch.prev[m].i)
+        .max(scratch.prev[m].d);
     #[cfg(test)]
     eprintln!("[align_alt_to_read] alt_score={alt_score}");
     Ok(alt_score)
@@ -139,6 +145,7 @@ mod tests {
             gap_extend: -0.5,
             log_likelihood_match: [0.0; MAX_Q],
             log_likelihood_mismatch: [-1.0; MAX_Q],
+            chimeric_junction_penalty: -3.0,
         }
     }
 
@@ -201,7 +208,10 @@ mod tests {
     fn test_weighted_ref_score_queries_correct_read_index() -> Result<()> {
         let window = VariantWindow::compute(1, 6, 3, 4).unwrap();
         let mut seen = Vec::new();
-        weighted_ref_score(window, 1, 0.5, &pen(), |nt_i| { seen.push(nt_i); Ok(30) })?;
+        weighted_ref_score(window, 1, 0.5, &pen(), |nt_i| {
+            seen.push(nt_i);
+            Ok(30)
+        })?;
         assert_eq!(seen, vec![2]); // must be read index 2, not 0
         Ok(())
     }
@@ -213,7 +223,11 @@ mod tests {
         let mut scratch = Scratch::new();
         let read = b"AAGAA";
         let score = align_alt_to_read(
-            b"G", 2, 1, 1.0, &pen(),
+            b"G",
+            2,
+            1,
+            1.0,
+            &pen(),
             |idx| Ok((read[idx], 30)),
             &mut scratch,
         )?;
@@ -228,7 +242,11 @@ mod tests {
         let mut scratch = Scratch::new();
         let read = b"AAGAA";
         let score = align_alt_to_read(
-            b"G", 0, 1, 1.0, &pen(),
+            b"G",
+            0,
+            1,
+            1.0,
+            &pen(),
             |idx| Ok((read[idx], 30)),
             &mut scratch,
         )?;

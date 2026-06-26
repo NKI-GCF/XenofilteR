@@ -74,6 +74,12 @@ Items marked ✓ are complete; ○ are planned; ◑ are in progress.
   N > 2 (NameTable scales as O(in-flight × streams)).
 - ○ **`--help` grouping** — group CLI flags into sections (Input, Output, Scoring,
   Variants, Advanced) using clap's `next_help_heading`.
+- ○ **N-way round-robin tournament** — `namesorted` currently uses a sequential
+  champion-vs-challenger tournament (O(N) comparisons, correct winner guaranteed
+  for strict orderings). When best[0] = best[1] but best[2] is strictly better,
+  all three are declared ambiguous rather than best[2] winning. A full round-robin
+  over all pairs, or sorting by NW score, would handle this correctly. Only
+  affects fragments where two or more streams produce identical alignment quality.
 
 ---
 
