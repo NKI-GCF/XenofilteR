@@ -1,6 +1,6 @@
 use crate::alignment::FragmentState;
 use crate::config::{Config, StripReadSuffix};
-use crate::filter_algorithm::line_by_line::core::AlnBuffer;
+use crate::filter_algorithm::line_by_line::core::FragmentBuffer;
 use crate::tests::create_record;
 use crate::LineByLine;
 use anyhow::Result;
@@ -16,7 +16,7 @@ fn test_qname_suffix_logic() -> Result<()> {
     };
 
     let lbl = LineByLine::new(config.clone(), smallvec![])?;
-    let best: AlnBuffer<RecordBuf> = smallvec![FragmentState::from_record(
+    let best: FragmentBuffer<RecordBuf> = smallvec![FragmentState::from_record(
         create_record(b"read/1", "10M", &[], &[], "10", false)?,
         0
     )?];
@@ -45,11 +45,11 @@ fn test_qname_suffix_logic_variable_mode() -> Result<()> {
     };
     let lbl = LineByLine::new(config, smallvec![])?;
 
-    let with_suffix: AlnBuffer<RecordBuf> = smallvec![FragmentState::from_record(
+    let with_suffix: FragmentBuffer<RecordBuf> = smallvec![FragmentState::from_record(
         create_record(b"read/1", "10M", &[], &[], "10", false)?,
         0
     )?];
-    let no_suffix: AlnBuffer<RecordBuf> = smallvec![FragmentState::from_record(
+    let no_suffix: FragmentBuffer<RecordBuf> = smallvec![FragmentState::from_record(
         create_record(b"read", "10M", &[], &[], "10", false)?,
         0
     )?];

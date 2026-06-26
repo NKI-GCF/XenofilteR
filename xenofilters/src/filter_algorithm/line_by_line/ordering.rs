@@ -21,7 +21,7 @@
 //!  <--------------------------------------------------------------'
 //!  own Scratch (DP tables)
 //!  read Arc<Penalty> + Arc<dyn StoreTrait>  (shared, immutable)
-//!  compute score_delta + decision
+//!  compute compute_score_delta + decision
 //!  send ScoredFragment back
 //! ```
 //!
@@ -37,7 +37,7 @@
 //! so the common no-variant case pays only one `Option::is_some()` check per
 //! candidate rather than one per read segment.
 
-use super::core::{AlnBuffer, LineByLine, Scratch};
+use super::core::{FragmentBuffer, LineByLine, Scratch};
 use crate::alignment::{pre_assess_alignments, PreAssessResult};
 use crate::alignment::{FragmentState, MdCigFlags, SimpleRec};
 use crate::filter_algorithm::line_by_line::READ_CT;
@@ -57,7 +57,7 @@ pub(crate) enum Decision {
     First,
     Last,
     Ambiguous,
-    ConfDelta(u8),
+    PhredConfidence(u8),
     VariantRescued(u8),
 }
 
@@ -69,7 +69,7 @@ pub(crate) enum Decision {
 /// boundaries without any lifetime entanglement.
 struct FragmentBundle {
     /// Collected alignments, one [`FragmentState`] per stream. Length ≥ 2.
-    best: AlnBuffer<RecordBuf>,
+    best: FragmentBuffer<RecordBuf>,
     /// Per-stream variant stores.  Each `Arc` is a cheap clone (atomic
     /// increment) of the one held by [`AlnStream`].  `None` for streams with
     /// no variant file.
@@ -82,7 +82,7 @@ struct FragmentBundle {
 struct ScoredFragment {
     /// Only the winning stream(s) remain; losing entries are already stripped
     /// by the worker so the IO thread only needs to route and write.
-    best: AlnBuffer<RecordBuf>,
+    best: FragmentBuffer<RecordBuf>,
     decision: Option<Decision>,
 }
 
@@ -118,10 +118,10 @@ fn worker_loop(rx: Receiver<FragmentBundle>, tx: Sender<ScoredFragment>) {
 
 /// Score a fragment bundle and return the routing decision.
 ///
-/// Mirrors `LineByLine::resolve` + `apply_delta` + `handle_ordering` but
+/// Mirrors `LineByLine::resolve` + `decide_from_delta` + `apply_ordering` but
 /// operates on owned data with no `&mut self`.
 fn score_bundle(
-    best: &mut AlnBuffer<RecordBuf>,
+    best: &mut FragmentBuffer<RecordBuf>,
     stores: &SmallVec<[Option<Arc<dyn StoreTrait>>; 2]>,
     ctx: &ScoringContext,
     scratch: &mut Scratch,
@@ -139,7 +139,7 @@ fn score_bundle(
         if let PreAssessResult::EarlyDecision(pa_ord) = pre_assess_alignments(&mcfs1, &mcfs2) {
             drop(mcfs1);
             drop(mcfs2);
-            return handle_ordering_owned(best, pa_ord, ctx);
+            return apply_ordering_owned(best, pa_ord, ctx);
         }
 
         // Full NW scoring.
@@ -151,10 +151,10 @@ fn score_bundle(
         let s1_vd = scratch.last_variant_delta;
         let s2 = score_candidate_owned(last, mcfs2, store2, ctx, scratch).ok()?;
         let s2_vd = scratch.last_variant_delta;
-        return apply_delta_owned(best, s1 - s2, s1_vd, s2_vd, ctx);
+        return decide_from_delta_owned(best, s1 - s2, s1_vd, s2_vd, ctx);
     }
 
-    handle_ordering_owned(best, ord.unwrap(), ctx)
+    apply_ordering_owned(best, ord.unwrap(), ctx)
 }
 
 /// Score one candidate using its owned [`RecordBuf`]s.
@@ -269,8 +269,8 @@ fn score_candidate_owned(
     Ok(base_score + supplementary_penalty)
 }
 
-fn apply_delta_owned(
-    best: &mut AlnBuffer<RecordBuf>,
+fn decide_from_delta_owned(
+    best: &mut FragmentBuffer<RecordBuf>,
     mut delta: f64,
     s1_vd: f64,
     s2_vd: f64,
@@ -286,7 +286,7 @@ fn apply_delta_owned(
                 return Some(if s1_vd > 0.0 {
                     Decision::VariantRescued(phred)
                 } else {
-                    Decision::ConfDelta(phred)
+                    Decision::PhredConfidence(phred)
                 });
             }
         }
@@ -300,7 +300,7 @@ fn apply_delta_owned(
                 return Some(if s2_vd > 0.0 {
                     Decision::VariantRescued(phred)
                 } else {
-                    Decision::ConfDelta(phred)
+                    Decision::PhredConfidence(phred)
                 });
             }
         }
@@ -309,8 +309,8 @@ fn apply_delta_owned(
     None
 }
 
-fn handle_ordering_owned(
-    best: &mut AlnBuffer<RecordBuf>,
+fn apply_ordering_owned(
+    best: &mut FragmentBuffer<RecordBuf>,
     ord: Ordering,
     ctx: &ScoringContext,
 ) -> Option<Decision> {
@@ -333,21 +333,21 @@ fn handle_ordering_owned(
 impl<R: SimpleRec> LineByLine<R> {
     /// Original single-threaded process loop.
     pub(crate) fn process_sequential(&mut self) -> Result<()> {
-        let mut best: AlnBuffer<R> = smallvec![];
+        let mut best: FragmentBuffer<R> = smallvec![];
         let mut i = 0;
 
         while i != self.aln.len() {
             while let Some(rec) = self.aln[i].next_rec()? {
-                if self.handle_record_is_fragment_finished(i, rec, &mut best)? {
+                if self.ingest_record(i, rec, &mut best)? {
                     break;
                 }
             }
             let mut decision = None;
             if best.len() > 1 {
                 decision = match self.resolve(&best)? {
-                    Resolution::Ordered(ord) => self.handle_ordering(&mut best, ord)?,
-                    Resolution::Scored(delta, s1_vd, s2_vd) => {
-                        self.apply_delta(&mut best, delta, s1_vd, s2_vd)?
+                    Resolution::Early(ord) => self.apply_ordering(&mut best, ord)?,
+                    Resolution::NwDelta(delta, s1_vd, s2_vd) => {
+                        self.decide_from_delta(&mut best, delta, s1_vd, s2_vd)?
                     }
                 };
                 assert!(!best.is_empty());
@@ -357,7 +357,7 @@ impl<R: SimpleRec> LineByLine<R> {
                 if best.is_empty() {
                     break;
                 }
-                self.handle_best(&mut best, decision)?;
+                self.emit_winners(&mut best, decision)?;
                 i = 0;
             }
         }
@@ -372,9 +372,9 @@ impl<R: SimpleRec> LineByLine<R> {
         Ok(())
     }
 
-    fn score_delta<'b>(
+    fn compute_score_delta<'b>(
         &mut self,
-        best: &'b AlnBuffer<R>,
+        best: &'b FragmentBuffer<R>,
         mcfs1: SmallVec<[MdCigFlags<'b>; READ_CT]>,
         mcfs2: SmallVec<[MdCigFlags<'b>; READ_CT]>,
     ) -> Result<(f64, f64, f64)> {
@@ -388,7 +388,7 @@ impl<R: SimpleRec> LineByLine<R> {
         Ok((s1 - s2, s1_vd, s2_vd))
     }
 
-    fn resolve(&mut self, best: &AlnBuffer<R>) -> Result<Resolution> {
+    fn resolve(&mut self, best: &FragmentBuffer<R>) -> Result<Resolution> {
         let mut ord = best[0].partial_cmp(&best[best.len() - 1]);
         if ord.is_none() {
             let (mcfs1, mcfs2) = best[0].cmp_perfect(&best[best.len() - 1], &mut ord)?;
@@ -397,25 +397,25 @@ impl<R: SimpleRec> LineByLine<R> {
                 if let PreAssessResult::EarlyDecision(pa_ord) =
                     pre_assess_alignments(&mcfs1, &mcfs2)
                 {
-                    return Ok(Resolution::Ordered(pa_ord));
+                    return Ok(Resolution::Early(pa_ord));
                 }
-                let (delta, s1_vd, s2_vd) = self.score_delta(best, mcfs1, mcfs2)?;
-                return Ok(Resolution::Scored(delta, s1_vd, s2_vd));
+                let (delta, s1_vd, s2_vd) = self.compute_score_delta(best, mcfs1, mcfs2)?;
+                return Ok(Resolution::NwDelta(delta, s1_vd, s2_vd));
             }
         }
-        Ok(Resolution::Ordered(ord.expect("must be Some")))
+        Ok(Resolution::Early(ord.expect("must be Some")))
     }
 
-    fn apply_delta(
+    fn decide_from_delta(
         &mut self,
-        best: &mut AlnBuffer<R>,
+        best: &mut FragmentBuffer<R>,
         mut delta: f64,
         s1_vd: f64,
         s2_vd: f64,
     ) -> Result<Option<Decision>> {
         match delta {
             d if d > self.ambiguous_log_threshold => {
-                self.handle_greater_than(best)?;
+                self.discard_last(best)?;
                 if self.add_decision_tag {
                     let phred = (10.0 * delta / std::f64::consts::LN_10) as u32;
                     let phred = phred.min(255) as u8;
@@ -423,12 +423,12 @@ impl<R: SimpleRec> LineByLine<R> {
                     return Ok(Some(if s1_vd > 0.0 {
                         Decision::VariantRescued(phred)
                     } else {
-                        Decision::ConfDelta(phred)
+                        Decision::PhredConfidence(phred)
                     }));
                 }
             }
             d if d < -self.ambiguous_log_threshold => {
-                self.handle_less_than(best)?;
+                self.discard_leading(best)?;
                 delta = -delta;
                 if self.add_decision_tag {
                     let phred = (10.0 * delta / std::f64::consts::LN_10) as u32;
@@ -436,7 +436,7 @@ impl<R: SimpleRec> LineByLine<R> {
                     return Ok(Some(if s2_vd > 0.0 {
                         Decision::VariantRescued(phred)
                     } else {
-                        Decision::ConfDelta(phred)
+                        Decision::PhredConfidence(phred)
                     }));
                 }
             }
@@ -445,27 +445,27 @@ impl<R: SimpleRec> LineByLine<R> {
         Ok(None)
     }
 
-    fn handle_ordering(
+    fn apply_ordering(
         &mut self,
-        best: &mut AlnBuffer<R>,
+        best: &mut FragmentBuffer<R>,
         ord: Ordering,
     ) -> Result<Option<Decision>> {
         match ord {
             Ordering::Greater => self
-                .handle_greater_than(best)
+                .discard_last(best)
                 .map(|()| self.add_decision_tag.then_some(Decision::First)),
             Ordering::Less => self
-                .handle_less_than(best)
+                .discard_leading(best)
                 .map(|()| self.add_decision_tag.then_some(Decision::Last)),
             Ordering::Equal => Ok(self.add_decision_tag.then_some(Decision::Ambiguous)),
         }
     }
 
-    pub(crate) fn handle_record_is_fragment_finished(
+    pub(crate) fn ingest_record(
         &mut self,
         i: usize,
         rec: R,
-        best: &mut AlnBuffer<R>,
+        best: &mut FragmentBuffer<R>,
     ) -> Result<bool> {
         if !(self.is_secondary_skipped)(&rec)? {
             let name = rec
@@ -492,7 +492,7 @@ impl<R: SimpleRec> LineByLine<R> {
         Ok(false)
     }
 
-    fn handle_greater_than(&mut self, best: &mut AlnBuffer<R>) -> Result<()> {
+    fn discard_last(&mut self, best: &mut FragmentBuffer<R>) -> Result<()> {
         let mut last = best.pop().unwrap();
         let nr = last.get_nr();
         last.drain_records().try_for_each(|r| {
@@ -500,7 +500,7 @@ impl<R: SimpleRec> LineByLine<R> {
         })
     }
 
-    fn handle_less_than(&mut self, best: &mut AlnBuffer<R>) -> Result<()> {
+    fn discard_leading(&mut self, best: &mut FragmentBuffer<R>) -> Result<()> {
         let n = best.len() - 1;
         best.drain(0..n).try_for_each(|mut b| {
             let nr = b.get_nr();
@@ -510,13 +510,13 @@ impl<R: SimpleRec> LineByLine<R> {
         })
     }
 
-    fn handle_best(&mut self, best: &mut AlnBuffer<R>, decision: Option<Decision>) -> Result<()> {
+    fn emit_winners(&mut self, best: &mut FragmentBuffer<R>, decision: Option<Decision>) -> Result<()> {
         let best_state = (best.len() == 1).then_some(true);
         best.drain(..).try_for_each(|mut b| {
             let nr = b.get_nr();
             b.drain_records().try_for_each(|r| {
                 if best_state.is_none() && (self.is_unmapped_skipped)(&r)? {
-                    self.branch_counters[24 + nr] += 1;
+                    self.routing_counters[24 + nr] += 1;
                     return Ok(());
                 }
                 let header = self
@@ -526,7 +526,7 @@ impl<R: SimpleRec> LineByLine<R> {
                     .ok_or_else(|| anyhow!("No alignment for index {nr}"))?;
                 let mut rb = RecordBuf::try_from_alignment_record(header, &r)?;
                 match decision {
-                    Some(Decision::ConfDelta(d)) => self.add_aux_tags(&mut rb, b"XF", d)?,
+                    Some(Decision::PhredConfidence(d)) => self.add_aux_tags(&mut rb, b"XF", d)?,
                     Some(Decision::VariantRescued(d)) => self.add_aux_tags(&mut rb, b"XR", d)?,
                     _ => {}
                 }
@@ -593,7 +593,7 @@ impl LineByLine<RecordBuf> {
             "Parallel scoring pipeline started"
         );
 
-        let io_result = self.io_loop(work_tx, result_rx, ctx, stores);
+        let io_result = self.parallel_io_loop(work_tx, result_rx, ctx, stores);
 
         for w in workers {
             if let Err(e) = w.join() {
@@ -610,19 +610,19 @@ impl LineByLine<RecordBuf> {
     /// preventing the IO thread from reading too far ahead of the workers.
     /// We interleave result draining on the blocking path to keep the write
     /// side flowing while waiting for channel capacity.
-    fn io_loop(
+    fn parallel_io_loop(
         &mut self,
         work_tx: Sender<FragmentBundle>,
         result_rx: Receiver<ScoredFragment>,
         ctx: ScoringContext,
         stores: SmallVec<[Option<Arc<dyn StoreTrait>>; 2]>,
     ) -> Result<()> {
-        let mut best: AlnBuffer<RecordBuf> = smallvec![];
+        let mut best: FragmentBuffer<RecordBuf> = smallvec![];
         let mut i = 0;
 
         while i != self.aln.len() {
             while let Some(rec) = self.aln[i].next_rec()? {
-                if self.handle_record_is_fragment_finished(i, rec, &mut best)? {
+                if self.ingest_record(i, rec, &mut best)? {
                     break;
                 }
             }
@@ -709,11 +709,11 @@ impl LineByLine<RecordBuf> {
             let nr = b.get_nr();
             b.drain_records().try_for_each(|mut r| {
                 if best_state.is_none() && (self.is_unmapped_skipped)(&r)? {
-                    self.branch_counters[24 + nr] += 1;
+                    self.routing_counters[24 + nr] += 1;
                     return Ok(());
                 }
                 match decision {
-                    Some(Decision::ConfDelta(d)) => self.add_aux_tags(&mut r, b"XF", d)?,
+                    Some(Decision::PhredConfidence(d)) => self.add_aux_tags(&mut r, b"XF", d)?,
                     Some(Decision::VariantRescued(d)) => self.add_aux_tags(&mut r, b"XR", d)?,
                     _ => {}
                 }
@@ -724,8 +724,8 @@ impl LineByLine<RecordBuf> {
 }
 
 enum Resolution {
-    Ordered(Ordering),
-    Scored(f64, f64, f64), // (delta, s1_vd, s2_vd)
+    Early(Ordering),
+    NwDelta(f64, f64, f64), // (delta, s1_vd, s2_vd)
 }
 
 #[cfg(test)]

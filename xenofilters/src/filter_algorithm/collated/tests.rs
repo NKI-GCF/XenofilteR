@@ -34,8 +34,8 @@ fn test_collated_perfect_vs_imperfect_stream0_wins() -> Result<()> {
     let s1 = vec![create_record(b"R1", "5M5S", &[], &[], "5", false)?];
     let mut m = make_matcher(s0, s1, config())?;
     m.process()?;
-    assert_eq!(m.branch_counters[1], 1); // out:0
-    assert_eq!(m.branch_counters[2], 1); // discard:1
+    assert_eq!(m.routing_counters[1], 1); // out:0
+    assert_eq!(m.routing_counters[2], 1); // discard:1
     Ok(())
 }
 
@@ -45,8 +45,8 @@ fn test_collated_perfect_vs_imperfect_stream1_wins() -> Result<()> {
     let s1 = vec![create_record(b"R1", "10M", &[], &[], "10", false)?];
     let mut m = make_matcher(s0, s1, config())?;
     m.process()?;
-    assert_eq!(m.branch_counters[0], 1); // discard:0
-    assert_eq!(m.branch_counters[3], 1); // out:1
+    assert_eq!(m.routing_counters[0], 1); // discard:0
+    assert_eq!(m.routing_counters[3], 1); // out:1
     Ok(())
 }
 
@@ -56,8 +56,8 @@ fn test_collated_tie_is_ambiguous() -> Result<()> {
     let s1 = vec![create_record(b"R1", "10M", &[], &[], "10", false)?];
     let mut m = make_matcher(s0, s1, config())?;
     m.process()?;
-    assert_eq!(m.branch_counters[16], 1); // ambig:0
-    assert_eq!(m.branch_counters[17], 1); // ambig:1
+    assert_eq!(m.routing_counters[16], 1); // ambig:0
+    assert_eq!(m.routing_counters[17], 1); // ambig:1
     Ok(())
 }
 
@@ -75,9 +75,9 @@ fn test_collated_streams_in_different_order() -> Result<()> {
     let mut m = make_matcher(s0, s1, config())?;
     m.process()?;
     // R1: stream0 perfect wins
-    assert_eq!(m.branch_counters[1], 1); // out:0 (R1)
+    assert_eq!(m.routing_counters[1], 1); // out:0 (R1)
                                          // R2: stream1 perfect wins
-    assert_eq!(m.branch_counters[3], 1); // out:1 (R2)
+    assert_eq!(m.routing_counters[3], 1); // out:1 (R2)
     Ok(())
 }
 
@@ -95,8 +95,8 @@ fn test_collated_paired_end_same_name_grouped() -> Result<()> {
     let mut m = make_matcher(s0, s1, config())?;
     m.process()?;
     // stream0 perfect on both reads vs imperfect stream1
-    assert_eq!(m.branch_counters[1], 2); // out:0 (both mates)
-    assert_eq!(m.branch_counters[2], 2); // discard:1 (both mates)
+    assert_eq!(m.routing_counters[1], 2); // out:0 (both mates)
+    assert_eq!(m.routing_counters[2], 2); // discard:1 (both mates)
     Ok(())
 }
 
@@ -107,8 +107,8 @@ fn test_collated_unmapped_vs_mapped() -> Result<()> {
     let mut m = make_matcher(s0, s1, config())?;
     m.process()?;
     // unmapped < mapped: stream1 wins
-    assert_eq!(m.branch_counters[0], 1); // discard:0
-    assert_eq!(m.branch_counters[3], 1); // out:1
+    assert_eq!(m.routing_counters[0], 1); // discard:0
+    assert_eq!(m.routing_counters[3], 1); // out:1
     Ok(())
 }
 
@@ -126,8 +126,8 @@ fn test_collated_suffix_stripping() -> Result<()> {
     let s1 = vec![create_record(b"R1/2", "5M5S", &[], &[], "5", false)?];
     let mut m = make_matcher(s0, s1, cfg)?;
     m.process()?;
-    assert_eq!(m.branch_counters[1], 1); // out:0
-    assert_eq!(m.branch_counters[2], 1); // discard:1
+    assert_eq!(m.routing_counters[1], 1); // out:0
+    assert_eq!(m.routing_counters[2], 1); // discard:1
     Ok(())
 }
 
@@ -145,9 +145,9 @@ fn test_collated_unmatched_is_emitted_as_best() -> Result<()> {
     let mut m = make_matcher(s0, s1, config())?;
     m.process()?;
     // R1: stream0 wins normally
-    assert_eq!(m.branch_counters[1], 2); // out:0
-    assert_eq!(m.branch_counters[0], 0); // discard:0
-    assert_eq!(m.branch_counters[2], 1); // discard:1 R1
-    assert_eq!(m.branch_counters[3], 0); // discard:1 R1
+    assert_eq!(m.routing_counters[1], 2); // out:0
+    assert_eq!(m.routing_counters[0], 0); // discard:0
+    assert_eq!(m.routing_counters[2], 1); // discard:1 R1
+    assert_eq!(m.routing_counters[3], 0); // discard:1 R1
     Ok(())
 }

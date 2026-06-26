@@ -239,7 +239,7 @@ pub(crate) fn pre_assess_alignments(
 /// Operates on raw BAM-encoded CIGAR bytes + MD byte slices from `ScoringRecord`,
 /// avoiding `RecordBuf` construction until full NW is necessary. Uses
 /// `match_count_raw` (same match-count semantics as Tier 2.5a above) and
-/// respects `supp_count` from the SA:Z tag parsed in `read_scoring_record`.
+/// respects `supp_count` from the SA:Z tag parsed in `next_scoring_record`.
 pub(crate) fn pre_assess_scoring_records(
     recs_a: &[crate::filter_algorithm::hash_lookup::assemble::ScoringRecord],
     recs_b: &[crate::filter_algorithm::hash_lookup::assemble::ScoringRecord],

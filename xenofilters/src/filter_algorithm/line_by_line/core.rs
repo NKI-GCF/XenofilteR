@@ -19,7 +19,7 @@ pub(crate) const READ_CT: usize = 8;
 pub(crate) const VNT_LEN: usize = 16;
 
 pub(crate) type RecordEvalFn = fn(&dyn Record) -> Result<bool>;
-pub(crate) type AlnBuffer<R> = SmallVec<[FragmentState<R>; 2]>;
+pub(crate) type FragmentBuffer<R> = SmallVec<[FragmentState<R>; 2]>;
 
 fn always_false(_: &dyn Record) -> Result<bool> {
     Ok(false)
@@ -68,7 +68,7 @@ pub(crate) struct Scratch {
     pub(crate) prev: SmallVec<[Cell; VNT_LEN]>,
     pub(crate) curr: SmallVec<[Cell; VNT_LEN]>,
     pub(crate) dp: SmallVec<[f64; READ_CT]>,
-    /// Set by Fragment::score; non-zero when maximize_delta rescued alignment.
+    /// Set by Fragment::score; non-zero when wis_max_rescue_delta rescued alignment.
     pub(crate) last_variant_delta: f64,
 }
 
@@ -94,10 +94,10 @@ impl Scratch {
 
 pub(crate) struct LineByLine<R> {
     pub(super) aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
-    pub(super) branch_counters: [u64; 32],
+    pub(super) routing_counters: [u64; 32],
     pub(super) is_secondary_skipped: RecordEvalFn,
     pub(super) is_unmapped_skipped: RecordEvalFn,
-    pub(super) is_new_qname: fn(&AlnBuffer<R>, &[u8]) -> Option<bool>,
+    pub(super) is_new_qname: fn(&FragmentBuffer<R>, &[u8]) -> Option<bool>,
     pub(super) add_decision_tag: bool,
     pub(super) penalties: Penalty,
     pub(super) ambiguous_log_threshold: f64,
@@ -125,17 +125,17 @@ impl<R: SimpleRec> LineByLine<R> {
             0 => 0.0,
             t => (t as f64) * std::f64::consts::LN_10 / 10.0,
         };
-        let is_new_qname: fn(&AlnBuffer<R>, &[u8]) -> Option<bool> = match config.strip_read_suffix
+        let is_new_qname: fn(&FragmentBuffer<R>, &[u8]) -> Option<bool> = match config.strip_read_suffix
         {
-            StripReadSuffix::True => |best: &AlnBuffer<R>, qname2: &[u8]| {
+            StripReadSuffix::True => |best: &FragmentBuffer<R>, qname2: &[u8]| {
                 best.first()
                     .map(|b| b.first_qname())
                     .map(|q1| q1[..q1.len() - 2] != qname2[..qname2.len() - 2])
             },
-            StripReadSuffix::False => |best: &AlnBuffer<R>, qname2: &[u8]| {
+            StripReadSuffix::False => |best: &FragmentBuffer<R>, qname2: &[u8]| {
                 best.first().map(|b| b.first_qname()).map(|q1| q1 != qname2)
             },
-            StripReadSuffix::Variable => |best: &AlnBuffer<R>, qname2: &[u8]| {
+            StripReadSuffix::Variable => |best: &FragmentBuffer<R>, qname2: &[u8]| {
                 best.first().map(|b| b.first_qname()).map(|q1| {
                     if q1.ends_with(b"/1") || q1.ends_with(b"/2") {
                         q1[..q1.len() - 2] != qname2[..qname2.len() - 2]
@@ -172,7 +172,7 @@ impl<R: SimpleRec> LineByLine<R> {
 
         Ok(LineByLine {
             aln,
-            branch_counters: [0; 32],
+            routing_counters: [0; 32],
             is_secondary_skipped,
             is_unmapped_skipped,
             is_new_qname,
@@ -186,8 +186,8 @@ impl<R: SimpleRec> LineByLine<R> {
 }
 
 #[cfg(test)]
-fn debug_new_qname_fn<R: SimpleRec>() -> fn(&AlnBuffer<R>, &[u8]) -> Option<bool> {
-    |best: &AlnBuffer<R>, qname2: &[u8]| {
+fn debug_new_qname_fn<R: SimpleRec>() -> fn(&FragmentBuffer<R>, &[u8]) -> Option<bool> {
+    |best: &FragmentBuffer<R>, qname2: &[u8]| {
         if let Some(q1) = best.first().map(|b| b.first_qname()) {
             if q1.ends_with(b"/1") || q1.ends_with(b"/2") {
                 return best

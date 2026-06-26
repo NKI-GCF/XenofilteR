@@ -42,7 +42,7 @@ pub(crate) struct CollatedMatcher<R: SimpleRec> {
     waiting_b: HashMap<Box<[u8]>, FragmentState<R>>,
     penalties: Penalty,
     scratch: Scratch,
-    pub(crate) branch_counters: [u64; 32],
+    pub(crate) routing_counters: [u64; 32],
     add_decision_tag: bool,
     ambiguous_log_threshold: f64,
     strip: StripReadSuffix,
@@ -85,7 +85,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             waiting_b: HashMap::new(),
             penalties,
             scratch: Scratch::new(),
-            branch_counters: [0u64; 32],
+            routing_counters: [0u64; 32],
             add_decision_tag,
             ambiguous_log_threshold,
             strip,
@@ -123,10 +123,10 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         let drain_a: Vec<_> = self.waiting_a.drain().map(|(_, v)| v).collect();
         let drain_b: Vec<_> = self.waiting_b.drain().map(|(_, v)| v).collect();
         for frag in drain_a {
-            self.emit_records_owned(frag, None, Some(true))?;
+            self.write_fragment(frag, None, Some(true))?;
         }
         for frag in drain_b {
-            self.emit_records_owned(frag, None, Some(true))?;
+            self.write_fragment(frag, None, Some(true))?;
         }
         self.print_counters();
         Ok(())
@@ -233,22 +233,22 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             }
 
         // Tier 3: full NW scoring.
-        let s1 = self.score_one(&a, mcfs1, 0)?;
-        let s2 = self.score_one(&b, mcfs2, 1)?;
+        let s1 = self.nw_score_fragment(&a, mcfs1, 0)?;
+        let s2 = self.nw_score_fragment(&b, mcfs2, 1)?;
         let delta = s1 - s2;
 
         if delta > self.ambiguous_log_threshold {
             let dec = self.phred_decision(delta);
             self.emit_discarded(b)?;
-            self.emit_records_owned(a, dec.as_ref(), Some(true))?;
+            self.write_fragment(a, dec.as_ref(), Some(true))?;
         } else if delta < -self.ambiguous_log_threshold {
             let dec = self.phred_decision(-delta);
             self.emit_discarded(a)?;
-            self.emit_records_owned(b, dec.as_ref(), Some(true))?;
+            self.write_fragment(b, dec.as_ref(), Some(true))?;
         } else {
             let dec = self.add_decision_tag.then_some(Decision::Ambiguous);
-            self.emit_records_owned(a, dec.as_ref(), None)?;
-            self.emit_records_owned(b, dec.as_ref(), None)?;
+            self.write_fragment(a, dec.as_ref(), None)?;
+            self.write_fragment(b, dec.as_ref(), None)?;
         }
         Ok(())
     }
@@ -264,17 +264,17 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             Greater => {
                 self.emit_discarded(b)?;
                 let dec = self.add_decision_tag.then_some(Decision::First);
-                self.emit_records_owned(a, dec.as_ref(), Some(true))?;
+                self.write_fragment(a, dec.as_ref(), Some(true))?;
             }
             Less => {
                 self.emit_discarded(a)?;
                 let dec = self.add_decision_tag.then_some(Decision::Last);
-                self.emit_records_owned(b, dec.as_ref(), Some(true))?;
+                self.write_fragment(b, dec.as_ref(), Some(true))?;
             }
             Equal => {
                 let dec = self.add_decision_tag.then_some(Decision::Ambiguous);
-                self.emit_records_owned(a, dec.as_ref(), None)?;
-                self.emit_records_owned(b, dec.as_ref(), None)?;
+                self.write_fragment(a, dec.as_ref(), None)?;
+                self.write_fragment(b, dec.as_ref(), None)?;
             }
         }
         Ok(())
@@ -283,11 +283,11 @@ impl<R: SimpleRec> CollatedMatcher<R> {
     fn phred_decision(&self, abs_delta: f64) -> Option<Decision> {
         self.add_decision_tag.then(|| {
             let p = (10.0 * abs_delta / std::f64::consts::LN_10) as u32;
-            Decision::ConfDelta(p.min(255) as u8)
+            Decision::PhredConfidence(p.min(255) as u8)
         })
     }
 
-    fn score_one(
+    fn nw_score_fragment(
         &mut self,
         state: &FragmentState<R>,
         mcfs: SmallVec<[MdCigFlags<'_>; READ_CT]>,
@@ -388,13 +388,13 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         for r in frag.drain_records() {
             let stream = if nr == 0 { &mut self.a } else { &mut self.b };
             let rec = r.as_record_buf(stream.header())?;
-            self.branch_counters[nr << 1] += 1;
+            self.routing_counters[nr << 1] += 1;
             stream.write_record(rec, Some(false))?;
         }
         Ok(())
     }
 
-    fn emit_records_owned(
+    fn write_fragment(
         &mut self,
         mut frag: FragmentState<R>,
         decision: Option<&Decision>,
@@ -407,7 +407,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             let mut rec: RecordBuf = r.as_record_buf(stream.header())?;
             if !is_ambiguous {
                 match decision {
-                    Some(Decision::ConfDelta(v)) => {
+                    Some(Decision::PhredConfidence(v)) => {
                         rec.data_mut().insert(Tag::new(b'X', b'F'), Value::from(*v));
                     }
                     Some(Decision::VariantRescued(v)) => {
@@ -415,9 +415,9 @@ impl<R: SimpleRec> CollatedMatcher<R> {
                     }
                     _ => {}
                 }
-                self.branch_counters[1 + (nr << 1)] += 1;
+                self.routing_counters[1 + (nr << 1)] += 1;
             } else {
-                self.branch_counters[16 + nr] += 1;
+                self.routing_counters[16 + nr] += 1;
             }
             stream.write_record(rec, best_state)?;
         }
@@ -426,13 +426,13 @@ impl<R: SimpleRec> CollatedMatcher<R> {
 
     pub(crate) fn print_counters(&self) {
         for i in 0..2 {
-            eprintln!("collated[discard:{}]: {}", i, self.branch_counters[i << 1]);
+            eprintln!("collated[discard:{}]: {}", i, self.routing_counters[i << 1]);
             eprintln!(
                 "collated[out:{}]: {}",
                 i,
-                self.branch_counters[1 + (i << 1)]
+                self.routing_counters[1 + (i << 1)]
             );
-            eprintln!("collated[ambig:{}]: {}", i, self.branch_counters[16 + i]);
+            eprintln!("collated[ambig:{}]: {}", i, self.routing_counters[16 + i]);
         }
     }
 }

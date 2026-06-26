@@ -29,7 +29,7 @@ use std::collections::BTreeMap;
 //
 // Writers remain on the IO thread (no Mutex required); the seek thread owns the BAM
 // reader handles. Bounded capacity on the work channel provides backpressure.
-// N-STREAM NOTE: HashLookup NameTable memory scales as O(in-flight fragments × streams).
+// N-STREAM NOTE: HashLookup FragmentTable memory scales as O(in-flight fragments × streams).
 // Beyond 2 streams the table can exhaust RAM on large skews; profile before enabling.
 pub(crate) struct StagedOutput {
     next_emit: u64,
@@ -51,7 +51,7 @@ impl StagedOutput {
     pub(crate) fn flush<R: SimpleRec>(
         &mut self,
         aln: &mut SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
-        branch_counters: &mut [u64; 32],
+        routing_counters: &mut [u64; 32],
         add_decision_tag: bool,
     ) -> Result<()> {
         while let Some(&min_key) = self.pending.keys().next() {
@@ -59,7 +59,7 @@ impl StagedOutput {
                 break;
             }
             let sf = self.pending.remove(&min_key).unwrap();
-            emit_scored(sf, aln, branch_counters, add_decision_tag)?;
+            emit_scored(sf, aln, routing_counters, add_decision_tag)?;
             self.next_emit += 1;
         }
         Ok(())
@@ -68,13 +68,13 @@ impl StagedOutput {
     pub(crate) fn flush_all<R: SimpleRec>(
         &mut self,
         aln: &mut SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
-        branch_counters: &mut [u64; 32],
+        routing_counters: &mut [u64; 32],
         add_decision_tag: bool,
     ) -> Result<()> {
         let keys: Vec<u64> = self.pending.keys().copied().collect();
         for k in keys {
             let sf = self.pending.remove(&k).unwrap();
-            emit_scored(sf, aln, branch_counters, add_decision_tag)?;
+            emit_scored(sf, aln, routing_counters, add_decision_tag)?;
         }
         Ok(())
     }
@@ -83,13 +83,13 @@ impl StagedOutput {
 fn emit_scored<R: SimpleRec>(
     sf: ScoredFragment,
     aln: &mut SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
-    branch_counters: &mut [u64; 32],
+    routing_counters: &mut [u64; 32],
     add_decision_tag: bool,
 ) -> Result<()> {
     if sf.is_ambiguous {
         for (nr, voffset) in sf.winner_offsets.iter().chain(sf.loser_offsets.iter()) {
             let rec = fetch(aln, *nr, *voffset)?;
-            branch_counters[16 + nr] += 1;
+            routing_counters[16 + nr] += 1;
             aln[*nr].write_record(rec, None)?;
         }
     } else {
@@ -98,12 +98,12 @@ fn emit_scored<R: SimpleRec>(
             if add_decision_tag {
                 apply_tag(&mut rec, sf.decision.as_ref());
             }
-            branch_counters[1 + (nr << 1)] += 1;
+            routing_counters[1 + (nr << 1)] += 1;
             aln[*nr].write_record(rec, Some(true))?;
         }
         for (nr, voffset) in &sf.loser_offsets {
             let rec = fetch(aln, *nr, *voffset)?;
-            branch_counters[nr << 1] += 1;
+            routing_counters[nr << 1] += 1;
             aln[*nr].write_record(rec, Some(false))?;
         }
     }
@@ -123,11 +123,11 @@ fn emit_scored<R: SimpleRec>(
                 apply_tag(&mut rec, sf.decision.as_ref());
             }
             if sf.is_ambiguous {
-                branch_counters[16 + stream_nr] += 1;
+                routing_counters[16 + stream_nr] += 1;
             } else if is_winner_stream {
-                branch_counters[1 + (stream_nr << 1)] += 1;
+                routing_counters[1 + (stream_nr << 1)] += 1;
             } else {
-                branch_counters[stream_nr << 1] += 1;
+                routing_counters[stream_nr << 1] += 1;
             }
             aln[stream_nr].write_record(rec, best_state)?;
         }
@@ -147,7 +147,7 @@ fn fetch<R: SimpleRec>(
 
 fn apply_tag(rec: &mut RecordBuf, decision: Option<&Decision>) {
     match decision {
-        Some(Decision::ConfDelta(v)) => {
+        Some(Decision::PhredConfidence(v)) => {
             rec.data_mut().insert(Tag::new(b'X', b'F'), Value::from(*v));
         }
         Some(Decision::VariantRescued(v)) => {

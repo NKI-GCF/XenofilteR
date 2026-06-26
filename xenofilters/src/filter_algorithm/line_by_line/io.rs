@@ -32,9 +32,9 @@ impl<R: SimpleRec> LineByLine<R> {
         best_state: Option<bool>,
     ) -> Result<()> {
         match (i, best_state) {
-            (i, Some(false)) => self.branch_counters[i << 1]      += 1,
-            (i, Some(true))  => self.branch_counters[1 + (i << 1)] += 1,
-            (i, None)        => self.branch_counters[16 + i]        += 1,
+            (i, Some(false)) => self.routing_counters[i << 1]      += 1,
+            (i, Some(true))  => self.routing_counters[1 + (i << 1)] += 1,
+            (i, None)        => self.routing_counters[16 + i]        += 1,
         }
         if let Some(aln) = self.aln.get_mut(i) {
             aln.write_record(rec, best_state)
@@ -55,10 +55,10 @@ impl<R: SimpleRec> LineByLine<R> {
     pub(super) fn print_counters(&self, i: usize) {
         tracing::info!(
             stream = i,
-            discarded  = self.branch_counters[i << 1],
-            assigned  = self.branch_counters[1 + (i << 1)],
-            ambiguous = self.branch_counters[16 + i],
-            unmapped_discarded = self.branch_counters[24 + i],
+            discarded  = self.routing_counters[i << 1],
+            assigned  = self.routing_counters[1 + (i << 1)],
+            ambiguous = self.routing_counters[16 + i],
+            unmapped_discarded = self.routing_counters[24 + i],
             "Stream summary"
         );
     }

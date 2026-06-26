@@ -58,7 +58,7 @@ struct VariantCtx {
     ref_end: usize,
 }
 
-pub(super) fn maximize_delta<'v>(
+pub(super) fn wis_max_rescue_delta<'v>(
     dvnt: &mut FragEvalVec<'v>,
     dp: &mut SmallVec<[f64; READ_CT]>,
 ) -> f64 {
@@ -123,29 +123,29 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         dvnt: &mut FragEvalVec<'v>,
     ) -> Result<f64, AlignmentError> {
         // Variants fully covered mid-scan get moved here (see
-        // score_variants_in_window) so they aren't re-processed/double-counted
-        // by later windows in the same segment, but still reach maximize_delta.
+        // evaluate_variants_in_window) so they aren't re-processed/double-counted
+        // by later windows in the same segment, but still reach wis_max_rescue_delta.
         let mut finished: FragEvalVec<'v> = (0..dvnt.len()).map(|_| SmallVec::new()).collect();
 
-        let mut score = self.score_with_variant(scratch, dvnt, &mut finished, 0)?;
+        let mut score = self.score_segment(scratch, dvnt, &mut finished, 0)?;
 
         for i in 1..self.seg.len() {
             self.seg_i = i;
             self.refpos = self.seg_start[i];
             self.nt_i = 0;
-            score += self.score_with_variant(scratch, dvnt, &mut finished, i)?;
+            score += self.score_segment(scratch, dvnt, &mut finished, i)?;
         }
 
         for (d, f) in dvnt.iter_mut().zip(finished.iter_mut()) {
             d.extend(f.drain(..));
         }
 
-        let variant_delta = maximize_delta(dvnt, &mut scratch.dp);
+        let variant_delta = wis_max_rescue_delta(dvnt, &mut scratch.dp);
         scratch.last_variant_delta = variant_delta;
         Ok(score + variant_delta)
     }
 
-    fn score_with_variant<'v>(
+    fn score_segment<'v>(
         &mut self,
         scratch: &mut Scratch,
         dvnt: &mut FragEvalVec<'v>,
@@ -163,7 +163,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             let seg_ref_start = self.seg_start[prior_seg_i];
             let seg_ref_end = seg_ref_start + self.seg[prior_seg_i].cigar().len();
             let ctx = WindowCtx::new(i, prior_seg_i, seg_ref_start, seg_ref_end, 0.0);
-            self.score_variants_in_window(scratch, dvnt, finished, ctx)?;
+            self.evaluate_variants_in_window(scratch, dvnt, finished, ctx)?;
         }
 
         let mut iter = ScoreOpIter::new(&self.md_cig_flags[self.seg_i]).peekable();
@@ -218,7 +218,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
                 }
             }
             let ctx = WindowCtx::new(i, self.seg_i, ref_start, self.refpos, ref_score);
-            self.score_variants_in_window(scratch, dvnt, finished, ctx)?;
+            self.evaluate_variants_in_window(scratch, dvnt, finished, ctx)?;
             score += ref_score;
         }
 
@@ -231,13 +231,13 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             let seg_ref_start = self.seg_start[next_seg_i];
             let seg_ref_end = seg_ref_start + self.seg[next_seg_i].sequence().len();
             let ctx = WindowCtx::new(i, next_seg_i, seg_ref_start, seg_ref_end, 0.0);
-            self.score_variants_in_window(scratch, dvnt, finished, ctx)?;
+            self.evaluate_variants_in_window(scratch, dvnt, finished, ctx)?;
         }
 
         Ok(score)
     }
 
-    fn score_variants_in_window<'v>(
+    fn evaluate_variants_in_window<'v>(
         &self,
         scratch: &mut Scratch,
         dvnt: &mut FragEvalVec<'v>,
@@ -247,7 +247,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         let mut i = 0;
         while i < dvnt[ctx.dvnt_i].len() && dvnt[ctx.dvnt_i][i].start() < ctx.ref_end {
             if let Some((weighted_ref_score, alt_score)) =
-                self.score_variant_in_seg(scratch, dvnt, ctx.to_variant_ctx(i))?
+                self.score_variant_against_segment(scratch, dvnt, ctx.to_variant_ctx(i))?
             {
                 dvnt[ctx.dvnt_i][i].update(weighted_ref_score, alt_score);
                 let fully_processed = dvnt[ctx.dvnt_i][i].ref_end() <= ctx.ref_end
@@ -276,7 +276,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
     }
     /// Score a variant's alt allele against read bases from a specific segment.
     /// `ref_start` and `ref_end` define the reference window to score within this segment.
-    fn score_variant_in_seg<'v>(
+    fn score_variant_against_segment<'v>(
         &self,
         scratch: &mut Scratch,
         dvnt: &FragEvalVec<'v>,
@@ -328,7 +328,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
 
         #[cfg(test)]
         eprintln!(
-            "[score_variant_in_seg] vnt=[{},{}) window={window:?} read_offset={read_offset} weighted_ref={weighted_ref} alt_score={alt_score}",
+            "[score_variant_against_segment] vnt=[{},{}) window={window:?} read_offset={read_offset} weighted_ref={weighted_ref} alt_score={alt_score}",
             vnt_eval.start(), vnt_eval.ref_end()
         );
 

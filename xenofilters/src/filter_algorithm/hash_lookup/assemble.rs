@@ -66,16 +66,16 @@ impl ScoringRecord {
 }
 
 // ---------------------------------------------------------------------------
-// StreamBuf — accumulates records for one stream before classification
+// StreamAccumulator — accumulates records for one stream before classification
 // ---------------------------------------------------------------------------
 
 #[derive(Default)]
-struct StreamBuf {
+struct StreamAccumulator {
     records: SmallVec<[ScoringRecord; 2]>,
     primary_count: usize,
 }
 
-impl StreamBuf {
+impl StreamAccumulator {
     fn push(&mut self, rec: ScoringRecord) {
         if rec.is_primary() { self.primary_count += 1; }
         self.records.push(rec);
@@ -171,8 +171,8 @@ impl StreamKind {
 /// A fragment being assembled across both streams.
 pub(crate) struct PendingFragment {
     /// Accumulation buffers — used until `classify()` is called.
-    driving_buf: StreamBuf,
-    lookup_buf: StreamBuf,
+    driving_buf: StreamAccumulator,
+    lookup_buf: StreamAccumulator,
     /// Post-classification states — set after `classify()`.
     pub(crate) driving: StreamKind,
     pub(crate) lookup: StreamKind,
@@ -186,8 +186,8 @@ pub(crate) struct PendingFragment {
 impl PendingFragment {
     pub(crate) fn new(seq_nr: u64) -> Self {
         Self {
-            driving_buf: StreamBuf::default(),
-            lookup_buf: StreamBuf::default(),
+            driving_buf: StreamAccumulator::default(),
+            lookup_buf: StreamAccumulator::default(),
             driving: StreamKind::Empty,
             lookup: StreamKind::Empty,
             supplementary_offsets: [SmallVec::new(), SmallVec::new()],
@@ -252,15 +252,15 @@ impl PendingFragment {
 }
 
 // ---------------------------------------------------------------------------
-// NameTable
+// FragmentTable
 // ---------------------------------------------------------------------------
 
-pub(crate) type NameTable = std::collections::HashMap<Box<[u8]>, PendingFragment>;
+pub(crate) type FragmentTable = std::collections::HashMap<Box<[u8]>, PendingFragment>;
 
 /// Insert `rec` from stream `nr` into `table`.
 /// Returns the canonical key and `true` if the fragment is now complete.
 pub(crate) fn insert(
-    table: &mut NameTable,
+    table: &mut FragmentTable,
     rec: ScoringRecord,
     canonical_name: Box<[u8]>,
     nr: usize,

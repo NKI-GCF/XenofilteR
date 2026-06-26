@@ -144,7 +144,7 @@ fn test_score_variants_in_window_boundaries() -> Result<()> {
     // Create a WindowCtx that covers [1, 6)
     let ctx = WindowCtx::new(0, 0, 1, 6, 0.0);
 
-    fragment.score_variants_in_window(&mut scratch, &mut dvnt, &mut finished, ctx)?;
+    fragment.evaluate_variants_in_window(&mut scratch, &mut dvnt, &mut finished, ctx)?;
 
     // v1 is fully processed (ref_end 4 <= 6). It gets moved to `finished`.
     assert_eq!(finished[0].len(), 1);
@@ -166,7 +166,7 @@ fn maximize_delta_exact_zero_mutant() {
     let mut dp = SmallVec::new();
 
     // If it were >=, the variant with delta 0.0 would be included and processed.
-    assert_eq!(maximize_delta(&mut dvnt, &mut dp), 0.0);
+    assert_eq!(wis_max_rescue_delta(&mut dvnt, &mut dp), 0.0);
     assert!(
         dp.is_empty(),
         "dp should be empty because variants with <= 0 delta should be filtered out"
@@ -243,7 +243,7 @@ fn maximize_delta_empty_returns_zero() {
     let mut dvnt: FragEvalVec = smallvec![smallvec![]];
     let mut dp = SmallVec::new();
 
-    assert_eq!(maximize_delta(&mut dvnt, &mut dp), 0.0);
+    assert_eq!(wis_max_rescue_delta(&mut dvnt, &mut dp), 0.0);
 }
 
 #[test]
@@ -253,7 +253,7 @@ fn maximize_delta_ignores_negative_deltas() {
 
     let mut dp = SmallVec::new();
 
-    assert_eq!(maximize_delta(&mut dvnt, &mut dp), 0.0);
+    assert_eq!(wis_max_rescue_delta(&mut dvnt, &mut dp), 0.0);
 }
 
 #[test]
@@ -262,7 +262,7 @@ fn maximize_delta_single_variant() {
 
     let mut dp = SmallVec::new();
 
-    assert!((maximize_delta(&mut dvnt, &mut dp) - 7.5).abs() < 1e-9);
+    assert!((wis_max_rescue_delta(&mut dvnt, &mut dp) - 7.5).abs() < 1e-9);
 }
 
 #[test]
@@ -275,7 +275,7 @@ fn maximize_delta_sums_non_overlapping_variants() {
 
     let mut dp = SmallVec::new();
 
-    assert!((maximize_delta(&mut dvnt, &mut dp) - 23.0).abs() < 1e-9);
+    assert!((wis_max_rescue_delta(&mut dvnt, &mut dp) - 23.0).abs() < 1e-9);
 }
 
 #[test]
@@ -287,7 +287,7 @@ fn maximize_delta_prefers_larger_overlapping_variant() {
 
     let mut dp = SmallVec::new();
 
-    assert!((maximize_delta(&mut dvnt, &mut dp) - 8.0).abs() < 1e-9);
+    assert!((wis_max_rescue_delta(&mut dvnt, &mut dp) - 8.0).abs() < 1e-9);
 }
 
 #[test]
@@ -300,7 +300,7 @@ fn maximize_delta_finds_best_chain() {
 
     let mut dp = SmallVec::new();
 
-    assert!((maximize_delta(&mut dvnt, &mut dp) - 106.0).abs() < 1e-9);
+    assert!((wis_max_rescue_delta(&mut dvnt, &mut dp) - 106.0).abs() < 1e-9);
 }
 
 #[test]
@@ -313,7 +313,7 @@ fn maximize_delta_handles_nested_variants() {
 
     let mut dp = SmallVec::new();
 
-    assert!((maximize_delta(&mut dvnt, &mut dp) - 23.0).abs() < 1e-9);
+    assert!((wis_max_rescue_delta(&mut dvnt, &mut dp) - 23.0).abs() < 1e-9);
 }
 
 #[test]
@@ -325,7 +325,7 @@ fn maximize_delta_boundary_touching_is_non_overlapping() {
 
     let mut dp = SmallVec::new();
 
-    assert!((maximize_delta(&mut dvnt, &mut dp) - 12.0).abs() < 1e-9);
+    assert!((wis_max_rescue_delta(&mut dvnt, &mut dp) - 12.0).abs() < 1e-9);
 }
 
 #[test]
@@ -337,7 +337,7 @@ fn maximize_delta_uses_max_ref_or_alt_end_for_insertions() {
 
     let mut dp = SmallVec::new();
 
-    assert!((maximize_delta(&mut dvnt, &mut dp) - 50.0).abs() < 1e-9);
+    assert!((wis_max_rescue_delta(&mut dvnt, &mut dp) - 50.0).abs() < 1e-9);
 }
 
 #[test]
@@ -396,7 +396,7 @@ fn snp_ref_support_gives_no_bonus() -> Result<()> {
 fn test_maximize_delta_no_variants_is_zero() -> Result<()> {
     let mut dvnt: FragEvalVec<'_> = smallvec![SmallVec::new()];
     let mut dp = SmallVec::new();
-    assert_eq!(maximize_delta(&mut dvnt, &mut dp), 0.0);
+    assert_eq!(wis_max_rescue_delta(&mut dvnt, &mut dp), 0.0);
     Ok(())
 }
 
@@ -408,7 +408,7 @@ fn test_maximize_delta_ignores_non_positive_delta() -> Result<()> {
     e.update(5.0, 5.0); // delta == 0, discarded out
     let mut dvnt: FragEvalVec<'_> = smallvec![smallvec![e]];
     let mut dp = SmallVec::new();
-    assert_eq!(maximize_delta(&mut dvnt, &mut dp), 0.0);
+    assert_eq!(wis_max_rescue_delta(&mut dvnt, &mut dp), 0.0);
     Ok(())
 }
 
@@ -424,7 +424,7 @@ fn test_maximize_delta_sums_non_overlapping_variants() -> Result<()> {
     e2.update(0.0, 2.0); // delta 2
     let mut dvnt: FragEvalVec<'_> = smallvec![smallvec![e1, e2]];
     let mut dp = SmallVec::new();
-    assert_eq!(maximize_delta(&mut dvnt, &mut dp), 5.0);
+    assert_eq!(wis_max_rescue_delta(&mut dvnt, &mut dp), 5.0);
     Ok(())
 }
 
@@ -440,7 +440,7 @@ fn test_maximize_delta_picks_best_not_sum_for_overlapping_variants() -> Result<(
     e2.update(0.0, 3.0); // delta 3
     let mut dvnt: FragEvalVec<'_> = smallvec![smallvec![e1, e2]];
     let mut dp = SmallVec::new();
-    assert_eq!(maximize_delta(&mut dvnt, &mut dp), 10.0); // not 13.0
+    assert_eq!(wis_max_rescue_delta(&mut dvnt, &mut dp), 10.0); // not 13.0
     Ok(())
 }
 

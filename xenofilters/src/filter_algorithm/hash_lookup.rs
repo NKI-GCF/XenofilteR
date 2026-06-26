@@ -2,7 +2,7 @@
 //!
 //! **Pass 1** (sequential scan, lightweight `ScoringRecord`s):
 //! Reads name, flags, ref_id, pos, CIGAR, MD, qualities, virtual_offset.
-//! No sequence. Inserts into a `NameTable`. At fragment completion, classifies
+//! No sequence. Inserts into a `FragmentTable`. At fragment completion, classifies
 //! each stream as Early (all primaries perfect, no BED/VCF overlap) or
 //! NeedsScoring. Early fragments retain only virtual offsets; Scoring
 //! fragments retain `ScoringRecord`s for NW scoring.
@@ -29,7 +29,7 @@ use crate::penalty::Penalty;
 use crate::region::{AmbiguousRegions, DiagnosticVariants};
 use crate::variant::FragEvalVec;
 use anyhow::{anyhow, Result};
-use assemble::{insert, EarlyKind, NameTable, PendingFragment, ScoringRecord, StreamKind};
+use assemble::{insert, EarlyKind, FragmentTable, PendingFragment, ScoringRecord, StreamKind};
 use noodles::sam::alignment::record::Cigar;
 use smallvec::SmallVec;
 use stage::StagedOutput;
@@ -58,7 +58,7 @@ pub(crate) struct ScoredFragment {
 
 pub(crate) struct HashLookup<R: SimpleRec> {
     aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
-    table: NameTable,
+    table: FragmentTable,
     staged: StagedOutput,
     seq_counter: u64,
     /// Per-stream record counters used as virtual offsets for MockStream compat
@@ -66,7 +66,7 @@ pub(crate) struct HashLookup<R: SimpleRec> {
     record_counters: [u64; 2],
     penalties: Penalty,
     scratch: Scratch,
-    pub(crate) branch_counters: [u64; 32],
+    pub(crate) routing_counters: [u64; 32],
     add_decision_tag: bool,
     ambiguous_log_threshold: f64,
     strip: StripReadSuffix,
@@ -111,13 +111,13 @@ impl<R: SimpleRec> HashLookup<R> {
         }
         Ok(Self {
             aln,
-            table: NameTable::new(),
+            table: FragmentTable::new(),
             staged: StagedOutput::new(),
             seq_counter: 0,
             record_counters: [0, 0],
             penalties: config.to_penalties(),
             scratch: Scratch::new(),
-            branch_counters: [0u64; 32],
+            routing_counters: [0u64; 32],
             add_decision_tag: config.add_decision_tag,
             ambiguous_log_threshold,
             strip: config.strip_read_suffix,
@@ -134,7 +134,7 @@ impl<R: SimpleRec> HashLookup<R> {
                 if *ex {
                     continue;
                 }
-                match self.read_scoring_record(nr)? {
+                match self.next_scoring_record(nr)? {
                     None => {
                         *ex = true;
                     }
@@ -149,25 +149,25 @@ impl<R: SimpleRec> HashLookup<R> {
             }
             self.staged.flush(
                 &mut self.aln,
-                &mut self.branch_counters,
+                &mut self.routing_counters,
                 self.add_decision_tag,
             )?;
         }
 
         let unmatched: Vec<_> = self.table.drain().collect();
         for (_, pending) in unmatched {
-            self.handle_unmatched(pending)?;
+            self.emit_unmatched(pending)?;
         }
         self.staged.flush_all(
             &mut self.aln,
-            &mut self.branch_counters,
+            &mut self.routing_counters,
             self.add_decision_tag,
         )?;
         self.print_counters();
         Ok(())
     }
 
-    fn read_scoring_record(&mut self, nr: usize) -> Result<Option<(Box<[u8]>, ScoringRecord)>> {
+    fn next_scoring_record(&mut self, nr: usize) -> Result<Option<(Box<[u8]>, ScoringRecord)>> {
         use noodles::sam::alignment::record::cigar::op::Kind;
         use noodles::sam::alignment::record::data::field::{Tag, Value};
 
@@ -402,7 +402,7 @@ impl<R: SimpleRec> HashLookup<R> {
                     .ok_or_else(|| anyhow!("Missing driving records for full scoring"))?;
                 let recs_b = lookup_records
                     .ok_or_else(|| anyhow!("Missing lookup records for full scoring"))?;
-                self.score_and_build(
+                self.evaluate_scoring_pair(
                     recs_a,
                     recs_b,
                     driving_offsets,
@@ -413,7 +413,7 @@ impl<R: SimpleRec> HashLookup<R> {
         }
     }
 
-    fn score_and_build(
+    fn evaluate_scoring_pair(
         &mut self,
         recs_a: SmallVec<[ScoringRecord; 2]>,
         recs_b: SmallVec<[ScoringRecord; 2]>,
@@ -422,7 +422,7 @@ impl<R: SimpleRec> HashLookup<R> {
         supp_offsets: [SmallVec<[u64; 1]>; 2],
     ) -> Result<ScoredFragment> {
         // Tier 2.5: CIGAR/MD structural subsumption.
-        // Borrows recs_a/recs_b immutably — both are still available for score_records below.
+        // Borrows recs_a/recs_b immutably — both are still available for nw_score_records below.
         match pre_assess_scoring_records(&recs_a, &recs_b) {
             PreAssessResult::EarlyDecision(ord) => {
                 let off_a: SmallVec<[(usize, u64); 2]> =
@@ -464,8 +464,8 @@ impl<R: SimpleRec> HashLookup<R> {
         }
 
         // Full NW scoring.
-        let score_a = self.score_records(&recs_a, 0)?;
-        let score_b = self.score_records(&recs_b, 1)?;
+        let score_a = self.nw_score_records(&recs_a, 0)?;
+        let score_b = self.nw_score_records(&recs_b, 1)?;
         let delta = score_a - score_b;
 
         let off_a: SmallVec<[(usize, u64); 2]> = offsets_a.iter().map(|&o| (0, o)).collect();
@@ -509,10 +509,10 @@ impl<R: SimpleRec> HashLookup<R> {
     fn phred_delta(&self, abs_delta: f64) -> Option<Decision> {
         self.add_decision_tag.then(|| {
             let p = (10.0 * abs_delta / std::f64::consts::LN_10) as u32;
-            Decision::ConfDelta(p.min(255) as u8)
+            Decision::PhredConfidence(p.min(255) as u8)
         })
     }
-    fn score_records(
+    fn nw_score_records(
         &mut self,
         records: &SmallVec<[ScoringRecord; 2]>,
         aln_idx: usize,
@@ -624,7 +624,7 @@ impl<R: SimpleRec> HashLookup<R> {
         Ok(base_score + supplementary_penalty)
     }
 
-    fn handle_unmatched(&mut self, pending: PendingFragment) -> Result<()> {
+    fn emit_unmatched(&mut self, pending: PendingFragment) -> Result<()> {
         let seq_nr = pending.seq_nr;
         let supp = pending.supplementary_offsets;
         let (driving_empty, _lookup_empty) =
@@ -657,14 +657,14 @@ impl<R: SimpleRec> HashLookup<R> {
             eprintln!(
                 "hashlookup[discard:{}]: {}",
                 i,
-                self.branch_counters[i << 1]
+                self.routing_counters[i << 1]
             );
             eprintln!(
                 "hashlookup[out:{}]: {}",
                 i,
-                self.branch_counters[1 + (i << 1)]
+                self.routing_counters[1 + (i << 1)]
             );
-            eprintln!("hashlookup[ambig:{}]: {}", i, self.branch_counters[16 + i]);
+            eprintln!("hashlookup[ambig:{}]: {}", i, self.routing_counters[16 + i]);
         }
     }
 }
