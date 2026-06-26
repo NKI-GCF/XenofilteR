@@ -44,13 +44,6 @@ struct AlignSig {
     supp_count: usize,
 }
 
-impl AlignSig {
-    fn add(&mut self, other: AlignSig) {
-        self.primary_match_bases += other.primary_match_bases;
-        self.supp_count += other.supp_count;
-    }
-}
-
 /// Derive a match-count `AlignSig` from an already-built `FragmentProfile`.
 ///
 /// Primary records contribute their `ReadOp::Match` count and `supp_count`.

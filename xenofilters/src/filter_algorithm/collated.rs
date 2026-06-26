@@ -32,7 +32,6 @@ use reader::{canonical_name, CollatedReader};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use crate::alignment::{pre_assess_alignments, PreAssessResult};
-use noodles::sam::alignment::record::cigar::op::Kind;
 
 
 pub(crate) struct CollatedMatcher<R: SimpleRec> {

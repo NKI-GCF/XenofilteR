@@ -3,7 +3,6 @@ use crate::alignment::{stringify_record, Fragment, FragmentState, MdCigFlags, Si
 use crate::filter_algorithm::line_by_line::READ_CT;
 use crate::variant::FragEvalVec;
 use anyhow::{anyhow, Result};
-use noodles::sam::alignment::record::cigar::op::Kind;
 use smallvec::SmallVec;
 
 impl<R: SimpleRec> LineByLine<R> {

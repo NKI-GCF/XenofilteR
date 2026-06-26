@@ -74,22 +74,6 @@ pub(crate) struct HashLookup<R: SimpleRec> {
     vcf: [Option<DiagnosticVariants>; 2],
 }
 
-/// Count soft+hard clipped bases from raw BAM CIGAR bytes (4 bytes per op, LE u32).
-fn clips_from_cigar_bytes(bytes: &[u8]) -> usize {
-    bytes
-        .chunks_exact(4)
-        .map(|c| {
-            let enc = u32::from_le_bytes([c[0], c[1], c[2], c[3]]);
-            let kind = enc & 0xF;
-            if kind == 4 || kind == 5 {
-                (enc >> 4) as usize
-            } else {
-                0
-            }
-        })
-        .sum()
-}
-
 impl<R: SimpleRec> HashLookup<R> {
     pub(crate) fn new(
         config: Config,

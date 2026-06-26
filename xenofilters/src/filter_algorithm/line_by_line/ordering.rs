@@ -535,24 +535,6 @@ impl<R: SimpleRec> LineByLine<R> {
         Ok(false)
     }
 
-    fn discard_last(&mut self, best: &mut FragmentBuffer<R>) -> Result<()> {
-        let mut last = best.pop().unwrap();
-        let nr = last.get_nr();
-        last.drain_records().try_for_each(|r| {
-            self.write_record(nr, r.as_record_buf(self.aln[nr].header())?, Some(false))
-        })
-    }
-
-    fn discard_leading(&mut self, best: &mut FragmentBuffer<R>) -> Result<()> {
-        let n = best.len() - 1;
-        best.drain(0..n).try_for_each(|mut b| {
-            let nr = b.get_nr();
-            b.drain_records().try_for_each(|r| {
-                self.write_record(nr, r.as_record_buf(self.aln[nr].header())?, Some(false))
-            })
-        })
-    }
-
     fn emit_winners(
         &mut self,
         best: &mut FragmentBuffer<R>,
