@@ -48,6 +48,7 @@ pub(crate) enum Error {
     #[error("No record at virtual offset {virtual_offset}")]
     NoRecordAtVirtualOffset { virtual_offset: u64 },
 
+    #[cfg(test)]
     #[error("MockStream: no record at virtual offset {virtual_offset}")]
     MockStreamNoRecordAtVirtualOffset { virtual_offset: u64 },
 
@@ -260,5 +261,74 @@ pub(crate) enum Error {
     ScoringError { message: String, state: String },
 
     #[error("BUG: unmapped record should already have been excluded")]
-    UnmappedRecordInMdCigFlags
+    UnmappedRecordInMdCigFlags,
+
+    #[error("--chimeric-pairs: expected format 'A:B' (e.g. '0:1'), got '{raw}'")]
+    ChimericPairsInvalidFormat { raw: String },
+
+    #[error("--chimeric-pairs: '{index_str}' is not a valid stream index")]
+    ChimericPairsInvalidIndex { index_str: String },
+
+    #[error("--chimeric-pairs: stream index must differ (got '{raw}')")]
+    ChimericPairsIdenticalIndices { raw: String },
+
+    #[error("--chimeric-pairs is only supported with --matching-algorithm namesorted")]
+    ChimericPairsRequiresNamesorted,
+
+    #[error("--ambiguous-regions / --diagnostic-variants have no effect with --matching-algorithm namesorted")]
+    NamesortedUnsupportedOptions,
+
+    #[error("Multi-threaded scoring is only supported with --matching-algorithm namesorted.")]
+    MultiThreadedScoringRequiresNamesorted,
+
+    #[error("Single alignment stream detected. If this is intentional for within-species disambiguation, please pass --single-alignment-mode.")]
+    SingleStreamMissingFlag,
+
+    #[error("Cannot use single alignment mode with stdin because the stream must be duplicated via file system access.")]
+    SingleStreamStdinUnsupported,
+
+    #[error("--single-alignment-mode is only supported with --matching-algorithm namesorted.")]
+    SingleStreamRequiresNamesorted,
+
+    #[error("--single-alignment-mode can only be used with exactly 1 alignment stream (got {count}).")]
+    SingleAlignmentModeExpectsOneStream { count: usize },
+
+    #[error("At least two alignments required when not running in single alignment mode (got {count}).")]
+    InsufficientAlignmentStreams { count: usize },
+
+    #[error("More than 2 alignment streams requires --matching-algorithm namesorted (hashlookup and collated are limited to 2 streams by design)")]
+    MultiStreamRequiresNamesorted,
+
+    #[error("namesorted supports at most {max} alignment streams (got {count})")]
+    MaxStreamsExceeded { count: usize, max: usize },
+
+    #[error("Cannot use --merged-output in combination with --output, --discarded-output, or --ambiguous-output.")]
+    MergedOutputConflict,
+
+    #[error("--ambiguous-regions: at most 2 files (one per stream), got {count}")]
+    TooManyAmbiguousRegionsFiles { count: usize },
+
+    #[error("--diagnostic-variants: at most 2 files (one per stream), got {count}")]
+    TooManyDiagnosticVariantsFiles { count: usize },
+
+    #[error("Sample variant stream index {idx} out of bounds (max {max})")]
+    SampleVariantIndexOutOfBounds { idx: usize, max: usize },
+
+    #[error("Population variant stream index {idx} out of bounds (max {max})")]
+    PopulationVariantIndexOutOfBounds { idx: usize, max: usize },
+
+    #[error("Single alignment mode requires both strain slots (index 0 and 1) to have a variant profile. An option like '--sample-variant 0:a.vcf --population-variant 0:b.vcf' is invalid because strain 1 has no variations.")]
+    SingleStreamMissingVariantProfiles,
+
+    #[error("More output paths ({count}) than logical alignment processing streams ({max}) specified")]
+    TooManyOutputPaths { count: usize, max: usize },
+
+    #[error("More discarded output paths ({count}) than logical alignment processing streams ({max}) specified")]
+    TooManyDiscardedOutputPaths { count: usize, max: usize },
+
+    #[error("Only one ambiguous output file is allowed when operating on a single alignment stream (got {count}).")]
+    SingleStreamTooManyAmbiguousOutputs { count: usize },
+
+    #[error("More ambiguous output paths ({count}) than input ({max}) specified")]
+    TooManyAmbiguousOutputPaths { count: usize, max: usize },
 }

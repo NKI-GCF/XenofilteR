@@ -2,10 +2,10 @@ use crate::{
     bam::BamFormat,
     penalty::{Penalty, MAX_Q},
 };
-use anyhow::{ensure, Result};
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
 use crate::filter_algorithm::line_by_line::MAX_STREAMS;
+use crate::Error;
 
 const ARG_MAX: usize = 4;
 
@@ -229,27 +229,27 @@ pub(crate) struct Config {
 }
 
 impl Config {
-    pub(super) fn validate_and_init(&mut self) -> Result<()> {
+pub(super) fn validate_and_init(&mut self) -> Result<(), Error> {
         let aln_count = self.alignment.len();
         // -- Chimeric pair parsing --------------------------------------------
         let mut parsed_chimeric_pairs: Vec<[usize; 2]> = Vec::new();
         for raw in &self.chimeric_pairs {
-            let (a_str, b_str) = raw.split_once(':').ok_or_else(|| {
-                anyhow::anyhow!(
-                    "--chimeric-pairs: expected format 'A:B' (e.g. '0:1'), got '{raw}'"
-                )
-            })?;
+            let (a_str, b_str) = raw.split_once(':').ok_or(
+                Error::ChimericPairsInvalidFormat { raw: raw.clone() }
+            )?;
             let a = a_str.trim().parse::<usize>().map_err(|_| {
-                anyhow::anyhow!("--chimeric-pairs: '{a_str}' is not a valid stream index")
+                Error::ChimericPairsInvalidIndex { index_str: a_str.to_string() }
             })?;
             let b = b_str.trim().parse::<usize>().map_err(|_| {
-                anyhow::anyhow!("--chimeric-pairs: '{b_str}' is not a valid stream index")
+                Error::ChimericPairsInvalidIndex { index_str: b_str.to_string() }
             })?;
-            ensure!(a != b, "--chimeric-pairs: stream index must differ (got '{raw}')");
-            ensure!(
-                self.matching_algorithm == MatchingAlgorithm::Namesorted,
-                "--chimeric-pairs is only supported with --matching-algorithm namesorted"
-            );
+
+            if a == b {
+                return Err(Error::ChimericPairsIdenticalIndices { raw: raw.clone() });
+            }
+            if self.matching_algorithm != MatchingAlgorithm::Namesorted {
+                return Err(Error::ChimericPairsRequiresNamesorted);
+            }
             // Canonical order: lower index first.
             parsed_chimeric_pairs.push([a.min(b), a.max(b)]);
         }
@@ -267,9 +267,9 @@ impl Config {
 
         // Reject multi-threaded modes for non-namesorted algorithms.
         if self.matching_algorithm == MatchingAlgorithm::Namesorted {
-            ensure!(self.ambiguous_regions.is_empty() && self.diagnostic_variants.is_empty(),
-                "--ambiguous-regions / --diagnostic-variants have no effect with --matching-algorithm namesorted"
-            );
+            if !self.ambiguous_regions.is_empty() || !self.diagnostic_variants.is_empty() {
+                return Err(Error::NamesortedUnsupportedOptions);
+            }
             // Resolve score_threads = 0 → available logical CPUs with a max of 16.
             if self.score_threads == 0 {
                 self.score_threads = std::thread::available_parallelism()
@@ -281,62 +281,49 @@ impl Config {
                 );
             }
         } else {
-            ensure!(
-                self.score_threads == 1,
-                "Multi-threaded scoring is only supported with --matching-algorithm namesorted."
-            );
+            if self.score_threads != 1 {
+                return Err(Error::MultiThreadedScoringRequiresNamesorted);
+            }
         }
 
         // 1. Guard against single-stream niche execution accidents first
         if aln_count == 1 {
-            ensure!(
-                self.single_alignment_mode,
-                "Single alignment stream detected. If this is intentional for within-species disambiguation, please pass --single-alignment-mode."
-            );
-            ensure!(
-                !self.read_from_stdin,
-                "Cannot use single alignment mode with stdin because the stream must be duplicated via file system access."
-            );
-            // FIXME: why this restriction?
-            ensure!(
-                self.matching_algorithm == MatchingAlgorithm::Namesorted,
-                "--single-alignment-mode is only supported with --matching-algorithm namesorted."
-            );
+            if !self.single_alignment_mode {
+                return Err(Error::SingleStreamMissingFlag);
+            }
+            if self.read_from_stdin {
+                return Err(Error::SingleStreamStdinUnsupported);
+            }
+            if self.matching_algorithm != MatchingAlgorithm::Namesorted {
+                return Err(Error::SingleStreamRequiresNamesorted);
+            }
         } else {
-            ensure!(
-                !self.single_alignment_mode,
-                "--single-alignment-mode can only be used with exactly 1 alignment stream."
-            );
-            ensure!(
-                aln_count >= 2,
-                "At least two alignments required when not running in single alignment mode."
-            );
+            if self.single_alignment_mode {
+                return Err(Error::SingleAlignmentModeExpectsOneStream { count: aln_count });
+            }
+            if aln_count < 2 {
+                return Err(Error::InsufficientAlignmentStreams { count: aln_count });
+            }
             if aln_count > 2 {
-                ensure!(
-                    self.matching_algorithm == MatchingAlgorithm::Namesorted,
-                    "More than 2 alignment streams requires --matching-algorithm namesorted \
-                     (hashlookup and collated are limited to 2 streams by design)"
-                );
-                ensure!(
-                    aln_count <= MAX_STREAMS,
-                    "namesorted supports at most {MAX_STREAMS} alignment streams (got {aln_count})"
-                );
+                if self.matching_algorithm != MatchingAlgorithm::Namesorted {
+                    return Err(Error::MultiStreamRequiresNamesorted);
+                }
+                if aln_count > MAX_STREAMS {
+                    return Err(Error::MaxStreamsExceeded { count: aln_count, max: MAX_STREAMS });
+                }
             }
         }
         if self.merged_output.is_some() {
-            ensure!(
-                self.output.is_empty() && self.discarded_output.is_empty() && self.ambiguous_output.is_empty(),
-                "Cannot use --merged-output in combination with --output, --discarded-output, or --ambiguous-output."
-            );
+            if !self.output.is_empty() || !self.discarded_output.is_empty() || !self.ambiguous_output.is_empty() {
+                return Err(Error::MergedOutputConflict);
+            }
         }
-        ensure!(
-            self.ambiguous_regions.len() <= 2,
-            "--ambiguous-regions: at most 2 files (one per stream)"
-        );
-        ensure!(
-            self.diagnostic_variants.len() <= 2,
-            "--diagnostic-variants: at most 2 files (one per stream)"
-        );
+        if self.ambiguous_regions.len() > 2 {
+            return Err(Error::TooManyAmbiguousRegionsFiles { count: self.ambiguous_regions.len() });
+        }
+        if self.diagnostic_variants.len() > 2 {
+            return Err(Error::TooManyDiagnosticVariantsFiles { count: self.diagnostic_variants.len() });
+        }
         // Determine effective dimensions (logical comparisons)
         let logical_len = if aln_count == 1 { 2 } else { aln_count };
 
@@ -348,30 +335,26 @@ impl Config {
 
         for (i, arg) in self.sample_variants.iter().enumerate() {
             let (idx, path) = Self::parse_variant_string(arg, i)?;
-            ensure!(
-                idx < logical_len,
-                "Sample variant stream index {idx} out of bounds"
-            );
+            if idx >= logical_len {
+                return Err(Error::SampleVariantIndexOutOfBounds { idx, max: logical_len });
+            }
             normalized_samples[idx] = path;
             stream_has_variants[idx] = true;
         }
 
         for (i, arg) in self.population_variants.iter().enumerate() {
             let (idx, path) = Self::parse_variant_string(arg, i)?;
-            ensure!(
-                idx < logical_len,
-                "Population variant stream index {idx} out of bounds"
-            );
+            if idx >= logical_len {
+                return Err(Error::PopulationVariantIndexOutOfBounds { idx, max: logical_len });
+            }
             normalized_populations[idx] = path;
             stream_has_variants[idx] = true;
         }
 
         if aln_count == 1 {
-            ensure!(
-                stream_has_variants[0] && stream_has_variants[1],
-                "Single alignment mode requires both strain slots (index 0 and 1) to have a variant profile. \
-                An option like '--sample-variant 0:a.vcf --population-variant 0:b.vcf' is invalid because strain 1 has no variations."
-            );
+            if !stream_has_variants[0] || !stream_has_variants[1] {
+                return Err(Error::SingleStreamMissingVariantProfiles);
+            }
         }
 
         self.sample_variants = normalized_samples
@@ -384,25 +367,21 @@ impl Config {
             .collect();
 
         // 3. Output bounds validation
-        ensure!(
-            self.output.len() <= logical_len,
-            "More output paths than logical alignment processing streams specified"
-        );
-        ensure!(
-            self.discarded_output.len() <= logical_len,
-            "More discarded output paths than logical alignment processing streams specified"
-        );
+        if self.output.len() > logical_len {
+            return Err(Error::TooManyOutputPaths { count: self.output.len(), max: logical_len });
+        }
+        if self.discarded_output.len() > logical_len {
+            return Err(Error::TooManyDiscardedOutputPaths { count: self.discarded_output.len(), max: logical_len });
+        }
 
         if aln_count == 1 {
-            ensure!(
-                self.ambiguous_output.len() <= 1,
-                "Only one ambiguous output file is allowed when operating on a single alignment stream."
-            );
+            if self.ambiguous_output.len() > 1 {
+                return Err(Error::SingleStreamTooManyAmbiguousOutputs { count: self.ambiguous_output.len() });
+            }
         } else {
-            ensure!(
-                self.ambiguous_output.len() <= logical_len,
-                "More ambiguous output paths than input specified"
-            );
+            if self.ambiguous_output.len() > logical_len {
+                return Err(Error::TooManyAmbiguousOutputPaths { count: self.ambiguous_output.len(), max: logical_len });
+            }
         }
 
         if self.gap_open > 0.0 {
@@ -413,11 +392,8 @@ impl Config {
         }
 
         if self.gap_open == 0.0 || self.mismatch_penalty <= 0.0 {
-            return Err(anyhow::anyhow!(
-                "Gap open/mismatch penalties must be positive"
-            ));
+            return Err(Error::InvalidPenalties);
         }
-
 
         tracing::debug!(
             threads = self.threads,
@@ -433,7 +409,7 @@ impl Config {
     }
 
     /// Parse `"<idx>:<path>"` or fall back to `(default_idx, path)`.
-    fn parse_variant_string(arg: &str, default_idx: usize) -> Result<(usize, PathBuf)> {
+    fn parse_variant_string(arg: &str, default_idx: usize) -> Result<(usize, PathBuf), Error> {
         if let Some((idx_str, path_str)) = arg.split_once(':')
             && let Ok(idx) = idx_str.parse::<usize>() {
                 return Ok((idx, PathBuf::from(path_str)));
