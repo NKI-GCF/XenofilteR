@@ -40,7 +40,7 @@
 use super::core::{FragmentBuffer, LineByLine, Scratch};
 use crate::alignment::{pre_assess_alignments, PreAssessResult};
 use crate::alignment::{FragmentState, MdCigFlags, SimpleRec};
-use crate::filter_algorithm::line_by_line::READ_CT;
+use crate::filter_algorithm::line_by_line::{READ_CT, ChimericDecision, detect_chimeric_event};
 use crate::variant::StoreTrait;
 use anyhow::{anyhow, ensure, Result};
 use crossbeam_channel::{bounded, Receiver, Sender};
@@ -76,6 +76,8 @@ struct FragmentBundle {
     stores: SmallVec<[Option<Arc<dyn StoreTrait>>; 2]>,
     /// Scoring parameters cloned from [`LineByLine`] once at pipeline startup.
     ctx: ScoringContext,
+    /// Chimeric pairs to check for complementary mate mapping across species.
+    chimeric_pairs: Vec<[usize; 2]>,
 }
 
 /// A scored fragment, ready to be written by the IO thread.
@@ -109,6 +111,7 @@ fn worker_loop(rx: Receiver<FragmentBundle>, tx: Sender<ScoredFragment>) {
             mut best,
             stores,
             ctx,
+            chimeric_pairs,
         } = bundle;
         let decision = score_bundle(&mut best, &stores, &ctx, &mut scratch);
         // Ignore send errors: the IO thread may have exited after an error.
@@ -340,46 +343,63 @@ impl<R: SimpleRec> LineByLine<R> {
                 }
             }
             let mut decision = None;
-            if best.len() > 1 {
-                // Champion-vs-challenger sequential tournament.
-                //
-                // Each round compares best[0] (current leader) vs best[1] (next challenger).
-                //   • Leader wins  → discard_at(1); leader stays at position 0.
-                //   • Challenger wins → discard_at(0); challenger shifts to position 0
-                //                       and becomes the new leader for the next round.
-                //   • Tie detected → break; ALL remaining streams go to ambiguous output.
-                //
-                // Correctness: visiting pairs in order means a stream that beats [0]
-                // immediately becomes the new [0] and must defeat every subsequent
-                // challenger before being declared the winner.  No stream is silently
-                // skipped.
-                //
-                // Known limitation: if best[0] = best[1] (tie) but best[2] > both,
-                // best[2] never participates — all three go to ambiguous. A full
-                // round-robin N-way tournament is tracked in ROADMAP v0.4.
-                while best.len() > 1 {
-                    let len_before = best.len();
-                    decision = match self.resolve(&best)? {
-                        Resolution::Early(ord) => self.apply_ordering(&mut best, ord)?,
-                        Resolution::NwDelta(d, s1_vd, s2_vd) => {
-                            self.decide_from_delta(&mut best, d, s1_vd, s2_vd)?
-                        }
-                    };
-                    // If best.len() did not decrease, no stream was eliminated:
-                    // the result was Equal / within ambiguous_threshold. Break to
-                    // avoid an infinite loop; emit_winners will route all remaining
-                    // streams to ambiguous output.
-                    if best.len() == len_before {
-                        break;
+            i += 1;
+            if i == self.aln.len() {
+                if best.is_empty() { break; }
+
+                // -- Chimeric pre-check (before normal tournament) ---------
+                // If configured chimeric pairs exist, inspect the fragment for
+                // complementary mate mapping across species.  When detected,
+                // both streams' records are emitted with XC:Z: tags; the normal
+                // scoring cascade is skipped for those streams.
+                if !self.chimeric_pairs.is_empty() {
+                    let cd = detect_chimeric_event(&best, &self.chimeric_pairs);
+                    if matches!(cd, ChimericDecision::Chimeric { .. }) {
+                        tracing::debug!(
+                            fragment = ?best.first().map(|s| s.first_qname()),
+                            "Chimeric event detected"
+                        );
+                        self.emit_chimeric(&mut best, cd)?;
+                        // best is now empty; reset and read next fragment.
+                        i = 0;
+                        continue;
+                    }
+                }
+
+                // -- Normal tournament cascade -----------------------------
+                if best.len() > 1 {
+                    // Champion-vs-challenger sequential tournament.
+                    //
+                    // Each round compares best[0] (current leader) vs best[1] (next challenger).
+                    //   • Leader wins  → discard_at(1); leader stays at position 0.
+                    //   • Challenger wins → discard_at(0); challenger shifts to position 0
+                    //                       and becomes the new leader for the next round.
+                    //   • Tie detected → break; ALL remaining streams go to ambiguous output.
+                    //
+                    // Correctness: visiting pairs in order means a stream that beats [0]
+                    // immediately becomes the new [0] and must defeat every subsequent
+                    // challenger before being declared the winner.  No stream is silently
+                    // skipped.
+                    //
+                    // Known limitation: if best[0] = best[1] (tie) but best[2] > both,
+                    // best[2] never participates — all three go to ambiguous. A full
+                    // round-robin N-way tournament is tracked in ROADMAP v0.4.
+                    while best.len() > 1 {
+                        let len_before = best.len();
+                        decision = match self.resolve(&best)? {
+                            Resolution::Early(ord) =>
+                                self.apply_ordering(&mut best, ord)?,
+                            Resolution::NwDelta(d, s1_vd, s2_vd) =>
+                                self.decide_from_delta(&mut best, d, s1_vd, s2_vd)?,
+                        };
+                        // If best.len() did not decrease, no stream was eliminated:
+                        // the result was Equal / within ambiguous_threshold. Break to
+                        // avoid an infinite loop; emit_winners will route all remaining
+                        // streams to ambiguous output.
+                        if best.len() == len_before { break; }
                     }
                 }
                 assert!(!best.is_empty());
-            }
-            i += 1;
-            if i == self.aln.len() {
-                if best.is_empty() {
-                    break;
-                }
                 self.emit_winners(&mut best, decision)?;
                 i = 0;
             }
@@ -523,6 +543,7 @@ impl<R: SimpleRec> LineByLine<R> {
                     self.aln[i].un_next(rec)?;
                     return Ok(true);
                 }
+                // XXX: If always in order, testing last() may be sufficient.
                 for state in best.iter_mut().rev() {
                     if state.get_nr() == i {
                         state.add_record(rec)?;
@@ -669,11 +690,23 @@ impl LineByLine<RecordBuf> {
                         decision: None,
                     })?;
                 } else {
+                    // -- Chimeric pre-check (IO thread, before scoring workers) --
+                    if !self.chimeric_pairs.is_empty() {
+                        let cd = detect_chimeric_event(&best, &self.chimeric_pairs);
+                        if matches!(cd, ChimericDecision::Chimeric { .. }) {
+                            // Chimeric routing is a pure IO-thread decision
+                            // (no NW DP needed); handle inline.
+                            self.emit_chimeric(&mut best, cd)?;
+                            i = 0;
+                            continue;
+                        }
+                    }
                     // Clone the Arc per bundle — O(1) per store.
                     let bundle = FragmentBundle {
                         best: best.drain(..).collect(),
                         stores: stores.iter().cloned().collect(),
                         ctx: ctx.clone(),
+                        chimeric_pairs: self.chimeric_pairs.clone(),
                     };
 
                     // Try non-blocking send first.

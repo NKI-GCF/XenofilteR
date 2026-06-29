@@ -108,6 +108,13 @@ pub(crate) struct LineByLine<R> {
     /// 1 = sequential (deterministic output order).
     /// N > 1 = parallel (output order is nondeterministic across fragments).
     pub(super) score_threads: usize,
+
+    /// Canonical chimeric stream-index pairs (lower index first).
+    pub(super) chimeric_pairs:     Vec<[usize; 2]>,
+
+    /// Per-stream labels used for the `XC:Z:` SAM tag.
+    /// `chimeric_label(i)` returns `stream_labels[i]` or `"stream_N"`.
+    pub(super) stream_labels:      Vec<String>,
 }
 
 impl<R: SimpleRec> LineByLine<R> {
@@ -182,8 +189,16 @@ impl<R: SimpleRec> LineByLine<R> {
             penalties: config.to_penalties(),
             ambiguous_log_threshold,
             scratch: Scratch::new(),
+            chimeric_pairs: config.parsed_chimeric_pairs.clone(),
+            stream_labels: config.stream_labels.clone(),
             score_threads,
         })
+    }
+    pub(super) fn chimeric_label(&self, stream: usize) -> String {
+        self.stream_labels
+            .get(stream)
+            .cloned()
+            .unwrap_or_else(|| format!("stream_{stream}"))
     }
 }
 

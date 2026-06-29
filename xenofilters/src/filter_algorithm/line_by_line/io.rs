@@ -1,9 +1,11 @@
+use super::chimeric::ChimericDecision;
 use super::core::LineByLine;
 use crate::alignment::SimpleRec;
 use anyhow::Result;
 use noodles::sam::alignment::record::data::field::Tag;
 use noodles::sam::alignment::record_buf::data::field::Value;
 use noodles::sam::alignment::record_buf::RecordBuf;
+use super::core::FragmentBuffer;
 
 impl<R: SimpleRec> LineByLine<R> {
     /// Insert a single-byte aux tag into `rec`.
@@ -58,9 +60,60 @@ impl<R: SimpleRec> LineByLine<R> {
             discarded = self.routing_counters[i * 4],
             assigned = self.routing_counters[1 + (i * 4)],
             ambiguous = self.routing_counters[2 + (i * 4)],
-            unmapped_discarded = self.routing_counters[3 + (i * 4)],
+            chimeric = self.routing_counters[3 + (i * 4)],
             "Stream summary"
         );
+    }
+    /// Write all records from a chimeric fragment.
+    ///
+    /// For streams in the chimeric pair: records go to assigned output with
+    /// `XC:Z:<other_stream_label>` tag.  For every other stream present in
+    /// `best`: records go to filtered (discarded) output.
+    ///
+    /// The `XC:Z:` tag value is the human-readable label of the *other* stream
+    /// (configured via `--stream-labels`), making it easy to filter chimeric
+    /// reads with `samtools view -d XC:hpv`.
+    pub(super) fn emit_chimeric(
+        &mut self,
+        best: &mut FragmentBuffer<R>,
+        decision: ChimericDecision,
+    ) -> Result<()> {
+        let (chimeric_a, chimeric_b) = match decision {
+            ChimericDecision::Chimeric { stream_a, stream_b } => (stream_a, stream_b),
+            ChimericDecision::Normal => unreachable!("emit_chimeric called on non-chimeric"),
+        };
+
+        let label_a = self.chimeric_label(chimeric_a);
+        let label_b = self.chimeric_label(chimeric_b);
+
+        let tag_xc = Tag::new(b'X', b'C');
+
+        best.drain(..).try_for_each(|mut state| -> Result<()> {
+            let nr = state.get_nr();
+            let is_chimeric_stream = nr == chimeric_a || nr == chimeric_b;
+
+            if is_chimeric_stream {
+                // The XC:Z value is the OTHER stream's label.
+                let other_label = if nr == chimeric_a { &label_b } else { &label_a };
+                let xc_value    = Value::String(other_label.as_bytes().into());
+
+                state.drain_records().try_for_each(|r| -> Result<()> {
+                    let header = self.aln[nr].header();
+                    let mut rb = r.as_record_buf(header)?;
+                    rb.data_mut().insert(tag_xc, xc_value.clone());
+                    self.routing_counters[3 + (nr * 4)] += 1;
+                    self.aln[nr].write_record(rb, Some(true))  // → assigned output
+                })
+            } else {
+                // Streams outside the chimeric pair are discarded.
+                state.drain_records().try_for_each(|r| -> Result<()> {
+                    let header = self.aln[nr].header();
+                    let rb = r.as_record_buf(header)?;
+                    self.routing_counters[nr * 4] += 1;
+                    self.aln[nr].write_record(rb, Some(false)) // → filtered output
+                })
+            }
+        })
     }
 }
 

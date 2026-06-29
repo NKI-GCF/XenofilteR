@@ -196,11 +196,74 @@ pub(crate) struct Config {
     #[arg(short = 'J', long, default_value = "20",
           value_parser = clap::value_parser!(u32).range(0..=10000))]
     pub(crate) chimeric_junction_bases: u32,
+
+    /// Pairs of stream indices that may produce chimeric (cross-species) fragments.
+    ///
+    /// Format: "A:B" where A and B are 0-based stream indices.
+    /// When a paired-end fragment has mates that split across a configured pair
+    /// (some mates mapped only in stream A, complementary mates only in stream B),
+    /// both streams' records are written to their assigned outputs with an `XC:Z:`
+    /// SAM tag identifying the other stream — no stream is discarded.
+    ///
+    /// Example: `--chimeric-pairs 0:1` for human + HPV integration analysis.
+    ///          `--chimeric-pairs 0:1 --chimeric-pairs 1:2` for human + HPV + mouse
+    ///          where HPV can integrate into human and human+HPV tissue is xenografted
+    ///          in mouse.  Pairs not listed compete normally in the tournament.
+    #[arg(long, num_args = 0..)]
+    pub(crate) chimeric_pairs: Vec<String>,
+
+    /// Human-readable labels for each alignment stream (positional: stream 0, 1, …).
+    ///
+    /// Used as the value of the `XC:Z:` SAM aux tag written to chimeric reads.
+    /// The tag on a read from stream N reads `XC:Z:<label of the other stream>`.
+    /// Defaults to `stream_N` when not supplied.
+    ///
+    /// Example: `--stream-labels human hpv mouse`
+    #[arg(long, num_args = 0..)]
+    pub(crate) stream_labels: Vec<String>,
+
+    /// Parsed and validated chimeric stream pairs.
+    /// Stored in canonical order (lower index first) so lookups are O(pairs).
+    #[arg(skip)]
+    pub(crate) parsed_chimeric_pairs: Vec<[usize; 2]>,
 }
 
 impl Config {
     pub(super) fn validate_and_init(&mut self) -> Result<()> {
         let aln_count = self.alignment.len();
+        // -- Chimeric pair parsing --------------------------------------------
+        let mut parsed_chimeric_pairs: Vec<[usize; 2]> = Vec::new();
+        for raw in &self.chimeric_pairs {
+            let (a_str, b_str) = raw.split_once(':').ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--chimeric-pairs: expected format 'A:B' (e.g. '0:1'), got '{raw}'"
+                )
+            })?;
+            let a = a_str.trim().parse::<usize>().map_err(|_| {
+                anyhow::anyhow!("--chimeric-pairs: '{a_str}' is not a valid stream index")
+            })?;
+            let b = b_str.trim().parse::<usize>().map_err(|_| {
+                anyhow::anyhow!("--chimeric-pairs: '{b_str}' is not a valid stream index")
+            })?;
+            ensure!(a != b, "--chimeric-pairs: stream index must differ (got '{raw}')");
+            ensure!(
+                self.matching_algorithm == MatchingAlgorithm::Namesorted,
+                "--chimeric-pairs is only supported with --matching-algorithm namesorted"
+            );
+            // Canonical order: lower index first.
+            parsed_chimeric_pairs.push([a.min(b), a.max(b)]);
+        }
+        // Deduplicate.
+        parsed_chimeric_pairs.sort_unstable();
+        parsed_chimeric_pairs.dedup();
+        self.parsed_chimeric_pairs = parsed_chimeric_pairs;
+
+        if !self.parsed_chimeric_pairs.is_empty() {
+            tracing::info!(
+                pairs = ?self.parsed_chimeric_pairs,
+                "Chimeric pair detection enabled"
+            );
+        }
 
         // Reject multi-threaded modes for non-namesorted algorithms.
         if self.matching_algorithm == MatchingAlgorithm::Namesorted {

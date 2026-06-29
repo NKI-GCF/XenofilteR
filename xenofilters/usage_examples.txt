@@ -1,0 +1,23 @@
+# HPV integration in human — two streams
+xenofilters human.bam hpv.bam \
+  --matching-algorithm namesorted \
+  --chimeric-pairs 0:1 \
+  --stream-labels human hpv \
+  --output human_best.bam --output hpv_best.bam \
+  --discarded-output human_discarded.bam --discarded-output hpv_discarded.bam
+
+# Extract integration-spanning reads from either output:
+samtools view -d XC: human_best.bam    # mates whose partner mapped to HPV
+samtools view -d XC: hpv_best.bam      # mates whose partner mapped to human
+
+# Three-stream: HPV-infected human tissue xenografted in mouse
+xenofilters human.bam hpv.bam mouse.bam \
+  --matching-algorithm namesorted \
+  --chimeric-pairs 0:1 \
+  --stream-labels human hpv mouse \
+  --output human_best.bam --output hpv_best.bam --output mouse_best.bam \
+  --discarded-output human_disc.bam --discarded-output hpv_disc.bam \
+  --discarded-output mouse_disc.bam
+
+# Human reads that span an HPV integration breakpoint:
+samtools view -d XC:hpv human_best.bam

@@ -175,6 +175,32 @@ With `--add-decision-tag`:
 - `XR:C:<phred>` when `scratch.last_variant_delta > 0` (variant rescue tipped the balance)
 
 `phred = round(10 × |delta| / ln 10)`, capped at 255.
+ No --threads flag currently
+
+### Chimeric fragment routing (optional, namesorted + paired-end)
+
+When `--chimeric-pairs A:B` is supplied, the cascade is preceded by a
+complementary-mapping check:
+
+1. Look up `FragmentState` for stream A and stream B in the current `FragmentBuffer`.
+2. Collect *mapped segment identifiers* (0x40 = read 1, 0x80 = read 2) for each
+   stream, considering only primary, mapped, non-supplementary records.
+3. **Chimeric event**: both sets non-empty AND disjoint (no mate maps well in both
+   streams simultaneously).
+
+On a chimeric event:
+- Stream A records → stream A assigned output + `XC:Z:<label_B>` tag.
+- Stream B records → stream B assigned output + `XC:Z:<label_A>` tag.
+- Remaining streams (outside the pair) → filtered (discarded) output.
+- `routing_counters[COUNTER_CHIMERIC_BASE + i]` incremented for each chimeric stream.
+
+The normal tournament cascade is **skipped** for detected chimeric fragments.
+Non-chimeric fragments proceed through the full Tier 1–3 cascade unchanged.
+
+Condition 2 (disjointness) ensures that genuinely ambiguous reads — where a
+single mate aligns with high score to both species — are not misclassified
+as chimeric integration events.
+
 
 ---
 

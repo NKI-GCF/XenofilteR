@@ -41,6 +41,17 @@ records. `waiting_a` / `waiting_b` `HashMap`s buffer unmatched fragments. Tier-1
 unmapped fast-path runs before BED/VCF I/O. BED and VCF files are queried via tabix
 random access (`TabixBed`, `TabixVcf`).
 
+**Chimeric fragment detection** (namesorted only, paired-end).
+When `--chimeric-pairs A:B` is configured, fragments where mates split
+across two streams (one mate mapped in stream A, complementary mate in stream B)
+are classified as chimeric.  Both streams' records are written to their assigned
+outputs with `XC:Z:<other_stream_label>`.  Useful for viral integration studies
+(e.g. HPV integration into human: `--chimeric-pairs 0:1`).
+
+Three-stream example: human (0) + HPV (1) + mouse (2) xenograft.
+`--chimeric-pairs 0:1` lets human and HPV form chimeric pairs while
+the mouse stream competes normally in the tournament.
+
 ---
 
 ## Scoring cascade
