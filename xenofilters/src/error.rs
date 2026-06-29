@@ -111,8 +111,8 @@ pub(crate) enum Error {
     CannotOpenBedFile { path: PathBuf, source: std::io::Error },
 
     // --- Format Parsing & Genomics Metadata Validation ---
-    //#[error("Invalid region {region_str}: {source}")]
-    //InvalidRegion { region_str: String, source: String },
+    #[error("Invalid region {0}")]
+    InvalidRegion(String),
 
     #[error("Tabix BED query failed: {0}")]
     TabixBedQueryFailed(String),
@@ -281,7 +281,8 @@ pub(crate) enum Error {
     #[error("Multi-threaded scoring is only supported with --matching-algorithm namesorted.")]
     MultiThreadedScoringRequiresNamesorted,
 
-    #[error("Single alignment stream detected. If this is intentional for within-species disambiguation, please pass --single-alignment-mode.")]
+    #[error("Single alignment stream detected. If this is intentional for within-species disambiguation, \
+        please pass --single-alignment-mode.")]
     SingleStreamMissingFlag,
 
     #[error("Cannot use single alignment mode with stdin because the stream must be duplicated via file system access.")]
@@ -296,7 +297,8 @@ pub(crate) enum Error {
     #[error("At least two alignments required when not running in single alignment mode (got {count}).")]
     InsufficientAlignmentStreams { count: usize },
 
-    #[error("More than 2 alignment streams requires --matching-algorithm namesorted (hashlookup and collated are limited to 2 streams by design)")]
+    #[error("More than 2 alignment streams requires --matching-algorithm namesorted \
+        (hashlookup and collated are limited to 2 streams by design)")]
     MultiStreamRequiresNamesorted,
 
     #[error("namesorted supports at most {max} alignment streams (got {count})")]
@@ -317,7 +319,9 @@ pub(crate) enum Error {
     #[error("Population variant stream index {idx} out of bounds (max {max})")]
     PopulationVariantIndexOutOfBounds { idx: usize, max: usize },
 
-    #[error("Single alignment mode requires both strain slots (index 0 and 1) to have a variant profile. An option like '--sample-variant 0:a.vcf --population-variant 0:b.vcf' is invalid because strain 1 has no variations.")]
+    #[error("Single alignment mode requires both strain slots (index 0 and 1) to have a variant profile. \
+        An option like '--sample-variant 0:a.vcf --population-variant 0:b.vcf' is invalid because strain 1 \
+        then has no variants.")]
     SingleStreamMissingVariantProfiles,
 
     #[error("More output paths ({count}) than logical alignment processing streams ({max}) specified")]
