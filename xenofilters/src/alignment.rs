@@ -52,11 +52,11 @@ pub(crate) fn stringify_record<R: Record + PartialEq>(rec: &R) -> String {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use anyhow::Result;
     pub(crate) use ops::tests::*;
+    use crate::Error;
 
     #[test]
-    fn test_stringify_record_includes_qname_cigar_md_and_orientation() -> Result<()> {
+    fn test_stringify_record_includes_qname_cigar_md_and_orientation() -> Result<(), Error> {
         let rec = create_record(b"read1", "5M", &[], &[30; 5], "5", false)?;
         let s = stringify_record(&rec);
         assert!(s.contains("read1"));

@@ -11,28 +11,28 @@ use crate::{
     config::{Config, StripReadSuffix},
     penalty::Penalty,
 };
-use anyhow::Result;
 use noodles::sam::alignment::Record;
 use smallvec::SmallVec;
+use crate::Error;
 
 pub(crate) const READ_CT: usize = 8;
 pub(crate) const VNT_LEN: usize = 16;
 
 pub(crate) const MAX_STREAMS: usize = 32;
 
-pub(crate) type RecordEvalFn = fn(&dyn Record) -> Result<bool>;
+pub(crate) type RecordEvalFn = fn(&dyn Record) -> Result<bool, Error>;
 pub(crate) type FragmentBuffer<R> = SmallVec<[FragmentState<R>; 2]>;
 
-fn always_false(_: &dyn Record) -> Result<bool> {
+fn always_false(_: &dyn Record) -> Result<bool, Error> {
     Ok(false)
 }
 
-fn unmapped_and_mate_unmapped(rec: &dyn Record) -> Result<bool> {
+fn unmapped_and_mate_unmapped(rec: &dyn Record) -> Result<bool, Error> {
     let flags = rec.flags()?;
     Ok(flags.is_unmapped() && (!flags.is_segmented() || flags.is_mate_unmapped()))
 }
 
-fn is_secondary(rec: &dyn Record) -> Result<bool> {
+fn is_secondary(rec: &dyn Record) -> Result<bool, Error> {
     Ok(rec.flags()?.is_secondary())
 }
 
@@ -121,7 +121,7 @@ impl<R: SimpleRec> LineByLine<R> {
     pub(crate) fn new(
         config: Config,
         mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
-    ) -> Result<Self> {
+    ) -> Result<Self, Error> {
         let is_unmapped_skipped = match config.discard_unmapped {
             true => unmapped_and_mate_unmapped,
             false => always_false,

@@ -1,11 +1,11 @@
 use crate::alignment::MdCigFlags;
 use crate::alignment::SimpleRec;
 use crate::filter_algorithm::line_by_line::READ_CT;
-use anyhow::Result;
 use noodles::sam::alignment::record::Cigar;
 use noodles::sam::alignment::record::Flags;
 use smallvec::{smallvec, SmallVec};
 use std::cmp::Ordering;
+use crate::Error;
 
 #[derive(PartialEq, Debug)]
 pub(crate) struct FragmentState<R> {
@@ -17,14 +17,14 @@ pub(crate) struct FragmentState<R> {
 type McfPair<'f> = (SmallVec<[MdCigFlags<'f>; 8]>, SmallVec<[MdCigFlags<'f>; 8]>);
 
 impl<R: SimpleRec> FragmentState<R> {
-    pub(crate) fn from_record(r: R, species_nr: usize) -> Result<Self> {
+    pub(crate) fn from_record(r: R, species_nr: usize) -> Result<Self, Error> {
         Ok(FragmentState {
             flags: smallvec![r.flags()?],
             records: smallvec![r],
             species_nr,
         })
     }
-    pub(crate) fn add_record(&mut self, r: R) -> Result<()> {
+    pub(crate) fn add_record(&mut self, r: R) -> Result<(), Error> {
         self.flags.push(r.flags()?);
         self.records.push(r);
         Ok(())
@@ -87,7 +87,7 @@ impl<R: SimpleRec> FragmentState<R> {
         &'f self,
         other: &'f FragmentState<R>,
         ord: &mut Option<Ordering>,
-    ) -> Result<McfPair<'f>> {
+    ) -> Result<McfPair<'f>, Error> {
         let mut mcfs1: SmallVec<[MdCigFlags<'f>; 8]> =
             SmallVec::with_capacity(self.get_records().len());
         let mut perfect_self = true;

@@ -1,6 +1,6 @@
-use anyhow::{anyhow, ensure, Result};
 use noodles::sam::alignment::record::{data::field::Tag, data::field::Value, Cigar, Flags, Record};
 use std::cmp::Ordering;
+use crate::Error;
 
 pub(crate) struct MdCigFlags<'r> {
     flags: &'r Flags,
@@ -18,16 +18,16 @@ pub(crate) struct MdCigFlags<'r> {
 
 impl<'r> MdCigFlags<'r> {
     /// Build an `MdCigRef` from a stored `MdCigFlags` and its matching record.
-    pub(crate) fn try_from_record<R: Record>(record: &'r R, flags: &'r Flags) -> Result<Self> {
-        ensure!(
-            !flags.is_unmapped(),
-            "BUG: unmapped record should already have been excluded"
-        );
+    pub(crate) fn try_from_record<R: Record>(record: &'r R, flags: &'r Flags) -> Result<Self, Error> {
+        if flags.is_unmapped() {
+            return Err(Error::UnmappedRecordInMdCigFlags);
+        }
+
         let md = match record
             .data()
             .get(&Tag::MISMATCHED_POSITIONS)
             .transpose()?
-            .ok_or_else(|| anyhow!("missing MD tag"))?
+            .ok_or(Error::MissingMdTag)?
         {
             Value::String(bstr) => {
                 // SAFETY: 'r is the lifetime of `record`, and `bstr` is derived from that borrow.
@@ -36,7 +36,7 @@ impl<'r> MdCigFlags<'r> {
                     unsafe { std::slice::from_raw_parts(slice.as_ptr(), slice.len()) };
                 md
             }
-            _ => return Err(anyhow!("unexpected MD tag value type")),
+            _ => return Err(Error::UnexpectedMdTagValueType),
         };
 
         // SA:Z: "rname,pos,strand,CIGAR,mapQ,NM;" — one ';' per supplementary.

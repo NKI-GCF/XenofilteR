@@ -2,7 +2,7 @@ use super::*;
 use crate::tests::create_record;
 
 #[test]
-fn test_is_perfect_single_op_no_mismatches() -> Result<()> {
+fn test_is_perfect_single_op_no_mismatches() -> Result<(), Error> {
     let rec = create_record(b"r", "10M", &[], &[], "10", false)?;
     let flags = rec.flags();
     assert!(MdCigFlags::try_from_record(&rec, &flags)?.is_perfect());
@@ -10,7 +10,7 @@ fn test_is_perfect_single_op_no_mismatches() -> Result<()> {
 }
 
 #[test]
-fn test_is_perfect_false_with_mismatch() -> Result<()> {
+fn test_is_perfect_false_with_mismatch() -> Result<(), Error> {
     let rec = create_record(b"r", "10M", &[], &[], "5A4", false)?;
     let flags = rec.flags();
     assert!(!MdCigFlags::try_from_record(&rec, &flags)?.is_perfect());
@@ -18,7 +18,7 @@ fn test_is_perfect_false_with_mismatch() -> Result<()> {
 }
 
 #[test]
-fn test_is_perfect_false_multiple_cigar_ops_even_if_md_clean() -> Result<()> {
+fn test_is_perfect_false_multiple_cigar_ops_even_if_md_clean() -> Result<(), Error> {
     let rec = create_record(b"r", "5M5S", &[], &[], "5", false)?;
     let flags = rec.flags();
     assert!(!MdCigFlags::try_from_record(&rec, &flags)?.is_perfect());
@@ -26,7 +26,7 @@ fn test_is_perfect_false_multiple_cigar_ops_even_if_md_clean() -> Result<()> {
 }
 
 #[test]
-fn test_is_reverse_complemented() -> Result<()> {
+fn test_is_reverse_complemented() -> Result<(), Error> {
     let fwd = create_record(b"r", "5M", &[], &[], "5", false)?;
     let rev = create_record(b"r", "5M", &[], &[], "5", true)?;
     assert!(!MdCigFlags::try_from_record(&fwd, &fwd.flags())?.is_reverse_complemented());
@@ -35,7 +35,7 @@ fn test_is_reverse_complemented() -> Result<()> {
 }
 
 #[test]
-fn test_is_last_segment() -> Result<()> {
+fn test_is_last_segment() -> Result<(), Error> {
     let mut last = create_record(b"r", "5M", &[], &[], "5", false)?;
     *last.flags_mut() = Flags::from_bits(0x80).unwrap(); // last segment, mapped
     let mut first = create_record(b"r", "5M", &[], &[], "5", false)?;
@@ -54,7 +54,7 @@ fn test_try_from_record_unmapped_is_rejected() {
 }
 
 #[test]
-fn test_try_from_record_missing_md_tag_errors() -> Result<()> {
+fn test_try_from_record_missing_md_tag_errors() -> Result<(), Error> {
     let mut rec = create_record(b"r", "5M", &[], &[], "5", false)?;
     *rec.data_mut() = Default::default(); // strip the MD tag that create_record set
     let flags = rec.flags();
@@ -63,7 +63,7 @@ fn test_try_from_record_missing_md_tag_errors() -> Result<()> {
 }
 
 #[test]
-fn test_partial_ord_and_eq() -> Result<()> {
+fn test_partial_ord_and_eq() -> Result<(), Error> {
     // Two perfect records
     let p1 = create_record(b"r1", "10M", &[], &[], "10", false)?;
     let p2 = create_record(b"r2", "10M", &[], &[], "10", false)?;

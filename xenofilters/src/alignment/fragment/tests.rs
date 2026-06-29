@@ -5,10 +5,10 @@ use crate::config::Config;
 use crate::penalty::Penalty;
 use crate::tests::create_record;
 use crate::variant::{Eval, Variant};
-use anyhow::Result;
 use noodles::sam::alignment::record::Flags;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::{smallvec, SmallVec};
+use crate::Error;
 
 pub(crate) fn setup_penalties() -> Penalty {
     let c = Config::default();
@@ -58,7 +58,7 @@ fn make_eval<'a>(v: &'a dyn Variant) -> Eval<'a> {
 }
 /* conversion to Record not possible
 #[test]
-fn test_simple_rec_for_bam_record() -> Result<()> {
+fn test_simple_rec_for_bam_record() -> Result<(), Error> {
     use noodles::bam;
     use noodles::sam::Header;
 
@@ -84,7 +84,7 @@ fn test_simple_rec_for_bam_record() -> Result<()> {
 }*/
 
 #[test]
-fn test_fragment_requires_revcmp() -> Result<()> {
+fn test_fragment_requires_revcmp() -> Result<(), Error> {
     let rec_fwd = create_record(b"read1", "5M", b"AAAAA", &[30; 5], "5", false)?;
     let mut rec_rev = create_record(b"read1", "5M", b"AAAAA", &[30; 5], "10", false)?;
     *rec_rev.flags_mut() = Flags::from_bits(0x10).unwrap(); // Reverse complemented
@@ -117,7 +117,7 @@ fn test_fragment_requires_revcmp() -> Result<()> {
 }
 
 #[test]
-fn test_score_variants_in_window_boundaries() -> Result<()> {
+fn test_score_variants_in_window_boundaries() -> Result<(), Error> {
     // Start the read at position 1. Spans reference [1, 11).
     let rec = create_record(b"read1", "10M", &[b'A'; 10], &[30; 10], "1", false)?;
     let flags = rec.flags();
@@ -182,7 +182,7 @@ fn test_simple_rec_for_sam_record_buf() {
 }
 
 #[test]
-fn test_stitched_fragment_creation() -> Result<()> {
+fn test_stitched_fragment_creation() -> Result<(), Error> {
     let record1 = create_record(b"read1", "5M3S", &[b'A'; 8], &[30; 8], "5", false)?;
     let record2 = create_record(b"read1", "4M4S", &[b'A'; 8], &[30; 8], "4", false)?;
     let flags1 = record1.flags();
@@ -206,7 +206,7 @@ fn test_complement() {
 }
 
 #[test]
-fn test_q() -> Result<()> {
+fn test_q() -> Result<(), Error> {
     let record = create_record(
         b"read1",
         "5M",
@@ -341,7 +341,7 @@ fn maximize_delta_uses_max_ref_or_alt_end_for_insertions() {
 }
 
 #[test]
-fn snp_alt_support_gives_positive_delta() -> Result<()> {
+fn snp_alt_support_gives_positive_delta() -> Result<(), Error> {
     let rec = create_record(b"read1", "5M", b"AAGAA", &[30; 5], "5", false)?;
     let flags = rec.flags();
     let p = setup_penalties();
@@ -367,7 +367,7 @@ fn snp_alt_support_gives_positive_delta() -> Result<()> {
 }
 
 #[test]
-fn snp_ref_support_gives_no_bonus() -> Result<()> {
+fn snp_ref_support_gives_no_bonus() -> Result<(), Error> {
     let rec = create_record(b"read1", "5M", b"AAAAA", &[30; 5], "5", false)?;
 
     let flags = rec.flags();
@@ -393,7 +393,7 @@ fn snp_ref_support_gives_no_bonus() -> Result<()> {
 }
 
 #[test]
-fn test_maximize_delta_no_variants_is_zero() -> Result<()> {
+fn test_maximize_delta_no_variants_is_zero() -> Result<(), Error> {
     let mut dvnt: FragEvalVec<'_> = smallvec![SmallVec::new()];
     let mut dp = SmallVec::new();
     assert_eq!(wis_max_rescue_delta(&mut dvnt, &mut dp), 0.0);
@@ -401,7 +401,7 @@ fn test_maximize_delta_no_variants_is_zero() -> Result<()> {
 }
 
 #[test]
-fn test_maximize_delta_ignores_non_positive_delta() -> Result<()> {
+fn test_maximize_delta_ignores_non_positive_delta() -> Result<(), Error> {
     let v = TestVariant::new(0, 1, 0.1);
     let mut e = Eval::new();
     e.set_variant(&v);
@@ -413,7 +413,7 @@ fn test_maximize_delta_ignores_non_positive_delta() -> Result<()> {
 }
 
 #[test]
-fn test_maximize_delta_sums_non_overlapping_variants() -> Result<()> {
+fn test_maximize_delta_sums_non_overlapping_variants() -> Result<(), Error> {
     let v1 = TestVariant::new(0, 1, 0.1); // end = 1
     let v2 = TestVariant::new(10, 1, 0.1); // end = 11
     let mut e1 = Eval::new();
@@ -429,7 +429,7 @@ fn test_maximize_delta_sums_non_overlapping_variants() -> Result<()> {
 }
 
 #[test]
-fn test_maximize_delta_picks_best_not_sum_for_overlapping_variants() -> Result<()> {
+fn test_maximize_delta_picks_best_not_sum_for_overlapping_variants() -> Result<(), Error> {
     let v1 = TestVariant::new(0, 5, 0.1); // [0,5)
     let v2 = TestVariant::new(2, 5, 0.1); // [2,7) overlaps v1
     let mut e1 = Eval::new();
@@ -445,7 +445,7 @@ fn test_maximize_delta_picks_best_not_sum_for_overlapping_variants() -> Result<(
 }
 
 #[test]
-fn snp_no_alt_support_gives_nonpositive_delta() -> Result<()> {
+fn snp_no_alt_support_gives_nonpositive_delta() -> Result<(), Error> {
     // Read has 'A' at the variant position (matches declared ref, not alt) — no rescue expected.
     let rec = create_record(b"read1", "5M", b"AAAAA", &[30; 5], "5", false)?;
     let flags = rec.flags();
@@ -482,7 +482,7 @@ fn test_test_variant_p_variant_reflects_constructed_field() {
 }
 
 #[test]
-fn snp_alt_support_with_low_prior_is_not_rescued() -> Result<()> {
+fn snp_alt_support_with_low_prior_is_not_rescued() -> Result<(), Error> {
     let rec = create_record(b"read1", "5M", b"AAGAA", &[30; 5], "5", false)?;
     let flags = rec.flags();
     let p = setup_penalties();
@@ -503,7 +503,7 @@ fn snp_alt_support_with_low_prior_is_not_rescued() -> Result<()> {
 }
 
 #[test]
-fn snp_alt_support_boundary_p_variant_half_gives_zero_delta() -> Result<()> {
+fn snp_alt_support_boundary_p_variant_half_gives_zero_delta() -> Result<(), Error> {
     let rec = create_record(b"read1", "5M", b"AAGAA", &[30; 5], "5", false)?;
     let flags = rec.flags();
     let p = setup_penalties();

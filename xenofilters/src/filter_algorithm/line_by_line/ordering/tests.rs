@@ -4,11 +4,11 @@ use crate::config::Config;
 use crate::filter_algorithm::line_by_line::{core::FragmentBuffer, ordering::Decision};
 use crate::tests::{create_record, MockStream};
 use crate::LineByLine;
-use anyhow::Result;
 use noodles::sam::alignment::record::Flags;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::{smallvec, SmallVec};
 use std::cmp::Ordering;
+use crate::Error;
 
 pub(crate) fn setup_mock_streams() -> SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> {
     let stream1 = MockStream::new(
@@ -100,7 +100,7 @@ fn setup_mock_streams_observed_examples() -> SmallVec<[Box<dyn AlignmentStream<R
 }
 
 #[test]
-fn test_branch_counters_and_skipping() -> Result<()> {
+fn test_branch_counters_and_skipping() -> Result<(), Error> {
     let mut config = Config {
         discard_unmapped: true,
         skip_secondary: true,
@@ -145,7 +145,7 @@ fn test_branch_counters_and_skipping() -> Result<()> {
 }
 
 #[test]
-fn test_process_multi_stream_sync_r4() -> Result<()> {
+fn test_process_multi_stream_sync_r4() -> Result<(), Error> {
     let config = Config {
         discard_unmapped: true,
         ..Config::default()
@@ -168,7 +168,7 @@ fn test_process_multi_stream_sync_r4() -> Result<()> {
 }
 
 #[test]
-fn test_process_multi_stream_sync() -> Result<()> {
+fn test_process_multi_stream_sync() -> Result<(), Error> {
     let config = Config {
         discard_unmapped: true,
         gap_open: 6.0,
@@ -206,7 +206,7 @@ fn test_process_multi_stream_sync() -> Result<()> {
 }
 
 #[test]
-fn test_handle_ordering_logic() -> Result<()> {
+fn test_handle_ordering_logic() -> Result<(), Error> {
     let lbl_setup: LineByLine<RecordBuf> =
         LineByLine::new(Config::default(), setup_mock_streams())?;
     // Test logic in apply_ordering requires mocked AlnStream for write_record calls.
@@ -227,7 +227,7 @@ fn test_handle_ordering_logic() -> Result<()> {
 }
 
 #[test]
-fn test_fragment_finished_transitions() -> Result<()> {
+fn test_fragment_finished_transitions() -> Result<(), Error> {
     let mut lbl: LineByLine<RecordBuf> = LineByLine::new(Config::default(), setup_mock_streams())?;
     let rec = create_record(b"R1", "M10", &[], &[], "10", false)?;
     let mut best: FragmentBuffer<RecordBuf> =
@@ -244,7 +244,7 @@ fn test_fragment_finished_transitions() -> Result<()> {
 }
 
 #[test]
-fn test_handle_ordering_drain_logic() -> Result<()> {
+fn test_handle_ordering_drain_logic() -> Result<(), Error> {
     let mut lbl: LineByLine<RecordBuf> = LineByLine::new(Config::default(), setup_mock_streams())?;
     let mut best: FragmentBuffer<RecordBuf> = smallvec![
         FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0)?,
@@ -272,7 +272,7 @@ fn test_handle_ordering_drain_logic() -> Result<()> {
 }
 
 #[test]
-fn test_complex_fragment_grouping() -> Result<()> {
+fn test_complex_fragment_grouping() -> Result<(), Error> {
     let mut lbl: LineByLine<RecordBuf> = LineByLine::new(Config::default(), setup_mock_streams())?;
     let mut best: FragmentBuffer<RecordBuf> = smallvec![];
 
@@ -292,7 +292,7 @@ fn test_complex_fragment_grouping() -> Result<()> {
 }
 
 #[test]
-fn test_line_by_line_full_flow() -> Result<()> {
+fn test_line_by_line_full_flow() -> Result<(), Error> {
     let rec1 = create_record(b"R1", "10M", &[], &[], "10", false)?;
     let rec2 = create_record(b"R2", "10M", &[], &[], "10", false)?;
 
@@ -317,7 +317,7 @@ fn test_line_by_line_full_flow() -> Result<()> {
 }
 
 #[test]
-fn test_scoring_path_coverage() -> Result<()> {
+fn test_scoring_path_coverage() -> Result<(), Error> {
     let config = Config::default();
     // Mock stream needs to exist to avoid indexing panics
     let mut lbl: LineByLine<RecordBuf> = LineByLine::new(config, smallvec![])?;
@@ -335,7 +335,7 @@ fn test_scoring_path_coverage() -> Result<()> {
 }
 
 #[test]
-fn test_observed_pe_scoring1() -> Result<()> {
+fn test_observed_pe_scoring1() -> Result<(), Error> {
     let config = Config {
         discard_unmapped: true,
         gap_open: 6.0,
@@ -368,7 +368,7 @@ impl LineByLine<RecordBuf> {
 }
 
 #[test]
-fn test_ambiguous_log_threshold_conversion() -> Result<()> {
+fn test_ambiguous_log_threshold_conversion() -> Result<(), Error> {
     let mut config = Config {
         ambiguous_threshold: 0,
         ..Config::default()
@@ -400,7 +400,7 @@ fn test_ambiguous_log_threshold_conversion() -> Result<()> {
 }
 
 #[test]
-fn test_handle_ordering_quick_paths_respect_decision_tag() -> Result<()> {
+fn test_handle_ordering_quick_paths_respect_decision_tag() -> Result<(), Error> {
     let config = Config {
         add_decision_tag: true,
         ..Config::default()
@@ -425,7 +425,7 @@ fn test_handle_ordering_quick_paths_respect_decision_tag() -> Result<()> {
 }
 
 #[test]
-fn test_handle_ordering_ambiguous_when_below_threshold_and_negative_delta() -> Result<()> {
+fn test_handle_ordering_ambiguous_when_below_threshold_and_negative_delta() -> Result<(), Error> {
     let config = Config {
         add_decision_tag: true,
         ambiguous_threshold: 30, // higher than your observed delta → forces ambiguous
@@ -460,7 +460,7 @@ fn test_handle_ordering_ambiguous_when_below_threshold_and_negative_delta() -> R
 }
 
 #[test]
-fn test_handle_ordering_when_decision_tag_is_disabled() -> Result<()> {
+fn test_handle_ordering_when_decision_tag_is_disabled() -> Result<(), Error> {
     let config = Config {
         add_decision_tag: false,
         ..Config::default()

@@ -4,12 +4,12 @@
 //! Regions are stored per reference sequence (keyed by ref-id), sorted by
 //! start position, and queried via binary search.
 
-use anyhow::{anyhow, Result};
 use noodles::bed;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
+use crate::Error;
 
 /// A half-open interval `[start, end)` on a single reference sequence.
 /// Coordinates are 0-based, matching BED convention.
@@ -31,9 +31,9 @@ impl AmbiguousRegions {
     pub(crate) fn from_bed(
         path: &Path,
         name_to_id: &HashMap<String, usize>,
-    ) -> Result<Self> {
+    ) -> Result<Self, Error> {
         let file = File::open(path)
-            .map_err(|e| anyhow!("Cannot open BED file {}: {}", path.display(), e))?;
+            .map_err(|e| Error::CannotOpenBedFile { path: path.to_path_buf(), source: e })?;
         let mut reader = bed::io::Reader::<3, _>::new(BufReader::new(file));
         let mut per_ref: HashMap<usize, Vec<Region>> = HashMap::new();
 
@@ -41,23 +41,24 @@ impl AmbiguousRegions {
         loop {
             let n = reader
                 .read_record(&mut record)
-                .map_err(|e| anyhow!("BED parse error in {}: {}", path.display(), e))?;
+                .map_err(|e| Error::BedParseError{path: path.to_path_buf(), source: e})?;
             if n == 0 {
                 break;
             }
             let chrom = record.reference_sequence_name();
-            let chrom_str: String = String::try_from(chrom)?;
+            let chrom_str: String = String::try_from(chrom)
+                .map_err(|e| Error::BedInvalidChromName(e.to_string()))?;
             let id = match name_to_id.get(chrom_str.as_str()) {
                 Some(&id) => id,
                 None => continue,
             };
             let start = record
                 .feature_start()
-                .map_err(|e| anyhow!("BED start error: {}", e))?;
+                .map_err(|e| Error::BedStartError(e.to_string()))?;
             let end = record
                 .feature_end()
-                .ok_or_else(|| anyhow!("BED record missing end field"))?
-                .map_err(|e| anyhow!("BED end error: {}", e))?;
+                .ok_or(Error::BedRecordMissingEnd)?
+                .map_err(|e| Error::BedEndError(e.to_string()))?;
 
             per_ref.entry(id).or_default().push(Region {
                 start: usize::from(start),

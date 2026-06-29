@@ -2,7 +2,7 @@ use super::core::LineByLine;
 use crate::alignment::{stringify_record, Fragment, FragmentState, MdCigFlags, SimpleRec};
 use crate::filter_algorithm::line_by_line::READ_CT;
 use crate::variant::FragEvalVec;
-use anyhow::{anyhow, Result};
+use crate::Error; // Assuming your error enum lives here
 use smallvec::SmallVec;
 
 impl<R: SimpleRec> LineByLine<R> {
@@ -11,7 +11,7 @@ impl<R: SimpleRec> LineByLine<R> {
         state: &'r FragmentState<R>,
         mcfs: SmallVec<[MdCigFlags<'r>; READ_CT]>,
         aln_idx: usize,
-    ) -> Result<f64> {
+    ) -> Result<f64, Error> {
         let mut segment: SmallVec<[&R; READ_CT]> = SmallVec::new();
         let mut seg_mcfs: SmallVec<[MdCigFlags; READ_CT]> = SmallVec::new();
         let mut mcfs_opt: SmallVec<[Option<MdCigFlags>; READ_CT]> =
@@ -20,7 +20,7 @@ impl<R: SimpleRec> LineByLine<R> {
         let aln = self
             .aln
             .get(aln_idx)
-            .ok_or_else(|| anyhow!("No alignment for index {aln_idx}"))?;
+            .ok_or(Error::NoAlignmentForIndex { aln_idx })?;
         let store = aln.variant_store();
         let has_variants = store.is_some();
 
@@ -31,7 +31,7 @@ impl<R: SimpleRec> LineByLine<R> {
             let rec = &state.get_records()[idx];
             let flags = state
                 .flags(idx)
-                .ok_or_else(|| anyhow!("No flags for record index {idx} in alignment {aln_idx}"))?;
+                .ok_or(Error::NoFlagsForRecordInAlignment { idx, aln_idx })?;
 
             // Supplementary alignments contribute BOTH:
             //   1. A chimeric-junction penalty:
@@ -48,15 +48,15 @@ impl<R: SimpleRec> LineByLine<R> {
                 let tid = rec
                     .ref_seq_id()
                     .transpose()?
-                    .ok_or_else(|| anyhow!("Mapped record has no reference sequence ID"))?;
+                    .ok_or(Error::MappedRecordNoReferenceSequenceId)?;
                 let start = rec
                     .alignment_start()
                     .transpose()?
-                    .ok_or_else(|| anyhow!("Mapped record has no alignment start"))?
+                    .ok_or(Error::MappedRecordNoAlignmentStart)?
                     .get();
                 let cig_len = mcfs_opt[idx]
                     .as_ref()
-                    .ok_or_else(|| anyhow!("MdCigFlags missing for record index {idx}"))?
+                    .ok_or(Error::MdCigFlagsMissing { idx })?
                     .get_cigar()
                     .len();
                 let end = start + cig_len;
@@ -68,7 +68,7 @@ impl<R: SimpleRec> LineByLine<R> {
                 seg_mcfs.push(
                     mcfs_opt[idx]
                         .take()
-                        .ok_or_else(|| anyhow!("MdCigFlags already consumed for index {idx}"))?,
+                        .ok_or(Error::MdCigFlagsAlreadyConsumed { idx })?,
                 );
             } else if flags.is_last_segment() {
                 break;
@@ -83,16 +83,17 @@ impl<R: SimpleRec> LineByLine<R> {
         let base_score = Fragment::new(&self.penalties, segment, seg_mcfs)?
             .score(&mut self.scratch, &mut dvnt)
             .map_err(|e| {
-                anyhow!(
-                    "Error scoring fragment for alignment {aln_idx}: {}\n{}",
-                    e,
-                    state
-                        .get_records()
-                        .iter()
-                        .map(stringify_record)
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                )
+                let state_str = state
+                    .get_records()
+                    .iter()
+                    .map(stringify_record)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Error::FragmentScoringError {
+                    aln_idx,
+                    message: e.to_string(),
+                    state: state_str,
+                }
             })?;
         Ok(base_score + supplementary_penalty)
     }

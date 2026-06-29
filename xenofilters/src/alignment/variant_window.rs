@@ -4,7 +4,6 @@
 
 use crate::filter_algorithm::line_by_line::Scratch;
 use crate::penalty::Penalty;
-use anyhow::Result;
 use crate::Error;
 
 /// Geometry of how a `[ref_start, ref_end)` scoring window overlaps a
@@ -190,7 +189,7 @@ mod tests {
     // --- weighted_ref_score ---
 
     #[test]
-    fn test_weighted_ref_score_certain_variant_is_full_mismatch_penalty() -> Result<()> {
+    fn test_weighted_ref_score_certain_variant_is_full_mismatch_penalty() -> Result<(), Error> {
         let window = VariantWindow::compute(1, 6, 3, 4).unwrap();
         let score = weighted_ref_score(window, 1, 1.0, &pen(), |_| Ok(30))?;
         assert!((score - (-1.0)).abs() < 1e-12);
@@ -198,7 +197,7 @@ mod tests {
     }
 
     #[test]
-    fn test_weighted_ref_score_certain_reference_is_zero() -> Result<()> {
+    fn test_weighted_ref_score_certain_reference_is_zero() -> Result<(), Error> {
         let window = VariantWindow::compute(1, 6, 3, 4).unwrap();
         let score = weighted_ref_score(window, 1, 0.0, &pen(), |_| Ok(30))?;
         assert!(score.abs() < 1e-12);
@@ -206,7 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn test_weighted_ref_score_queries_correct_read_index() -> Result<()> {
+    fn test_weighted_ref_score_queries_correct_read_index() -> Result<(), Error> {
         let window = VariantWindow::compute(1, 6, 3, 4).unwrap();
         let mut seen = Vec::new();
         weighted_ref_score(window, 1, 0.5, &pen(), |nt_i| {
@@ -220,7 +219,7 @@ mod tests {
     // --- align_alt_to_read ---
 
     #[test]
-    fn test_align_certain_alt_match_scores_zero() -> Result<()> {
+    fn test_align_certain_alt_match_scores_zero() -> Result<(), Error> {
         let mut scratch = Scratch::new();
         let read = b"AAGAA";
         let score = align_alt_to_read(
@@ -237,7 +236,7 @@ mod tests {
     }
 
     #[test]
-    fn test_align_wrong_offset_reproduces_the_original_bug() -> Result<()> {
+    fn test_align_wrong_offset_reproduces_the_original_bug() -> Result<(), Error> {
         // Same read/allele, but offset 0 instead of 2 — this is exactly what
         // the pre-fix `nt_i_base = ref_start - seg_ref_start` produced.
         let mut scratch = Scratch::new();

@@ -3,13 +3,13 @@ use crate::config::{Config, StripReadSuffix};
 use crate::filter_algorithm::line_by_line::core::FragmentBuffer;
 use crate::tests::create_record;
 use crate::LineByLine;
-use anyhow::Result;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::smallvec;
+use crate::Error;
 
 // %s/\vmock_rec\((b".*?")/create_record(\1, "10M", &[], &[], "10", false)?/g
 #[test]
-fn test_qname_suffix_logic() -> Result<()> {
+fn test_qname_suffix_logic() -> Result<(), Error> {
     let mut config = Config {
         strip_read_suffix: StripReadSuffix::Auto,
         ..Config::default()
@@ -38,7 +38,7 @@ fn test_qname_suffix_logic() -> Result<()> {
 }
 
 #[test]
-fn test_qname_suffix_logic_variable_mode() -> Result<()> {
+fn test_qname_suffix_logic_variable_mode() -> Result<(), Error> {
     let config = Config {
         strip_read_suffix: StripReadSuffix::Variable,
         ..Config::default()

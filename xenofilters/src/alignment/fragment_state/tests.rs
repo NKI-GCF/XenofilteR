@@ -1,13 +1,13 @@
 use crate::alignment::fragment_state::FragmentState;
 use crate::tests::create_record;
-use anyhow::Result;
 use noodles::core::Position;
 use noodles::sam::alignment::record::Flags;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::{smallvec, SmallVec};
 use std::cmp::Ordering;
+use crate::Error;
 
-fn segment(qname: &[u8], flag_bits: u16, tid: usize, start: usize) -> Result<RecordBuf> {
+fn segment(qname: &[u8], flag_bits: u16, tid: usize, start: usize) -> Result<RecordBuf, Error> {
     let mut rec = create_record(qname, "5M", &[], &[], "5", false)?;
     *rec.flags_mut() = Flags::from_bits(flag_bits).unwrap();
     *rec.reference_sequence_id_mut() = Some(tid);
@@ -17,7 +17,7 @@ fn segment(qname: &[u8], flag_bits: u16, tid: usize, start: usize) -> Result<Rec
 
 // Tests ok
 #[test]
-fn test_fragment_state_multiple_records() -> Result<()> {
+fn test_fragment_state_multiple_records() -> Result<(), Error> {
     let qual = vec![37; 100];
     let rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
     let rec2 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
@@ -28,7 +28,7 @@ fn test_fragment_state_multiple_records() -> Result<()> {
     Ok(())
 }
 #[test]
-fn test_fragment_state_first_qname() -> Result<()> {
+fn test_fragment_state_first_qname() -> Result<(), Error> {
     let qual = vec![37; 100];
     let rec = create_record(b"read1", "100M", &[], &qual, "100", false)?;
     let state = FragmentState::from_record(rec, 0)?;
@@ -36,7 +36,7 @@ fn test_fragment_state_first_qname() -> Result<()> {
     Ok(())
 }
 #[test]
-fn test_fragment_state_equality() -> Result<()> {
+fn test_fragment_state_equality() -> Result<(), Error> {
     let qual = vec![37; 100];
     let rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
     let rec2 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
@@ -46,7 +46,7 @@ fn test_fragment_state_equality() -> Result<()> {
     Ok(())
 }
 #[test]
-fn test_fragment_state_partial_ord_equal_imperfects() -> Result<()> {
+fn test_fragment_state_partial_ord_equal_imperfects() -> Result<(), Error> {
     let qual = vec![37; 100];
     let rec1 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
     let rec2 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
@@ -56,7 +56,7 @@ fn test_fragment_state_partial_ord_equal_imperfects() -> Result<()> {
     Ok(())
 }
 #[test]
-fn test_fragment_state_get_nr() -> Result<()> {
+fn test_fragment_state_get_nr() -> Result<(), Error> {
     let qual = vec![37; 100];
     let rec = create_record(b"read1", "100M", &[], &qual, "100", false)?;
     let state = FragmentState::from_record(rec, 42)?;
@@ -64,7 +64,7 @@ fn test_fragment_state_get_nr() -> Result<()> {
     Ok(())
 }
 #[test]
-fn test_fragment_state_inequality() -> Result<()> {
+fn test_fragment_state_inequality() -> Result<(), Error> {
     let qual = vec![37; 100];
     let rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
     let rec2 = create_record(b"read2", "100M", &[], &qual, "100", false)?;
@@ -74,7 +74,7 @@ fn test_fragment_state_inequality() -> Result<()> {
     Ok(())
 }
 #[test]
-fn test_fragment_state_partial_ord_multiple_records_no_quick_balance() -> Result<()> {
+fn test_fragment_state_partial_ord_multiple_records_no_quick_balance() -> Result<(), Error> {
     let qual = vec![37; 100];
     let rec1 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
     let rec2 = create_record(b"read1", "100M", &[], &qual, "80T20", false)?;
@@ -86,7 +86,7 @@ fn test_fragment_state_partial_ord_multiple_records_no_quick_balance() -> Result
     Ok(())
 }
 #[test]
-fn test_fragment_state_partial_ord_no_quick_balance() -> Result<()> {
+fn test_fragment_state_partial_ord_no_quick_balance() -> Result<(), Error> {
     let qual = vec![37; 100];
     let rec1 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
     let rec2 = create_record(b"read1", "100M", &[], &qual, "80T20", false)?;
@@ -98,7 +98,7 @@ fn test_fragment_state_partial_ord_no_quick_balance() -> Result<()> {
 
 //tests fail
 #[test]
-fn test_fragment_state_order_mates_multiple_records() -> Result<()> {
+fn test_fragment_state_order_mates_multiple_records() -> Result<(), Error> {
     let qual = vec![37; 100];
     let rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
     let rec2 = create_record(b"read1", "100M", &[], &qual, "100", true)?;
@@ -110,7 +110,7 @@ fn test_fragment_state_order_mates_multiple_records() -> Result<()> {
     Ok(())
 }
 #[test]
-fn test_fragment_state_partial_ord_multiple_records() -> Result<()> {
+fn test_fragment_state_partial_ord_multiple_records() -> Result<(), Error> {
     let qual = vec![37; 100];
     let rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
     let rec2 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
@@ -125,7 +125,7 @@ fn test_fragment_state_partial_ord_multiple_records() -> Result<()> {
     Ok(())
 }
 #[test]
-fn test_fragment_state_ordering() -> Result<()> {
+fn test_fragment_state_ordering() -> Result<(), Error> {
     let qual = vec![37; 100];
     let rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
     let rec2 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
@@ -139,7 +139,7 @@ fn test_fragment_state_ordering() -> Result<()> {
     Ok(())
 }
 #[test]
-fn test_fragment_state_partial_ord_with_unmapped() -> Result<()> {
+fn test_fragment_state_partial_ord_with_unmapped() -> Result<(), Error> {
     let qual = vec![37; 100];
     let seq = vec![b'A'; 100];
     let rec1 = create_record(b"read1", "", &seq, &qual, "", false)?;
@@ -150,7 +150,7 @@ fn test_fragment_state_partial_ord_with_unmapped() -> Result<()> {
     Ok(())
 }
 #[test]
-fn test_fragment_state_partial_ord_both_unmapped() -> Result<()> {
+fn test_fragment_state_partial_ord_both_unmapped() -> Result<(), Error> {
     let qual = vec![37; 100];
     let seq = vec![b'A'; 100];
     let rec1 = create_record(b"read1", "", &seq, &qual, "", false)?;
@@ -161,7 +161,7 @@ fn test_fragment_state_partial_ord_both_unmapped() -> Result<()> {
     Ok(())
 }
 #[test]
-fn test_fragment_state_partial_ord_perfect_vs_imperfect() -> Result<()> {
+fn test_fragment_state_partial_ord_perfect_vs_imperfect() -> Result<(), Error> {
     let qual = vec![37; 100];
     let rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
     let rec2 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
@@ -175,7 +175,7 @@ fn test_fragment_state_partial_ord_perfect_vs_imperfect() -> Result<()> {
     Ok(())
 }
 #[test]
-fn test_fragment_state_partial_ord_imperfect_vs_perfect() -> Result<()> {
+fn test_fragment_state_partial_ord_imperfect_vs_perfect() -> Result<(), Error> {
     let qual = vec![37; 100];
     let rec1 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
     let rec2 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
@@ -189,7 +189,7 @@ fn test_fragment_state_partial_ord_imperfect_vs_perfect() -> Result<()> {
 }
 
 #[test]
-fn test_order_mates_sorts_by_segment_then_secondary_then_tid_then_pos() -> Result<()> {
+fn test_order_mates_sorts_by_segment_then_secondary_then_tid_then_pos() -> Result<(), Error> {
     let primary_first = segment(b"r", 0x40, 0, 100)?; // ord 0
     let secondary_first = segment(b"r", 0x40 | 0x100, 0, 200)?; // ord 1
     let primary_last = segment(b"r", 0x80, 1, 50)?; // ord 2
@@ -208,7 +208,7 @@ fn test_order_mates_sorts_by_segment_then_secondary_then_tid_then_pos() -> Resul
 }
 
 #[test]
-fn test_fragment_state_flags_boundary_and_value() -> Result<()> {
+fn test_fragment_state_flags_boundary_and_value() -> Result<(), Error> {
     // Use a non-default flag (e.g., 0x40 for first segment)
     let rec = segment(b"read", 0x40, 0, 100)?;
     let state = FragmentState::from_record(rec, 0)?;
@@ -222,7 +222,7 @@ fn test_fragment_state_flags_boundary_and_value() -> Result<()> {
 }
 
 #[test]
-fn test_order_mates_ord_math_isolation() -> Result<()> {
+fn test_order_mates_ord_math_isolation() -> Result<(), Error> {
     // Record A: is_last_segment = false, is_secondary = true -> valid ord = 1
     // We give it a higher tid/pos so if ord ties under mutation, it sorts incorrectly.
     let rec_a = segment(b"r", 0x100, 1, 500)?;
@@ -244,7 +244,7 @@ fn test_order_mates_ord_math_isolation() -> Result<()> {
 }
 
 #[test]
-fn test_order_mates_reverse_complement_pos_math() -> Result<()> {
+fn test_order_mates_reverse_complement_pos_math() -> Result<(), Error> {
     // We need values where (start1 + len1 < start2 + len2) BUT (start1 * len1 > start2 * len2)
     // Record 1: start = 5, cigar ops len = 5 ("1M1M1M1M1M") -> true pos = 10, mutated pos = 25
     let mut rec1 = create_record(b"r", "1M1M1M1M1M", &[], &[], "5", false)?;

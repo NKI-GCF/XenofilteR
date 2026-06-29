@@ -138,8 +138,11 @@ pub(crate) enum Error {
     #[error("Missing GT tag or not an integer")]
     MissingOrInvalidGtTag,
 
-    //#[error("BED parse error in {path}: {source}", path = path.display())]
-    //BedParseError { path: PathBuf, source: String },
+    #[error("BED parse error in {path}: {source}", path = path.display())]
+    BedParseError { path: PathBuf, source: std::io::Error },
+
+    #[error("Invalid chromosome name {0}")]
+    BedInvalidChromName(String),
 
     #[error("BED start error: {0}")]
     BedStartError(String),
