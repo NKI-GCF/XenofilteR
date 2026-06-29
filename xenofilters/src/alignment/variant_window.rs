@@ -5,6 +5,7 @@
 use crate::filter_algorithm::line_by_line::Scratch;
 use crate::penalty::Penalty;
 use anyhow::Result;
+use crate::Error;
 
 /// Geometry of how a `[ref_start, ref_end)` scoring window overlaps a
 /// candidate variant's reference span `[vnt_start, vnt_ref_end)`.
@@ -53,8 +54,8 @@ pub(crate) fn weighted_ref_score(
     seg_ref_start: usize,
     p_variant: f64,
     pen: &Penalty,
-    mut quality_at: impl FnMut(usize) -> Result<usize>,
-) -> Result<f64> {
+    mut quality_at: impl FnMut(usize) -> Result<usize, Error>,
+) -> Result<f64, Error> {
     let read_offset = window.read_offset(seg_ref_start);
     let mut score = 0.0;
     for j in 0..window.ref_len {
@@ -80,9 +81,9 @@ pub(crate) fn align_alt_to_read(
     ref_len: usize,
     p_variant: f64,
     pen: &Penalty,
-    read_base_and_quality: impl Fn(usize) -> Result<(u8, usize)>,
+    read_base_and_quality: impl Fn(usize) -> Result<(u8, usize), Error>,
     scratch: &mut Scratch,
-) -> Result<f64> {
+) -> Result<f64, Error> {
     let n = alt.len();
     let m = n.max(ref_len);
 

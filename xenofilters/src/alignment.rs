@@ -1,4 +1,3 @@
-mod errors;
 mod fragment;
 mod fragment_state;
 mod md_cig_flags;
@@ -7,7 +6,6 @@ pub(crate) mod pre_assess;
 mod read_profile; // private — used only by pre_assess
 mod variant_window;
 
-pub(crate) use errors::AlignmentError;
 pub(crate) use fragment::{Fragment, SimpleRec};
 pub(crate) use fragment_state::FragmentState;
 pub(crate) use md_cig_flags::MdCigFlags;

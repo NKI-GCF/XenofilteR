@@ -1,13 +1,13 @@
 use crate::alignment::{align_alt_to_read, weighted_ref_score, MdCigFlags, VariantWindow};
-use crate::alignment::{AlignmentError, BaseOp, ScoreOpIter};
+use crate::alignment::{BaseOp, ScoreOpIter};
 use crate::filter_algorithm::line_by_line::{Scratch, READ_CT};
 use crate::penalty::{Penalty, MAX_Q};
 use crate::variant::{Eval, FragEvalVec, VNT_CT};
-use anyhow::{anyhow, Result};
 use noodles::sam::alignment::Record;
 use noodles::sam::alignment::RecordBuf;
 use noodles::sam::Header;
 use smallvec::SmallVec;
+use crate::Error;
 
 pub(crate) struct Fragment<'r, R> {
     pen: &'r Penalty,
@@ -108,7 +108,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         pen: &'r Penalty,
         seg: SmallVec<[&'r R; READ_CT]>,
         md_cig_flags: SmallVec<[MdCigFlags<'r>; READ_CT]>,
-    ) -> Result<Self, AlignmentError> {
+    ) -> Result<Self, Error> {
         let seg_start: SmallVec<[usize; READ_CT]> = seg
             .iter()
             .map(|r| {
@@ -132,7 +132,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         &mut self,
         scratch: &mut Scratch,
         dvnt: &mut FragEvalVec<'v>,
-    ) -> Result<f64, AlignmentError> {
+    ) -> Result<f64, Error> {
         // Variants fully covered mid-scan get moved here (see
         // evaluate_variants_in_window) so they aren't re-processed/double-counted
         // by later windows in the same segment, but still reach wis_max_rescue_delta.
@@ -169,7 +169,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         dvnt: &mut FragEvalVec<'v>,
         finished: &mut FragEvalVec<'v>,
         i: usize,
-    ) -> Result<f64> {
+    ) -> Result<f64, Error> {
         let mut score = 0.0;
 
         for prior_seg_i in 0..self.seg_i {
@@ -261,7 +261,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         dvnt: &mut FragEvalVec<'v>,
         finished: &mut FragEvalVec<'v>,
         ctx: WindowCtx,
-    ) -> Result<()> {
+    ) -> Result<(), Error> {
         let mut i = 0;
         while i < dvnt[ctx.dvnt_i].len() && dvnt[ctx.dvnt_i][i].start() < ctx.ref_end {
             if let Some((weighted_ref_score, alt_score)) =
@@ -299,7 +299,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         scratch: &mut Scratch,
         dvnt: &FragEvalVec<'v>,
         ctx: VariantCtx,
-    ) -> Result<Option<(f64, f64)>> {
+    ) -> Result<Option<(f64, f64)>, Error> {
         let vnt_eval = &dvnt[ctx.dvnt_i][ctx.dvnt_j];
         let window = match VariantWindow::compute(
             ctx.ref_start,
@@ -388,11 +388,11 @@ impl<'r, R> Fragment<'r, R>
 where
     R: Record + SimpleRec,
 {
-    fn q(&self, seg_i: usize, nt_i: usize) -> Result<usize> {
+    fn q(&self, seg_i: usize, nt_i: usize) -> Result<usize, Error> {
         self.seg[seg_i]
             .quality_at(nt_i)
             .map(|q| (q as usize).min(MAX_Q - 1))
-            .ok_or_else(|| anyhow!("Quality score index {nt_i} out of bounds for segment {seg_i}"))
+            .ok_or_else(|| Error::QualityScoreOutOfBounds{ nt_i, seg_i})
     }
 }
 

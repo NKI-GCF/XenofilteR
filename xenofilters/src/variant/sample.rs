@@ -1,8 +1,8 @@
 use crate::variant::Variant;
-use anyhow::{Result, anyhow, ensure};
 use noodles::bcf::record::Record;
 use noodles::vcf::variant::record::samples::{Sample as NoodlesSample, series::Value};
 use noodles::vcf::Header;
+use crate::Error;
 
 // FIXME, a variant could have multiple ALT alleles, and the GT could be 0/2, so we should ideally
 // have one Sample per ALT allele, and check if each ALT allele is present in the GT. For
@@ -38,21 +38,23 @@ impl Variant for Sample {
 }
 
 /// Example parser for Sample-Specific VCF (checks FORMAT tags "GT" and "GQ")
-pub(crate) fn parse_sample_record(record: &mut Record, header: &Header) -> Result<Vec<Sample>> {
+pub(crate) fn parse_sample_record(record: &mut Record, header: &Header) -> Result<Vec<Sample>, Error> {
     // Genotype representation as a vector of GenotypeAllele.
     // 1. Get GT and GQ from FORMAT
     let samples = record.samples()?;
     let mut it = samples.iter();
-    let sample = it.next().ok_or_else(|| anyhow!("No sample data in record"))?;
-    ensure!(it.next().is_none(), "Multiple samples not supported");
+    let sample = it.next().ok_or(Error::NoSampleData)?;
+    if it.next().is_some() {
+        return Err(Error::MultipleSamplesNotSupported);
+    }
     let gq = match sample.get(header, "GQ").transpose()? {
         Some(Some(Value::Integer(gq))) => gq,
-        _ => return Err(anyhow!("Missing GQ tag or not an integer")),
+        _ => return Err(Error::MissingOrInvalidGqTag),
     };
 
     let gt = match sample.get(header, "GT").transpose()? {
         Some(Some(Value::Integer(gt))) => gt,
-        _ => return Err(anyhow!("Missing GT tag or not an integer")),
+        _ => return Err(Error::MissingOrInvalidGtTag),
     };
 
     let alleles = record.alternate_bases();

@@ -1,11 +1,11 @@
 // src/variant/store.rs  (diff: StoreTrait gains Send + Sync supertraits)
 use crate::variant::{Variant, Eval};
-use anyhow::{Result, anyhow};
 use noodles::bcf::{record::Record, io::reader::Builder};
 use std::path::Path;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use noodles::vcf::Header;
+use crate::Error;
 
 pub(crate) const VNT_CT: usize = 4;
 
@@ -42,10 +42,10 @@ pub(crate) struct Store<V: Variant> {
 impl<V: Variant> Store<V> {
     pub(crate) fn new(
         f: &Path,
-        parser: impl Fn(&mut Record, &Header) -> Result<Vec<V>>,
-    ) -> Result<Store<V>> {
+        parser: impl Fn(&mut Record, &Header) -> Result<Vec<V>, Error>,
+    ) -> Result<Store<V>, Error> {
         let mut bcf_reader = Builder::default().build_from_path(f)
-            .map_err(|e| anyhow!("Failed to open VCF/BCF {}: {}", f.display(), e))?;
+            .map_err(|e| Error::FailedToOpenVcfBcf{path: f.to_path_buf(), source: e})?;
 
         let mut per_chr = HashMap::new();
         let mut max_variant_len: usize = 1;

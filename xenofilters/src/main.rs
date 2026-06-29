@@ -12,6 +12,7 @@ mod filter_algorithm;
 mod penalty;
 mod region;
 mod variant;
+mod error;
 
 use aln_stream::{AlignmentStream, AlnStream};
 use anyhow::{ensure, Result};
@@ -28,6 +29,7 @@ use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
 use std::path::Path;
 use tracing_subscriber::{fmt, EnvFilter};
+pub(crate) use error::Error;
 
 fn get_log_level(verbose_count: u8) -> &'static str {
     match verbose_count {

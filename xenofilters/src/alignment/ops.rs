@@ -1,4 +1,4 @@
-use crate::alignment::AlignmentError;
+use crate::Error;
 use crate::alignment::MdCigFlags;
 use noodles::sam::alignment::record::cigar::op::{Kind, Op};
 
@@ -35,7 +35,7 @@ impl<'a> ScoreOpIter<'a> {
 }
 
 impl<'a> Iterator for ScoreOpIter<'a> {
-    type Item = Result<BaseOp, AlignmentError>;
+    type Item = Result<BaseOp, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         // Drain remaining bases of the current M/X/= CIGAR op.
@@ -63,7 +63,7 @@ impl<'a> Iterator for ScoreOpIter<'a> {
 }
 
 impl<'a> ScoreOpIter<'a> {
-    fn next_md_base(&mut self) -> Result<BaseOp, AlignmentError> {
+    fn next_md_base(&mut self) -> Result<BaseOp, Error> {
         if self.md_match_remain == 0 {
             let md = self.md.get(self.md_at);
             self.md_at += 1;
@@ -82,7 +82,7 @@ impl<'a> ScoreOpIter<'a> {
                     self.md_match_remain = num.saturating_sub(1);
                     Ok(BaseOp::Match)
                 }
-                other => Err(AlignmentError::MdCigMis(None, other.copied())),
+                other => Err(Error::MdCigMis(None, other.copied())),
             }
         } else {
             self.md_match_remain -= 1;
@@ -90,7 +90,7 @@ impl<'a> ScoreOpIter<'a> {
         }
     }
 
-    fn skip_md_deletion(&mut self, cig_remain: usize) -> Result<(), AlignmentError> {
+    fn skip_md_deletion(&mut self, cig_remain: usize) -> Result<(), Error> {
         match self.md.get(self.md_at) {
             Some(b'^') => {
                 self.md_at += 1;
@@ -104,10 +104,10 @@ impl<'a> ScoreOpIter<'a> {
                 if self.md_at - md_start == cig_remain {
                     Ok(())
                 } else {
-                    Err(AlignmentError::MdCigMis(None, None))
+                    Err(Error::MdCigMis(None, None))
                 }
             }
-            other => Err(AlignmentError::MdCigMis(None, other.copied())),
+            other => Err(Error::MdCigMis(None, other.copied())),
         }
     }
 }

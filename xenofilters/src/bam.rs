@@ -69,7 +69,6 @@ impl OutputMode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use noodles::sam::{alignment::record_buf::RecordBuf, Header};
 
     #[test]
     fn test_output_mode_write_commits_to_file() -> Result<()> {
