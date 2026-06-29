@@ -6,12 +6,12 @@ use crate::alignment::SimpleRec;
 use crate::aln_stream::AlignmentStream;
 use crate::filter_algorithm::hash_lookup::ScoredFragment;
 use crate::filter_algorithm::line_by_line::ordering::Decision;
-use anyhow::Result;
 use noodles::sam::alignment::record::data::field::Tag;
 use noodles::sam::alignment::record_buf::data::field::Value;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::SmallVec;
 use std::collections::BTreeMap;
+use crate::Error;
 
 // CONCURRENCY STUB — HashLookup pass-2 seek-IO thread
 //
@@ -54,7 +54,7 @@ impl StagedOutput {
         aln: &mut SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
         routing_counters: &mut SmallVec<[u64; 8]>,
         add_decision_tag: bool,
-    ) -> Result<()> {
+    ) -> Result<(), Error> {
         while let Some(&min_key) = self.pending.keys().next() {
             if min_key != self.next_emit {
                 break;
@@ -71,7 +71,7 @@ impl StagedOutput {
         aln: &mut SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
         routing_counters: &mut SmallVec<[u64; 8]>,
         add_decision_tag: bool,
-    ) -> Result<()> {
+    ) -> Result<(), Error> {
         let keys: Vec<u64> = self.pending.keys().copied().collect();
         for k in keys {
             let sf = self.pending.remove(&k).unwrap();
@@ -86,7 +86,7 @@ fn emit_scored<R: SimpleRec>(
     aln: &mut SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
     routing_counters: &mut SmallVec<[u64; 8]>,
     add_decision_tag: bool,
-) -> Result<()> {
+) -> Result<(), Error> {
     if sf.is_ambiguous {
         for (nr, voffset) in sf.winner_offsets.iter().chain(sf.loser_offsets.iter()) {
             let rec = fetch(aln, *nr, *voffset)?;
@@ -140,9 +140,9 @@ fn fetch<R: SimpleRec>(
     aln: &mut SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
     nr: usize,
     virtual_offset: u64,
-) -> Result<RecordBuf> {
+) -> Result<RecordBuf, Error> {
     aln.get_mut(nr)
-        .ok_or_else(|| anyhow::anyhow!("No stream {nr}"))?
+        .ok_or(Error::NoStream{ nr})?
         .fetch_by_virtual_offset(virtual_offset)
 }
 

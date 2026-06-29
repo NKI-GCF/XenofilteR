@@ -42,7 +42,6 @@ use crate::alignment::{pre_assess_alignments, PreAssessResult};
 use crate::alignment::{FragmentState, MdCigFlags, SimpleRec};
 use crate::filter_algorithm::line_by_line::{READ_CT, ChimericDecision, detect_chimeric_event};
 use crate::variant::StoreTrait;
-use anyhow::{anyhow, ensure, Result};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use noodles::sam::alignment::RecordBuf;
 use smallvec::{smallvec, SmallVec};
@@ -50,6 +49,7 @@ use std::cmp::Ordering;
 use std::f64::consts::LN_10;
 use std::sync::Arc;
 use std::thread;
+use crate::Error;
 
 // -- Public decision type ------------------------------------------------------
 
@@ -189,7 +189,7 @@ fn score_candidate_owned(
     store: Option<&dyn StoreTrait>,
     ctx: &ScoringContext,
     scratch: &mut Scratch,
-) -> Result<f64> {
+) -> Result<f64, Error> {
     use crate::alignment::{stringify_record, Fragment};
     use crate::variant::FragEvalVec;
 
@@ -208,7 +208,7 @@ fn score_candidate_owned(
     for idx in state.order_mates() {
         let flags = state
             .flags(idx)
-            .ok_or_else(|| anyhow!("No flags for record index {idx}"))?;
+            .ok_or(Error::NoFlagsForRecordIndex{idx})?;
 
         if flags.is_secondary() {
             continue;
@@ -228,14 +228,14 @@ fn score_candidate_owned(
             let tid = rec
                 .ref_seq_id()
                 .transpose()?
-                .ok_or_else(|| anyhow!("Mapped record has no reference sequence ID"))?;
+                .ok_or(Error::MappedRecordNoReferenceSequenceId)?;
             let start = rec
                 .alignment_start()
-                .ok_or_else(|| anyhow!("Mapped record has no alignment start"))?
+                .ok_or(Error::MappedRecordNoAlignmentStart)?
                 .get();
             let cig_len = mcfs_opt[idx]
                 .as_ref()
-                .ok_or_else(|| anyhow!("MdCigFlags missing for index {idx}"))?
+                .ok_or(Error::MdCigFlagsMissing{idx})?
                 .get_cigar()
                 .len();
             // store is Some here (has_variants == true).
@@ -250,7 +250,7 @@ fn score_candidate_owned(
         seg_mcfs.push(
             mcfs_opt[idx]
                 .take()
-                .ok_or_else(|| anyhow!("MdCigFlags already consumed for index {idx}"))?,
+                .ok_or(Error::MdCigFlagsAlreadyConsumed {idx})?,
         );
     }
 
@@ -260,17 +260,14 @@ fn score_candidate_owned(
 
     let base_score = Fragment::new(&ctx.penalties, segment, seg_mcfs)?
         .score(scratch, &mut dvnt)
-        .map_err(|e| {
-            anyhow!(
-                "Scoring error: {e}\n{}",
-                state
+        .map_err(|e| Error::ScoringError{message: e.to_string(), 
+                state: state
                     .get_records()
                     .iter()
                     .map(stringify_record)
                     .collect::<Vec<_>>()
                     .join("\n")
-            )
-        })?;
+            })?;
     Ok(base_score + supplementary_penalty)
 }
 
@@ -332,7 +329,7 @@ fn apply_ordering_owned(
 
 impl<R: SimpleRec> LineByLine<R> {
     /// Original single-threaded process loop.
-    pub(crate) fn process_sequential(&mut self) -> Result<()> {
+    pub(crate) fn process_sequential(&mut self) -> Result<(), Error> {
         let mut best: FragmentBuffer<R> = smallvec![];
         let mut i = 0;
 
@@ -407,10 +404,9 @@ impl<R: SimpleRec> LineByLine<R> {
         while i > 0 {
             i -= 1;
             self.print_counters(i);
-            ensure!(
-                self.aln[i].next_rec()?.is_none(),
-                "alignment {i} still has reads"
-            );
+            if self.aln[i].next_rec()?.is_some() {
+                return Err(Error::AlignmentStillHasReads{i});
+            }
         }
         Ok(())
     }
@@ -421,7 +417,7 @@ impl<R: SimpleRec> LineByLine<R> {
         state_b: &'b FragmentState<R>,
         mcfs1: SmallVec<[MdCigFlags<'b>; READ_CT]>,
         mcfs2: SmallVec<[MdCigFlags<'b>; READ_CT]>,
-    ) -> Result<(f64, f64, f64)> {
+    ) -> Result<(f64, f64, f64), Error> {
         let s1 = self.score_candidate(state_a, mcfs1, state_a.get_nr())?;
         let s1_vd = self.scratch.last_variant_delta;
         let s2 = self.score_candidate(state_b, mcfs2, state_b.get_nr())?;
@@ -429,7 +425,7 @@ impl<R: SimpleRec> LineByLine<R> {
         Ok((s1 - s2, s1_vd, s2_vd))
     }
 
-    fn resolve(&mut self, best: &FragmentBuffer<R>) -> Result<Resolution> {
+    fn resolve(&mut self, best: &FragmentBuffer<R>) -> Result<Resolution, Error> {
         debug_assert!(best.len() >= 2, "resolve() requires at least 2 candidates");
         // Always compare the current leader (best[0]) against the next
         // challenger (best[1]).  The tournament loop in process_sequential
@@ -458,7 +454,7 @@ impl<R: SimpleRec> LineByLine<R> {
         mut delta: f64,
         s1_vd: f64,
         s2_vd: f64,
-    ) -> Result<Option<Decision>> {
+    ) -> Result<Option<Decision>, Error> {
         match delta {
             d if d > self.ambiguous_log_threshold => {
                 self.discard_at(best, 1)?; // best[0] wins; discard challenger
@@ -490,7 +486,7 @@ impl<R: SimpleRec> LineByLine<R> {
 
     /// Emit stream at position `idx` in `best` as filtered output and remove it.
     /// O(N) shift; N ≤ MAX_STREAMS = 32 so this is acceptable.
-    fn discard_at(&mut self, best: &mut FragmentBuffer<R>, idx: usize) -> Result<()> {
+    fn discard_at(&mut self, best: &mut FragmentBuffer<R>, idx: usize) -> Result<(), Error> {
         let mut loser = best.remove(idx);
         let nr = loser.get_nr();
         loser.drain_records().try_for_each(|r| {
@@ -502,7 +498,7 @@ impl<R: SimpleRec> LineByLine<R> {
         &mut self,
         best: &mut FragmentBuffer<R>,
         ord: Ordering,
-    ) -> Result<Option<Decision>> {
+    ) -> Result<Option<Decision>, Error> {
         match ord {
             Ordering::Greater => {
                 // best[0] (current leader) beats best[1] (current challenger).
@@ -529,11 +525,11 @@ impl<R: SimpleRec> LineByLine<R> {
         i: usize,
         rec: R,
         best: &mut FragmentBuffer<R>,
-    ) -> Result<bool> {
+    ) -> Result<bool, Error> {
         if !(self.is_secondary_skipped)(&rec)? {
             let name = rec
                 .name()
-                .ok_or_else(|| anyhow!("Record has no read name"))?;
+                .ok_or(Error::RecordHasNoReadName)?;
             if let Some(new_readname) = (self.is_new_qname)(best, name.as_ref()) {
                 if new_readname {
                     #[cfg(test)]
@@ -560,7 +556,7 @@ impl<R: SimpleRec> LineByLine<R> {
         &mut self,
         best: &mut FragmentBuffer<R>,
         decision: Option<Decision>,
-    ) -> Result<()> {
+    ) -> Result<(), Error> {
         let best_state = (best.len() == 1).then_some(true);
         best.drain(..).try_for_each(|mut b| {
             let nr = b.get_nr();
@@ -573,7 +569,7 @@ impl<R: SimpleRec> LineByLine<R> {
                     .aln
                     .get(nr)
                     .map(|a| a.header())
-                    .ok_or_else(|| anyhow!("No alignment for index {nr}"))?;
+                    .ok_or(Error::NoAlignmentForIndex{aln_idx: nr})?;
                 let mut rb = RecordBuf::try_from_alignment_record(header, &r)?;
                 match decision {
                     Some(Decision::PhredConfidence(d)) => self.add_aux_tags(&mut rb, b"XF", d)?,
@@ -595,7 +591,7 @@ impl LineByLine<RecordBuf> {
     /// atomic increment per stream) before spawning workers, giving every
     /// worker full variant-rescue capability with zero unsafe code and zero
     /// extra allocation.
-    pub(crate) fn process_parallel(&mut self) -> Result<()> {
+    pub(crate) fn process_parallel(&mut self) -> Result<(), Error> {
         let n = self.score_threads;
         let cap = n * 2; // bounded channel capacity — natural backpressure
 
@@ -666,7 +662,7 @@ impl LineByLine<RecordBuf> {
         result_rx: Receiver<ScoredFragment>,
         ctx: ScoringContext,
         stores: SmallVec<[Option<Arc<dyn StoreTrait>>; 2]>,
-    ) -> Result<()> {
+    ) -> Result<(), Error> {
         let mut best: FragmentBuffer<RecordBuf> = smallvec![];
         let mut i = 0;
 
@@ -717,14 +713,14 @@ impl LineByLine<RecordBuf> {
                             // then block until the channel has space.
                             match result_rx.recv() {
                                 Ok(sf) => self.write_scored(sf)?,
-                                Err(_) => return Err(anyhow!("Scorer worker exited unexpectedly")),
+                                Err(_) => return Err(Error::ScorerWorkerExited),
                             }
                             work_tx
                                 .send(bundle)
-                                .map_err(|_| anyhow!("Work channel closed unexpectedly"))?;
+                                .map_err(|_| Error::WorkChannelClosed)?;
                         }
                         Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
-                            return Err(anyhow!("All scorer workers exited unexpectedly"))
+                            return Err(Error::AllScorerWorkersExited)
                         }
                     }
 
@@ -734,7 +730,7 @@ impl LineByLine<RecordBuf> {
                             Ok(sf) => self.write_scored(sf)?,
                             Err(crossbeam_channel::TryRecvError::Empty) => break,
                             Err(crossbeam_channel::TryRecvError::Disconnected) => {
-                                return Err(anyhow!("Scorer workers exited unexpectedly"))
+                                return Err(Error::ScorerWorkerExited)
                             }
                         }
                     }
@@ -754,16 +750,15 @@ impl LineByLine<RecordBuf> {
         while j > 0 {
             j -= 1;
             self.print_counters(j);
-            ensure!(
-                self.aln[j].next_rec()?.is_none(),
-                "alignment {j} still has reads after parallel processing"
-            );
+            if self.aln[j].next_rec()?.is_some() {
+                return Err(Error::AlignmentStillHasReadsAfterParallelProcessing{j});
+            }
         }
         Ok(())
     }
 
     /// Write a pre-scored fragment through the appropriate output stream(s).
-    fn write_scored(&mut self, sf: ScoredFragment) -> Result<()> {
+    fn write_scored(&mut self, sf: ScoredFragment) -> Result<(), Error> {
         let ScoredFragment { mut best, decision } = sf;
         let best_state = (best.len() == 1).then_some(true);
 

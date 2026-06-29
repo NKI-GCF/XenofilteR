@@ -2,12 +2,12 @@ mod format;
 mod io;
 mod merged_output;
 
-use anyhow::Result;
 pub(crate) use format::BamFormat;
 pub(crate) use io::{out_from_file, path_unicode_ok, BamOutput, MergedOutput};
 pub(crate) use merged_output::{expand_header, rewrite_rg, SUFFIX_AMBIGUOUS, SUFFIX_FILTERED};
 use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::Header;
+use crate::Error;
 
 pub(crate) enum OutputMode {
     /// Separate files for winners / discarded / ambiguous (original behaviour).
@@ -32,7 +32,7 @@ impl OutputMode {
         mut rec: RecordBuf,
         is_best: Option<bool>,
         header: &Header,
-    ) -> Result<()> {
+    ) -> Result<(), Error> {
         match self {
             OutputMode::MultiFile {
                 output,
@@ -71,7 +71,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_output_mode_write_commits_to_file() -> Result<()> {
+    fn test_output_mode_write_commits_to_file() -> Result<(), Error> {
         let temp_path =
             std::env::temp_dir().join(format!("test_bam_write_{}.bam", std::process::id()));
         let header = Header::default();

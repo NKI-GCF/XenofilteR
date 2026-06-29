@@ -1,67 +1,115 @@
 //! Chimeric (cross-species) fragment detection and routing.
 //!
-//! # What is a chimeric fragment?
+//! # Two detection phases
 //!
-//! In paired-end sequencing of tissues harbouring viral integration (e.g. HPV),
-//! a read pair that spans an integration breakpoint has one mate aligning to the
-//! host genome and the other aligning to the viral genome.  Neither mate
-//! maps well to the other species' reference, so the normal scoring cascade would
-//! call the fragment ambiguous or discard one stream.
+//! ## Phase 1 — Mate-split (paired-end only)
 //!
-//! Xenofilter detects this as a **chimeric fragment** when:
-//!  - The two streams form a configured `--chimeric-pairs A:B` pair.
-//!  - Stream A has at least one mapped primary segment.
-//!  - Stream B has at least one mapped primary segment.
-//!  - The *sets of mapped segment identifiers* (read 1 / read 2) are disjoint:
-//!    no mate maps well in *both* streams simultaneously.
-//!
-//! # What happens to chimeric fragments?
-//!
-//! Both streams are treated as "winners" for their respective mapped mates:
-//!  - Stream A's records are written to stream A's assigned output.
-//!  - Stream B's records are written to stream B's assigned output.
-//!  - An `XC:Z:<other_stream_label>` aux tag is added to every written record.
-//!  - Streams not involved in the chimeric pair compete in the normal tournament
-//!    and are discarded when they lose.
-//!
-//! # Single-end data
-//!
-//! Chimeric detection requires paired-end reads; `is_segmented()` must be true
-//! for at least one record in each `FragmentState`.  Single-end reads that span
-//! an integration breakpoint appear as supplementary alignments and are handled
-//! by the supplementary structural penalty already applied in Tier 3.
-//!
-//! # Three-stream example (HPV + human tissue xenografted in mouse)
+//! Different mates map to different streams with disjoint segment identifiers:
 //!
 //! ```text
-//! --chimeric-pairs 0:1          human ↔ HPV  may be chimeric
-//! stream 2 (mouse)              competes normally for non-chimeric fragments
+//!   Human stream  : read1 mapped  (0x40)
+//!   HPV stream    : read2 mapped  (0x80)
+//!   → disjoint  →  chimeric
 //! ```
 //!
-//! If a fragment has read1 → human (0) and read2 → HPV (1):
-//!   - Chimeric event detected for pair [0,1].
-//!   - Stream 0 records → human output with `XC:Z:hpv`.
-//!   - Stream 1 records → HPV output with `XC:Z:human`.
-//!   - Stream 2 (mouse) records → mouse discarded output.
+//! ## Phase 2 — Read-split (single-end or paired-end)
+//!
+//! The **same** mate appears as a primary alignment in **both** streams, but
+//! with complementary soft-clip patterns that together cover the full read:
+//!
+//! ```text
+//!   Human stream  : read1 primary  25M25S   mapped read range [0,  25)
+//!   HPV stream    : read1 primary  25S25M   mapped read range [25, 50)
+//!   → non-overlapping union ≈ full read  →  split-read chimeric
+//! ```
+//!
+//! # False-positive rejection
+//!
+//! Aligners produce a **supplementary** alignment of the HPV portion of read1
+//! on the human reference.  This supplementary is a false positive: HPV sequence
+//! aligns poorly to human and its MD mismatch count will be high.  We compare:
+//!
+//! - `mismatches(stream_A_supplementary)` — HPV bases on human reference
+//! - `mismatches(stream_B_primary)`        — HPV bases on HPV reference
+//!
+//! If the supplementary is *better* (fewer mismatches) than stream B's primary,
+//! the split is likely a repetitive-sequence artefact and we do not call chimeric.
+//!
+//! # Three-stream example
+//!
+//! Human (0) + HPV (1) + Mouse (2), `--chimeric-pairs 0:1`:
+//!
+//! ```text
+//! Fragment with HPV-integration breakpoint:
+//!   read1 — 5′ 25 bp → human primary  +  HPV supplementary (false positive)
+//!         — 3′ 25 bp → HPV primary    (after read-split detection)
+//!   read2 — entirely → HPV primary
+//!
+//! Outcome:
+//!   human output  : read1 primary  tagged XC:Z:hpv
+//!                   read1 supp     tagged XC:Z:hpv  (false positive; flag 0x800)
+//!   hpv output    : read1 primary  tagged XC:Z:human
+//!                   read2 primary  tagged XC:Z:human
+//!   mouse output  : all records    → discarded output (normal tournament)
+//! ```
 
 use crate::alignment::{FragmentState, SimpleRec};
 use crate::filter_algorithm::line_by_line::core::FragmentBuffer;
+use noodles::sam::alignment::record::{
+    data::field::{Tag, Value},
+    cigar::op::Kind,
+    Flags,
+};
 use smallvec::SmallVec;
+
+// ---------------------------------------------------------------------------
+// ChimericKind
+// ---------------------------------------------------------------------------
+
+/// How the chimeric event was detected.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ChimericKind {
+    /// Different mates map to different streams; segment identifiers are disjoint.
+    MateSplit,
+
+    /// The same read spans a breakpoint: its aligned positions are split across
+    /// two streams with complementary soft-clip patterns.
+    ReadSplit {
+        /// SAM flags segment identifier of the breakpoint-spanning read:
+        /// `0x40` = read 1, `0x80` = read 2, `0x00` = single-end.
+        read_seg_id: u8,
+    },
+}
+
+/// Outcome of `detect_chimeric_event`.
+#[derive(Debug)]
+pub(crate) enum ChimericDecision {
+    /// A chimeric event was detected across the two nominated streams.
+    Chimeric {
+        stream_a: usize,
+        stream_b: usize,
+        kind:     ChimericKind,
+    },
+    /// No chimeric event; proceed with the normal tournament cascade.
+    Normal,
+}
 
 // ---------------------------------------------------------------------------
 // Segment-identity helpers
 // ---------------------------------------------------------------------------
 
-/// Returns the set of *segment identifiers* for which a primary, mapped record
-/// exists in `state`.
-///
-/// Segment identifier encoding:
-///  - `0x40`  = first segment in template (read 1)
-///  - `0x80`  = last  segment in template (read 2)
-///  - `0x00`  = single-end (neither flag set)
-///
-/// Secondary and supplementary records are excluded; they do not represent
-/// independent mate alignments.
+/// Encode the segment role of a record as a single byte:
+/// `0x40` = first segment (read 1), `0x80` = last segment (read 2),
+/// `0x00` = single-end or unknown.
+fn segment_id(flags: &Flags) -> u8 {
+    match (flags.is_first_segment(), flags.is_last_segment()) {
+        (true,  _    ) => 0x40,
+        (false, true ) => 0x80,
+        (false, false) => 0x00,
+    }
+}
+
+/// Collect segment identifiers for which a **primary, mapped** record exists.
 fn mapped_segment_ids<R: SimpleRec>(state: &FragmentState<R>) -> SmallVec<[u8; 2]> {
     state
         .get_records()
@@ -71,52 +119,220 @@ fn mapped_segment_ids<R: SimpleRec>(state: &FragmentState<R>) -> SmallVec<[u8; 2
             if f.is_unmapped() || f.is_secondary() || f.is_supplementary() {
                 return None;
             }
-            // Encode which segment this primary record represents.
-            let seg_id: u8 = match (f.is_first_segment(), f.is_last_segment()) {
-                (true,  _)     => 0x40,
-                (false, true)  => 0x80,
-                (false, false) => 0x00,  // single-end
-            };
-            Some(seg_id)
+            Some(segment_id(&f))
         })
         .collect()
 }
 
 // ---------------------------------------------------------------------------
-// ChimericDecision
+// Read-coordinate geometry
 // ---------------------------------------------------------------------------
 
-/// Outcome of `detect_chimeric_event`.
-#[derive(Debug)]
-pub(crate) enum ChimericDecision {
-    /// The fragment spans a species boundary: mates split across these two streams.
-    ///
-    /// Both streams' records should be written as winners with an `XC:Z:` tag.
-    /// Streams not in the pair compete normally and are discarded when they lose.
-    Chimeric {
-        /// First (lower-index) stream in the detected pair.
-        stream_a: usize,
-        /// Second (higher-index) stream in the detected pair.
-        stream_b: usize,
-    },
-    /// No chimeric event detected; proceed with the normal tournament cascade.
-    Normal,
+/// Return the half-open range `[start, end)` of read positions that are
+/// **aligned** (not soft- or hard-clipped) in the record's primary CIGAR.
+///
+/// Returns `(0, 0)` for unmapped records or on CIGAR parse failure.
+fn mapped_read_range<R: SimpleRec>(rec: &R) -> (usize, usize) {
+    if rec.flags().map_or(true, |f| f.is_unmapped()) {
+        return (0, 0);
+    }
+
+    let mut read_pos          = 0usize;
+    let mut map_start: Option<usize> = None;
+    let mut map_end           = 0usize;
+
+    for op_result in rec.cigar().as_ref().iter() {
+        let op  = match op_result { Ok(o) => o, Err(_) => break };
+        let len = op.len();
+        match op.kind() {
+            Kind::SoftClip => { read_pos += len; }
+            Kind::HardClip | Kind::Pad => {}
+            Kind::Match
+            | Kind::SequenceMatch
+            | Kind::SequenceMismatch
+            | Kind::Insertion => {
+                if map_start.is_none() { map_start = Some(read_pos); }
+                read_pos += len;
+                map_end   = read_pos;
+            }
+            Kind::Deletion | Kind::Skip => {}
+        }
+    }
+    (map_start.unwrap_or(0), map_end)
 }
 
-/// Inspect `best` for cross-species chimeric events against the configured pairs.
+/// True when `range_a` and `range_b` are largely non-overlapping and
+/// together cover most of `read_len` bases.
 ///
-/// Returns the first matching `ChimericDecision::Chimeric` found, or
-/// `ChimericDecision::Normal` if none of the configured pairs match.
+/// Thresholds:
+/// - Each arm must contribute ≥ 15 aligned bases.
+/// - Overlap < 20 % of `read_len` (tolerance for aligner boundary fuzz).
+/// - Union ≥ 80 % of `read_len` (together they explain the full read).
+fn is_complementary(
+    range_a:  (usize, usize),
+    range_b:  (usize, usize),
+    read_len: usize,
+) -> bool {
+    let (a0, a1) = range_a;
+    let (b0, b1) = range_b;
+
+    if a1 <= a0 || b1 <= b0 || read_len == 0 { return false; }
+    let mapped_a = a1 - a0;
+    let mapped_b = b1 - b0;
+    if mapped_a < 15 || mapped_b < 15 { return false; }
+
+    // Overlap between mapped ranges.
+    let overlap = a1.min(b1).saturating_sub(a0.max(b0));
+    // Union of mapped ranges.
+    let union   = a1.max(b1) - a0.min(b0);
+
+    // overlap < 20 % of read_len  AND  union ≥ 80 % of read_len
+    overlap * 5 < read_len && union * 10 >= read_len * 8
+}
+
+// ---------------------------------------------------------------------------
+// Mismatch counting from MD tag
+// ---------------------------------------------------------------------------
+
+/// Count mismatch bases encoded in a raw MD tag byte string.
 ///
-/// **Detection conditions (both must hold for a pair [A, B]):**
-/// 1. Both stream A and stream B have at least one mapped primary segment.
-/// 2. The sets of mapped segment identifiers are *disjoint*: no mate maps
-///    as a primary alignment in both streams simultaneously.
+/// Digit runs (matches) and `^`-prefixed deletion blocks are skipped;
+/// SNV letters (A/C/G/T/N) are counted as mismatches.  Returns 0 on
+/// empty or malformed input and never panics.
+fn md_mismatches_from_record<R: SimpleRec>(rec: &R) -> usize {
+    let md_bytes: &[u8] = match rec
+        .data()
+        .get(&Tag::MISMATCHED_POSITIONS)
+        .and_then(|v| v.ok())
+    {
+        Some(Value::String(s)) => {
+            let bytes: &[u8] = s.as_ref();
+            // SAFETY: we only read from this slice inside this scope.
+            unsafe { std::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) }
+        }
+        _ => return usize::MAX,  // MD absent → treat as maximally mismatched
+    };
+
+    let mut count = 0usize;
+    let mut i     = 0usize;
+    while i < md_bytes.len() {
+        let b = md_bytes[i];
+        if b.is_ascii_digit() {
+            i += 1;
+        } else if b == b'^' {
+            i += 1;
+            while i < md_bytes.len() && !md_bytes[i].is_ascii_digit() { i += 1; }
+        } else if matches!(b, b'A' | b'C' | b'G' | b'T' | b'N') {
+            count += 1;
+            i     += 1;
+        } else {
+            i += 1;
+        }
+    }
+    count
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — read-split detection
+// ---------------------------------------------------------------------------
+
+/// Attempt to detect a read-split chimeric event between `state_a` and `state_b`.
 ///
-/// Condition 2 ensures we do not classify genuinely ambiguous fragments
-/// (where a mate aligns well to both species) as chimeric.
+/// For each possible mate (read 1, read 2, single-end), checks whether:
+///
+/// 1. Both streams have a **primary** alignment for that mate.
+/// 2. The two primaries' aligned read-position ranges are **complementary**.
+/// 3. If stream A has a **supplementary** alignment for the same mate,
+///    its mismatch count must be ≥ stream B's primary mismatch count
+///    (otherwise stream A's supplementary is a better explanation for
+///    the complementary region and the split is likely a false positive).
+///
+/// Returns `Some(seg_id)` on success, `None` if no read-split is found.
+fn detect_split_read<R: SimpleRec>(
+    state_a: &FragmentState<R>,
+    state_b: &FragmentState<R>,
+) -> Option<u8> {
+    // Candidate segment identifiers (read1, read2, single-end).
+    for &seg_id in &[0x40u8, 0x80u8, 0x00u8] {
+        // Primary in stream A for this segment.
+        let primary_a = state_a.get_records().iter().find(|r| {
+            let Ok(f) = r.flags() else { return false };
+            !f.is_secondary() && !f.is_supplementary() && !f.is_unmapped()
+                && segment_id(&f) == seg_id
+        });
+        // Primary in stream B for this segment.
+        let primary_b = state_b.get_records().iter().find(|r| {
+            let Ok(f) = r.flags() else { return false };
+            !f.is_secondary() && !f.is_supplementary() && !f.is_unmapped()
+                && segment_id(&f) == seg_id
+        });
+
+        let (rec_a, rec_b) = match (primary_a, primary_b) {
+            (Some(a), Some(b)) => (a, b),
+            _ => continue,
+        };
+
+        // Read length: use whichever record has quality scores available.
+        let read_len = rec_a.quality_scores().as_ref().len()
+            .max(rec_b.quality_scores().as_ref().len());
+        if read_len == 0 { continue; }
+
+        let range_a = mapped_read_range(rec_a);
+        let range_b = mapped_read_range(rec_b);
+
+        if !is_complementary(range_a, range_b, read_len) {
+            continue;
+        }
+
+        // ── False-positive rejection ──────────────────────────────────────
+        // Stream A's supplementary for this segment maps the *same read region*
+        // as stream B's primary but on the wrong reference genome.  If the
+        // supplementary has *fewer* mismatches than stream B's primary, the
+        // alignment in the other stream is not actually an improvement and the
+        // complementary clip pattern is likely a repetitive-sequence artefact.
+        let supp_a = state_a.get_records().iter().find(|r| {
+            let Ok(f) = r.flags() else { return false };
+            f.is_supplementary() && segment_id(&f) == seg_id
+        });
+
+        if let Some(sa) = supp_a {
+            let mis_supp = md_mismatches_from_record(sa);
+            let mis_b    = md_mismatches_from_record(rec_b);
+
+            if mis_supp < mis_b {
+                // Stream A's supplementary alignment of the complementary region
+                // is better than stream B's primary → false positive; skip.
+                tracing::debug!(
+                    seg_id,
+                    mismatches_supp_a    = mis_supp,
+                    mismatches_primary_b = mis_b,
+                    "Read-split candidate rejected: stream A supplementary \
+                     explains the complementary region better than stream B"
+                );
+                continue;
+            }
+        }
+        // No supplementary, or supplementary is worse → read-split confirmed.
+        return Some(seg_id);
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Public entry point
+// ---------------------------------------------------------------------------
+
+/// Inspect `best` for chimeric events against every configured pair.
+///
+/// Runs two detection phases in order:
+///
+/// 1. **Mate-split** (paired-end only): segment-ID disjointness.
+/// 2. **Read-split** (any library): complementary soft-clip analysis with
+///    false-positive rejection via supplementary mismatch comparison.
+///
+/// Returns the first matching `Chimeric` decision, or `Normal`.
 pub(crate) fn detect_chimeric_event<R: SimpleRec>(
-    best: &FragmentBuffer<R>,
+    best:           &FragmentBuffer<R>,
     chimeric_pairs: &[[usize; 2]],
 ) -> ChimericDecision {
     for &[a, b] in chimeric_pairs {
@@ -125,28 +341,36 @@ pub(crate) fn detect_chimeric_event<R: SimpleRec>(
 
         let (sa, sb) = match (state_a, state_b) {
             (Some(x), Some(y)) => (x, y),
-            _ => continue,  // one or both streams absent for this fragment
+            _ => continue,
         };
 
-        // Require paired-end data: at least one stream must be segmented.
-        let is_paired = sa.get_records().iter().chain(sb.get_records().iter())
+        // ── Phase 1: mate-split (requires paired-end data) ───────────────
+        let has_paired = sa.get_records().iter().chain(sb.get_records().iter())
             .any(|r| r.flags().map_or(false, |f| f.is_segmented()));
-        if !is_paired {
-            continue;
+
+        if has_paired {
+            let ids_a = mapped_segment_ids(sa);
+            let ids_b = mapped_segment_ids(sb);
+
+            if !ids_a.is_empty() && !ids_b.is_empty() {
+                let disjoint = ids_a.iter().all(|id| !ids_b.contains(id));
+                if disjoint {
+                    return ChimericDecision::Chimeric {
+                        stream_a: a,
+                        stream_b: b,
+                        kind:     ChimericKind::MateSplit,
+                    };
+                }
+            }
         }
 
-        let ids_a = mapped_segment_ids(sa);
-        let ids_b = mapped_segment_ids(sb);
-
-        // Both streams must contribute at least one mapped segment.
-        if ids_a.is_empty() || ids_b.is_empty() {
-            continue;
-        }
-
-        // Disjointness check: no segment identifier appears in both sets.
-        let disjoint = ids_a.iter().all(|id| !ids_b.contains(id));
-        if disjoint {
-            return ChimericDecision::Chimeric { stream_a: a, stream_b: b };
+        // ── Phase 2: read-split (single-end or paired-end) ───────────────
+        if let Some(seg_id) = detect_split_read(sa, sb) {
+            return ChimericDecision::Chimeric {
+                stream_a: a,
+                stream_b: b,
+                kind:     ChimericKind::ReadSplit { read_seg_id: seg_id },
+            };
         }
     }
     ChimericDecision::Normal

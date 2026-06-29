@@ -28,12 +28,12 @@ use crate::filter_algorithm::line_by_line::{ordering::Decision, Scratch, READ_CT
 use crate::penalty::Penalty;
 use crate::region::{AmbiguousRegions, DiagnosticVariants};
 use crate::variant::FragEvalVec;
-use anyhow::{anyhow, Result};
 use assemble::{insert, EarlyKind, FragmentTable, PendingFragment, ScoringRecord, StreamKind};
 use noodles::sam::alignment::record::Cigar;
 use smallvec::SmallVec;
 use stage::StagedOutput;
 use std::cmp::Ordering;
+use crate::Error;
 
 // ---------------------------------------------------------------------------
 // ScoredFragment
@@ -80,12 +80,10 @@ impl<R: SimpleRec> HashLookup<R> {
         mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
         bed: [Option<AmbiguousRegions>; 2],
         vcf: [Option<DiagnosticVariants>; 2],
-    ) -> Result<Self> {
-        assert_eq!(
-            aln.len(),
-            2,
-            "HashLookup requires exactly 2 alignment streams"
-        );
+    ) -> Result<Self, Error> {
+        if aln.len() != 2 {
+            return Err(Error::AlgoRequiresTwoStreams);
+        }
         let ambiguous_log_threshold = match config.ambiguous_threshold {
             0 => 0.0,
             t => (t as f64) * std::f64::consts::LN_10 / 10.0,
@@ -111,7 +109,7 @@ impl<R: SimpleRec> HashLookup<R> {
         })
     }
 
-    pub(crate) fn process(&mut self) -> Result<()> {
+    pub(crate) fn process(&mut self) -> Result<(), Error> {
         let mut exhausted = [false; 2];
         loop {
             let mut progress = false;
@@ -152,7 +150,7 @@ impl<R: SimpleRec> HashLookup<R> {
         Ok(())
     }
 
-    fn next_scoring_record(&mut self, nr: usize) -> Result<Option<(Box<[u8]>, ScoringRecord)>> {
+    fn next_scoring_record(&mut self, nr: usize) -> Result<Option<(Box<[u8]>, ScoringRecord)>, Error> {
         use noodles::sam::alignment::record::cigar::op::Kind;
         use noodles::sam::alignment::record::data::field::{Tag, Value};
 
@@ -213,7 +211,7 @@ impl<R: SimpleRec> HashLookup<R> {
             _ => Vec::new(),
         };
 
-        // Quality scores: noodles quality scores iterate as Result<u8>.
+        // Quality scores: noodles quality scores iterate as Result<u8, Error>.
         let qualities: Vec<u8> = rec
             .quality_scores()
             .as_ref()
@@ -251,7 +249,7 @@ impl<R: SimpleRec> HashLookup<R> {
         )))
     }
 
-    fn ingest(&mut self, key: Box<[u8]>, rec: ScoringRecord, nr: usize) -> Result<()> {
+    fn ingest(&mut self, key: Box<[u8]>, rec: ScoringRecord, nr: usize) -> Result<(), Error> {
         let bed = self.bed[nr].as_ref().filter(|b| !b.is_empty());
         let vcf = self.vcf[nr].as_ref().filter(|v| !v.is_empty());
         let (key, complete) = insert(
@@ -272,7 +270,7 @@ impl<R: SimpleRec> HashLookup<R> {
         Ok(())
     }
 
-    fn resolve_fragment(&mut self, pending: PendingFragment) -> Result<ScoredFragment> {
+    fn resolve_fragment(&mut self, pending: PendingFragment) -> Result<ScoredFragment, Error> {
         let supp_offsets = pending.supplementary_offsets;
         let dk = pending.driving.early_kind();
         let lk = pending.lookup.early_kind();
@@ -384,9 +382,9 @@ impl<R: SimpleRec> HashLookup<R> {
             // Both need full scoring.
             (None, None) => {
                 let recs_a = driving_records
-                    .ok_or_else(|| anyhow!("Missing driving records for full scoring"))?;
+                    .ok_or(Error::MissingDrivingRecords)?;
                 let recs_b = lookup_records
-                    .ok_or_else(|| anyhow!("Missing lookup records for full scoring"))?;
+                    .ok_or(Error::MissingLookupRecords)?;
                 self.evaluate_scoring_pair(
                     recs_a,
                     recs_b,
@@ -411,7 +409,7 @@ impl<R: SimpleRec> HashLookup<R> {
         offsets_a: SmallVec<[u64; 2]>,
         offsets_b: SmallVec<[u64; 2]>,
         supp_offsets: [SmallVec<[u64; 1]>; 2],
-    ) -> Result<ScoredFragment> {
+    ) -> Result<ScoredFragment, Error> {
         // Tier 2.5: CIGAR/MD structural subsumption.
         // Borrows recs_a/recs_b immutably — both are still available for nw_score_records below.
         match pre_assess_scoring_records(&recs_a, &recs_b) {
@@ -508,7 +506,7 @@ impl<R: SimpleRec> HashLookup<R> {
         &mut self,
         records: &SmallVec<[ScoringRecord; 2]>,
         aln_idx: usize,
-    ) -> Result<f64> {
+    ) -> Result<f64, Error> {
         use noodles::core::Position;
         use noodles::sam::alignment::record::cigar::op::{Kind, Op};
         use noodles::sam::alignment::record::data::field::Tag;
@@ -531,7 +529,7 @@ impl<R: SimpleRec> HashLookup<R> {
             *buf.reference_sequence_id_mut() = Some(sr.ref_id);
             if sr.pos > 0 {
                 *buf.alignment_start_mut() = Some(
-                    Position::new(sr.pos).ok_or_else(|| anyhow!("Invalid position {}", sr.pos))?,
+                    Position::new(sr.pos).ok_or(Error::InvalidPosition(sr.pos))?,
                 );
             }
             let mut cigar_ops = Vec::new();
@@ -548,7 +546,7 @@ impl<R: SimpleRec> HashLookup<R> {
                     6 => Kind::Pad,
                     7 => Kind::SequenceMatch,
                     8 => Kind::SequenceMismatch,
-                    k => return Err(anyhow!("Unknown CIGAR op {k}")),
+                    k => return Err(Error::UnknownCigarOp(k)),
                 };
                 cigar_ops.push(Op::new(kind, len));
             }
@@ -556,8 +554,7 @@ impl<R: SimpleRec> HashLookup<R> {
             *buf.quality_scores_mut() = QualityScores::from_iter(sr.qualities.iter().cloned());
             let seq_len = sr.qualities.len();
             *buf.sequence_mut() = Sequence::from(vec![b'N'; seq_len]);
-            let md_str =
-                String::from_utf8(sr.md.clone()).map_err(|e| anyhow!("MD not UTF-8: {e}"))?;
+            let md_str = String::from_utf8(sr.md.clone())?;
             let data: Data = [(Tag::MISMATCHED_POSITIONS, BufValue::from(md_str))]
                 .into_iter()
                 .collect();
@@ -583,10 +580,10 @@ impl<R: SimpleRec> HashLookup<R> {
             } else {
                 let tid = buf
                     .reference_sequence_id()
-                    .ok_or_else(|| anyhow!("No ref seq id"))?;
+                    .ok_or(Error::NoRefSeqId)?;
                 let start = buf
                     .alignment_start()
-                    .ok_or_else(|| anyhow!("No alignment start"))?
+                    .ok_or(Error::NoAlignmentStart)?
                     .get();
                 let end = start + buf.cigar().len();
 
@@ -602,11 +599,11 @@ impl<R: SimpleRec> HashLookup<R> {
 
         penalty += Fragment::new(&self.penalties, seg, mcfs)?
             .score(&mut self.scratch, &mut dvnt)
-            .map_err(|e| anyhow!("Score error stream {aln_idx}: {e}"))?;
+            .map_err(|e| Error::ScoreStreamError(aln_idx, e.to_string()))?;
         Ok(penalty)
     }
 
-    fn emit_unmatched(&mut self, pending: PendingFragment) -> Result<()> {
+    fn emit_unmatched(&mut self, pending: PendingFragment) -> Result<(), Error> {
         let seq_nr = pending.seq_nr;
         let supp = pending.supplementary_offsets;
         let (driving_empty, _lookup_empty) =

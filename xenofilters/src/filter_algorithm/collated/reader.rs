@@ -7,10 +7,10 @@ use crate::alignment::{FragmentState, SimpleRec};
 use crate::aln_stream::AlignmentStream;
 use crate::config::StripReadSuffix;
 use crate::variant::StoreTrait;
-use anyhow::Result;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::Header;
 use std::sync::Arc;
+use crate::Error;
 
 /// Strip the `/1` or `/2` suffix from `raw` according to `mode`.
 pub(crate) fn canonical_name(raw: &[u8], mode: StripReadSuffix) -> Box<[u8]> {
@@ -48,7 +48,7 @@ impl<R: SimpleRec> CollatedReader<R> {
 
     /// Yield the next complete fragment (all records sharing a canonical name),
     /// or `None` when the stream is exhausted.
-    pub(crate) fn next_fragment(&mut self) -> Result<Option<FragmentState<R>>> {
+    pub(crate) fn next_fragment(&mut self) -> Result<Option<FragmentState<R>>, Error> {
         let first = match self.peeked.take() {
             Some(r) => r,
             None => match self.inner.next_rec()? {
@@ -98,7 +98,7 @@ impl<R: SimpleRec> CollatedReader<R> {
         self.inner.variant_store()
     }
 
-    pub(crate) fn write_record(&mut self, rec: RecordBuf, state: Option<bool>) -> Result<()> {
+    pub(crate) fn write_record(&mut self, rec: RecordBuf, state: Option<bool>) -> Result<(), Error> {
         self.inner.write_record(rec, state)
     }
 }

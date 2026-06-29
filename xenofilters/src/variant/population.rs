@@ -1,7 +1,7 @@
 use crate::variant::Variant;
 use noodles::bcf::record::Record;
 use noodles::vcf::{Header, variant::record::info::field::Value};
-use crate::{Error, Result};
+use crate::Error;
 
 pub(crate) struct Population {
     pos: usize,

@@ -3,7 +3,6 @@
 //! BAM output helpers — single-threaded and multithreaded writers,
 //! plus the merged-output variant.
 
-use anyhow::{anyhow, Result};
 use noodles::bam::io::Writer as BamWriter;
 use noodles::bgzf::io::{
     multithreaded_writer::Builder as MultiBuilder,
@@ -17,10 +16,11 @@ use noodles::sam::{
 };
 use std::io::Stdout;
 use std::{fs::File, num::NonZeroUsize, path::Path};
+use crate::Error;
 
 // -- @PG helper ----------------------------------------------------------------
 
-fn add_pg_line(header: &mut Header) -> Result<()> {
+fn add_pg_line(header: &mut Header) -> Result<(), Error> {
     let program = Map::builder()
         .insert(tag::NAME, "xenofilter")
         .insert(tag::VERSION, env!("CARGO_PKG_VERSION"))
@@ -92,7 +92,7 @@ impl MergedOutput {
         header: Header, // already expanded by expand_header()
         add_pg: bool,
         threads: usize,
-    ) -> Result<Self> {
+    ) -> Result<Self, Error> {
         let mut hdr = header;
         if add_pg {
             add_pg_line(&mut hdr)?;
@@ -111,10 +111,10 @@ impl MergedOutput {
 
 // -- Public constructors -------------------------------------------------------
 
-pub(crate) fn path_unicode_ok<'a, P: 'a + AsRef<Path>>(path: P) -> Result<()> {
+pub(crate) fn path_unicode_ok<'a, P: 'a + AsRef<Path>>(path: P) -> Result<(), Error> {
     path.as_ref()
         .to_str()
-        .ok_or_else(|| anyhow!("Path '{}' is not valid UTF-8", path.as_ref().display()))?;
+        .ok_or_else(|| Error::InvalidPathUtf8 { path: path.as_ref().to_path_buf() })?;
     Ok(())
 }
 
@@ -124,7 +124,7 @@ pub(crate) fn out_from_file(
     header: &Header,
     add_pg: bool,
     threads: usize,
-) -> Result<BamOutput> {
+) -> Result<BamOutput, Error> {
     tracing::debug!(path = %f.display(), threads, "Opening BAM output file");
 
     let mut modified_header = header.clone();
@@ -135,9 +135,9 @@ pub(crate) fn out_from_file(
 }
 
 /// Shared writer construction logic.
-fn open_writer(f: &Path, header: &Header, threads: usize) -> Result<BamOutput> {
+fn open_writer(f: &Path, header: &Header, threads: usize) -> Result<BamOutput, Error> {
     let file =
-        File::create(f).map_err(|e| anyhow!("Cannot create output file '{}': {e}", f.display()))?;
+        File::create(f).map_err(|e| Error::CreateOutputFileFailed { path: f.to_path_buf(), source: e })?;
 
     if threads <= 1 {
         let enc = Builder::default()
@@ -171,7 +171,7 @@ mod tests {
     }
 
     #[test]
-    fn test_add_pg_line() -> Result<()> {
+    fn test_add_pg_line() -> Result<(), Error> {
         let mut header = Header::default();
         add_pg_line(&mut header)?;
         let mut roots = header.programs().roots();

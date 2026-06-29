@@ -15,7 +15,6 @@ mod variant;
 mod error;
 
 use aln_stream::{AlignmentStream, AlnStream};
-use anyhow::{ensure, Result};
 use clap::Parser;
 use config::{Config, MatchingAlgorithm};
 use filter_algorithm::{
@@ -39,7 +38,7 @@ fn get_log_level(verbose_count: u8) -> &'static str {
     }
 }
 
-fn run(mut config: Config) -> Result<()> {
+fn run(mut config: Config) -> Result<(), Error> {
     config.validate_and_init()?;
     match config.matching_algorithm {
         MatchingAlgorithm::Namesorted => run_namesorted(config),
@@ -48,7 +47,7 @@ fn run(mut config: Config) -> Result<()> {
     }
 }
 
-fn main() -> Result<()> {
+fn main() -> Result<(), Error> {
     let config = Config::parse();
 
     fmt()
@@ -69,7 +68,7 @@ fn main() -> Result<()> {
 // Name-sorted — streaming merge, sequential or parallel
 // ---------------------------------------------------------------------------
 
-fn run_namesorted(mut config: Config) -> Result<()> {
+fn run_namesorted(mut config: Config) -> Result<(), Error> {
     let score_threads = config.score_threads;
     let logical_loops = if config.alignment.len() == 1 {
         2
@@ -83,10 +82,9 @@ fn run_namesorted(mut config: Config) -> Result<()> {
             let idx = if config.alignment.len() == 1 { 0 } else { i };
             tracing::debug!(stream = i, path = %config.alignment[idx], "Opening stream");
             aln.push(Box::new(AlnStream::<RecordBuf>::new(&mut config, idx)?));
-            ensure!(
-                aln[i].next_qname() == aln[0].next_qname(),
-                "Input alignments must have the same read order."
-            );
+            if aln[i].next_qname() != aln[0].next_qname() {
+                return Err(Error::InputAlignmentsMustHaveSameReadOrder);
+            }
         }
         tracing::info!(
             streams = logical_loops,
@@ -100,10 +98,9 @@ fn run_namesorted(mut config: Config) -> Result<()> {
             let idx = if config.alignment.len() == 1 { 0 } else { i };
             tracing::debug!(stream = i, path = %config.alignment[idx], "Opening stream");
             aln.push(Box::new(AlnStream::<BamRecord>::new(&mut config, idx)?));
-            ensure!(
-                aln[i].next_qname() == aln[0].next_qname(),
-                "Input alignments must have the same read order."
-            );
+            if aln[i].next_qname() != aln[0].next_qname() {
+                return Err(Error::InputAlignmentsMustHaveSameReadOrder);
+            }
         }
         tracing::info!(streams = logical_loops, "Starting sequential pipeline");
         LineByLine::new(config, aln)?.process_sequential()
@@ -114,11 +111,10 @@ fn run_namesorted(mut config: Config) -> Result<()> {
 // Hash-lookup — position-sorted BAMs, in-memory region filtering
 // ---------------------------------------------------------------------------
 
-fn run_hashlookup(mut config: Config) -> Result<()> {
-    ensure!(
-        config.alignment.len() == 2,
-        "--matching-algorithm hashlookup requires exactly 2 alignment streams"
-    );
+fn run_hashlookup(mut config: Config) -> Result<(), Error> {
+    if config.alignment.len() != 2 {
+        return Err(Error::AlgoRequiresTwoStreams);
+    }
 
     let mut aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> = smallvec![];
     for i in 0..2 {
@@ -140,13 +136,12 @@ fn run_hashlookup(mut config: Config) -> Result<()> {
 // Collated — individually name-sorted streams, tabix-indexed region queries
 // ---------------------------------------------------------------------------
 
-fn run_collated(mut config: Config) -> Result<()> {
+fn run_collated(mut config: Config) -> Result<(), Error> {
     use region::tabix_query::{TabixBed, TabixVcf};
 
-    ensure!(
-        config.alignment.len() == 2,
-        "--matching-algorithm collated requires exactly 2 alignment streams"
-    );
+    if config.alignment.len() != 2 {
+        return Err(Error::AlgoRequiresTwoStreams);
+    }
 
     let mut aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> = smallvec![];
     for i in 0..2 {
@@ -206,7 +201,7 @@ fn header_name_to_id(header: &Header) -> HashMap<String, usize> {
 fn load_ambiguous_regions(
     specs: &[String],
     name_to_id: &HashMap<String, usize>,
-) -> Result<[Option<AmbiguousRegions>; 2]> {
+) -> Result<[Option<AmbiguousRegions>; 2], Error> {
     Ok([
         specs
             .first()
@@ -224,7 +219,7 @@ fn load_ambiguous_regions(
 fn load_diagnostic_variants(
     specs: &[String],
     name_to_id: &HashMap<String, usize>,
-) -> Result<[Option<DiagnosticVariants>; 2]> {
+) -> Result<[Option<DiagnosticVariants>; 2], Error> {
     Ok([
         specs
             .first()

@@ -4,13 +4,13 @@ use crate::config::{Config, StripReadSuffix};
 use crate::tests::create_record;
 use crate::variant::StoreTrait;
 use crate::{AlignmentStream, AlnStream};
-use anyhow::{anyhow, Result};
 use noodles::bam::io::Reader as BamReader;
 use noodles::bgzf::VirtualPosition;
 use noodles::sam::{alignment::record_buf::RecordBuf, Header};
 use std::fs::File;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
+use crate::Error;
 
 // A dummy struct to test default trait methods
 struct DefaultStream;
@@ -18,16 +18,16 @@ impl AlignmentStream<RecordBuf> for DefaultStream {
     fn next_qname(&self) -> &[u8] {
         b""
     }
-    fn un_next(&mut self, _rec: RecordBuf) -> Result<()> {
+    fn un_next(&mut self, _rec: RecordBuf) -> Result<(), Error> {
         Ok(())
     }
-    fn next_rec(&mut self) -> Result<Option<RecordBuf>> {
+    fn next_rec(&mut self) -> Result<Option<RecordBuf>, Error> {
         Ok(None)
     }
-    fn write_record(&mut self, _rec: RecordBuf, _is_best: Option<bool>) -> Result<()> {
+    fn write_record(&mut self, _rec: RecordBuf, _is_best: Option<bool>) -> Result<(), Error> {
         Ok(())
     }
-    fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<()> {
+    fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<(), Error> {
         Ok(())
     }
     fn variant_store(&self) -> Option<Arc<dyn StoreTrait>> {
@@ -72,7 +72,7 @@ impl MockStream {
         }
     }
 
-    fn next_rec(&mut self) -> Result<Option<RecordBuf>> {
+    fn next_rec(&mut self) -> Result<Option<RecordBuf>, Error> {
         if let Some(rec) = self.aln_stream.next_rec()? {
             return Ok(Some(rec));
         }
@@ -84,7 +84,7 @@ impl MockStream {
         self.aln_stream.next_rec()
     }
 
-    fn un_next(&mut self, rec: RecordBuf) -> Result<()> {
+    fn un_next(&mut self, rec: RecordBuf) -> Result<(), Error> {
         let name = rec.name().expect("Invalid Name");
         eprintln!(
             "Un-next({}) read: {}",
@@ -94,18 +94,18 @@ impl MockStream {
         self.aln_stream.un_next(rec)
     }
 
-    fn write_record(&mut self, rec: RecordBuf, state: Option<bool>) -> Result<()> {
+    fn write_record(&mut self, rec: RecordBuf, state: Option<bool>) -> Result<(), Error> {
         self.written.push((rec, state));
         Ok(())
     }
 
     /// Inherent implementation; renamed to avoid ambiguity with the trait method.
-    fn fetch_record(&mut self, virtual_offset: u64) -> Result<RecordBuf> {
+    fn fetch_record(&mut self, virtual_offset: u64) -> Result<RecordBuf, Error> {
         self.original_reads
             .get(virtual_offset as usize)
             .cloned()
             .or_else(|| self.original_reads.first().cloned())
-            .ok_or_else(|| anyhow!("MockStream: no record at virtual offset {virtual_offset}"))
+            .ok_or(Error::MockStreamNoRecordAtVirtualOffset { virtual_offset })
     }
 }
 
@@ -113,16 +113,16 @@ impl AlignmentStream<RecordBuf> for MockStream {
     fn next_qname(&self) -> &[u8] {
         self.aln_stream.next_qname()
     }
-    fn un_next(&mut self, rec: RecordBuf) -> Result<()> {
+    fn un_next(&mut self, rec: RecordBuf) -> Result<(), Error> {
         self.un_next(rec)
     }
-    fn next_rec(&mut self) -> Result<Option<RecordBuf>> {
+    fn next_rec(&mut self) -> Result<Option<RecordBuf>, Error> {
         self.next_rec()
     }
-    fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<()> {
+    fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<(), Error> {
         self.write_record(rec, is_best)
     }
-    fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<()> {
+    fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<(), Error> {
         Ok(())
     }
     fn variant_store(&self) -> Option<Arc<dyn StoreTrait>> {
@@ -131,7 +131,7 @@ impl AlignmentStream<RecordBuf> for MockStream {
     fn header(&self) -> &Header {
         &self.aln_stream.header
     }
-    fn fetch_by_virtual_offset(&mut self, virtual_offset: u64) -> Result<RecordBuf> {
+    fn fetch_by_virtual_offset(&mut self, virtual_offset: u64) -> Result<RecordBuf, Error> {
         self.fetch_record(virtual_offset)
     }
 }
@@ -161,7 +161,7 @@ fn test_default_fetch_by_virtual_offset_returns_error() {
 
 /* Untestable
 #[test]
-fn test_from_bam_record_implementations() -> Result<()> {
+fn test_from_bam_record_implementations() -> Result<(), Error> {
     use noodles::bam::record::Record as BamRecord;
     use crate::aln_stream::FromBamRecord;
 
@@ -187,7 +187,7 @@ fn test_from_bam_record_implementations() -> Result<()> {
 }*/
 
 #[test]
-fn test_bam_stream_reader_trait() -> Result<()> {
+fn test_bam_stream_reader_trait() -> Result<(), Error> {
     let file = File::open("tests/data/test_input_1_a.bam").expect("Test BAM file required");
     let mut bam = BamReader::new(file);
     let _header = bam.read_header()?;
@@ -224,7 +224,7 @@ fn test_aln_stream_header_returns_actual_reference() {
 }
 
 #[test]
-fn test_aln_stream_init_writers_multi_and_merged() -> Result<()> {
+fn test_aln_stream_init_writers_multi_and_merged() -> Result<(), Error> {
     let mut stream = empty_aln_stream();
     let mut config = Config::default();
 
@@ -252,7 +252,7 @@ fn test_aln_stream_init_writers_multi_and_merged() -> Result<()> {
 
 /* FAILS: why?
 #[test]
-fn test_aln_stream_fetch_by_virtual_offset() -> Result<()> {
+fn test_aln_stream_fetch_by_virtual_offset() -> Result<(), Error> {
     use noodles::bam;
     use noodles::sam;
     use noodles::sam::alignment::io::Write; // Required for write_alignment_record
@@ -306,7 +306,7 @@ fn test_aln_stream_new_mismatch_strip_suffix_true_instead_of_false() {
 }
 
 #[test]
-fn test_aln_stream_next_rec() -> Result<()> {
+fn test_aln_stream_next_rec() -> Result<(), Error> {
     let records = vec![
         create_record(b"read1/1", "10M", &[], &[30; 10], "10", false)?,
         create_record(b"read2/1", "10M", &[], &[30; 10], "10", false)?,
@@ -321,7 +321,7 @@ fn test_aln_stream_next_rec() -> Result<()> {
 }
 
 #[test]
-fn test_aln_stream_un_next() -> Result<()> {
+fn test_aln_stream_un_next() -> Result<(), Error> {
     let records = vec![
         create_record(b"read1/1", "10M", &[], &[30; 10], "10", false)?,
         create_record(b"read2/1", "10M", &[], &[30; 10], "10", false)?,
@@ -345,7 +345,7 @@ fn test_next_qname_empty_when_no_next_record() {
 }
 
 #[test]
-fn test_next_qname_returns_pending_records_name() -> Result<()> {
+fn test_next_qname_returns_pending_records_name() -> Result<(), Error> {
     let mut stream = empty_aln_stream();
     let rec = create_record(b"r1", "5M", &[], &[30; 5], "5", false)?;
     stream.un_next(rec)?;
@@ -354,7 +354,7 @@ fn test_next_qname_returns_pending_records_name() -> Result<()> {
 }
 
 #[test]
-fn test_un_next_errors_when_already_occupied() -> Result<()> {
+fn test_un_next_errors_when_already_occupied() -> Result<(), Error> {
     let mut stream = empty_aln_stream();
     stream.un_next(create_record(b"r1", "5M", &[], &[30; 5], "5", false)?)?;
     assert!(stream
@@ -364,13 +364,13 @@ fn test_un_next_errors_when_already_occupied() -> Result<()> {
 }
 
 #[test]
-fn test_next_rec_none_when_empty_and_no_bam_reader() -> Result<()> {
+fn test_next_rec_none_when_empty_and_no_bam_reader() -> Result<(), Error> {
     assert!(empty_aln_stream().next_rec()?.is_none());
     Ok(())
 }
 
 #[test]
-fn test_write_record_is_noop_without_attached_writers() -> Result<()> {
+fn test_write_record_is_noop_without_attached_writers() -> Result<(), Error> {
     let mut stream = empty_aln_stream();
     let rec = create_record(b"r", "5M", &[], &[30; 5], "5", false)?;
     assert!(stream.write_record(rec.clone(), Some(true)).is_ok());

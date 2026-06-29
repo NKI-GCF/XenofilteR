@@ -29,7 +29,6 @@
 //! - In the parallel pipeline this runs on the IO thread only, after scoring
 //!   is complete, so it does not affect worker throughput.
 
-use anyhow::{anyhow, Result};
 use noodles::sam::{
     alignment::{
         record::data::field::Tag,
@@ -40,6 +39,7 @@ use noodles::sam::{
         Header,
     },
 };
+use crate::Error;
 
 /// Suffixes appended to `RG:Z` tag values.
 pub(crate) const SUFFIX_FILTERED: &str = "_xenofilt";
@@ -90,7 +90,7 @@ pub(crate) fn expand_header(mut header: Header) -> Header {
 ///
 /// Returns an error if the existing `RG` tag is not a `String` value (which
 /// would indicate a malformed BAM file).
-pub(crate) fn rewrite_rg(rec: &mut RecordBuf, suffix: &str) -> Result<()> {
+pub(crate) fn rewrite_rg(rec: &mut RecordBuf, suffix: &str) -> Result<(), Error> {
     // Read the current value.
     match rec.data_mut().get_mut(&TAG_RG) {
         None => Ok(()), // no RG tag — leave record unchanged
@@ -98,9 +98,7 @@ pub(crate) fn rewrite_rg(rec: &mut RecordBuf, suffix: &str) -> Result<()> {
             s.extend_from_slice(suffix.as_bytes());
             Ok(())
         }
-        Some(other) => Err(anyhow!(
-            "RG aux tag has unexpected type {other:?}; expected String"
-        )),
+        Some(other) => Err(Error::UnexpectedRgTagType(format!("{other:?}"))),
     }
 }
 
@@ -147,7 +145,7 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_rg_appends_suffix() -> Result<()> {
+    fn rewrite_rg_appends_suffix() -> Result<(), Error> {
         let mut rec = RecordBuf::default();
         rec.data_mut()
             .insert(TAG_RG, Value::String(String::from("rg0").into()));
@@ -164,7 +162,7 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_rg_no_tag_is_noop() -> Result<()> {
+    fn rewrite_rg_no_tag_is_noop() -> Result<(), Error> {
         let mut rec = RecordBuf::default();
         // No RG tag set.
         rewrite_rg(&mut rec, SUFFIX_AMBIGUOUS)?;
@@ -173,7 +171,7 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_rg_idempotent_on_winner() -> Result<()> {
+    fn rewrite_rg_idempotent_on_winner() -> Result<(), Error> {
         // Winners are never passed through rewrite_rg; this test documents
         // that calling it twice (a bug) would stack suffixes visibly.
         let mut rec = RecordBuf::default();

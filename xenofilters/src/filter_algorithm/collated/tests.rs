@@ -2,9 +2,9 @@ use crate::aln_stream::tests::MockStream;
 use crate::config::{Config, StripReadSuffix};
 use crate::filter_algorithm::collated::CollatedMatcher;
 use crate::tests::create_record;
-use anyhow::Result;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::smallvec;
+use crate::Error;
 
 fn config() -> Config {
     Config {
@@ -21,7 +21,7 @@ fn make_matcher(
     stream0: Vec<RecordBuf>,
     stream1: Vec<RecordBuf>,
     cfg: Config,
-) -> Result<CollatedMatcher<RecordBuf>> {
+) -> Result<CollatedMatcher<RecordBuf>, Error> {
     use crate::aln_stream::AlignmentStream;
     let s0 = Box::new(MockStream::new(0, stream0)) as Box<dyn AlignmentStream<RecordBuf>>;
     let s1 = Box::new(MockStream::new(1, stream1)) as Box<dyn AlignmentStream<RecordBuf>>;
@@ -29,7 +29,7 @@ fn make_matcher(
 }
 
 #[test]
-fn test_collated_perfect_vs_imperfect_stream0_wins() -> Result<()> {
+fn test_collated_perfect_vs_imperfect_stream0_wins() -> Result<(), Error> {
     let s0 = vec![create_record(b"R1", "10M", &[], &[], "10", false)?];
     let s1 = vec![create_record(b"R1", "5M5S", &[], &[], "5", false)?];
     let mut m = make_matcher(s0, s1, config())?;
@@ -40,7 +40,7 @@ fn test_collated_perfect_vs_imperfect_stream0_wins() -> Result<()> {
 }
 
 #[test]
-fn test_collated_perfect_vs_imperfect_stream1_wins() -> Result<()> {
+fn test_collated_perfect_vs_imperfect_stream1_wins() -> Result<(), Error> {
     let s0 = vec![create_record(b"R1", "5M5S", &[], &[], "5", false)?];
     let s1 = vec![create_record(b"R1", "10M", &[], &[], "10", false)?];
     let mut m = make_matcher(s0, s1, config())?;
@@ -51,7 +51,7 @@ fn test_collated_perfect_vs_imperfect_stream1_wins() -> Result<()> {
 }
 
 #[test]
-fn test_collated_tie_is_ambiguous() -> Result<()> {
+fn test_collated_tie_is_ambiguous() -> Result<(), Error> {
     let s0 = vec![create_record(b"R1", "10M", &[], &[], "10", false)?];
     let s1 = vec![create_record(b"R1", "10M", &[], &[], "10", false)?];
     let mut m = make_matcher(s0, s1, config())?;
@@ -62,7 +62,7 @@ fn test_collated_tie_is_ambiguous() -> Result<()> {
 }
 
 #[test]
-fn test_collated_streams_in_different_order() -> Result<()> {
+fn test_collated_streams_in_different_order() -> Result<(), Error> {
     // Stream 0: R1 then R2. Stream 1: R2 then R1.
     let s0 = vec![
         create_record(b"R1", "10M", &[], &[], "10", false)?,
@@ -82,7 +82,7 @@ fn test_collated_streams_in_different_order() -> Result<()> {
 }
 
 #[test]
-fn test_collated_paired_end_same_name_grouped() -> Result<()> {
+fn test_collated_paired_end_same_name_grouped() -> Result<(), Error> {
     // Both reads of a pair share a name and appear consecutively.
     let s0 = vec![
         create_record(b"R1", "10M", &[], &[], "10", false)?,
@@ -101,7 +101,7 @@ fn test_collated_paired_end_same_name_grouped() -> Result<()> {
 }
 
 #[test]
-fn test_collated_unmapped_vs_mapped() -> Result<()> {
+fn test_collated_unmapped_vs_mapped() -> Result<(), Error> {
     let s0 = vec![create_record(b"R1", "", &[b'A'; 10], &[30; 10], "", false)?];
     let s1 = vec![create_record(b"R1", "10M", &[], &[], "10", false)?];
     let mut m = make_matcher(s0, s1, config())?;
@@ -113,7 +113,7 @@ fn test_collated_unmapped_vs_mapped() -> Result<()> {
 }
 
 #[test]
-fn test_collated_suffix_stripping() -> Result<()> {
+fn test_collated_suffix_stripping() -> Result<(), Error> {
     let cfg = Config {
         strip_read_suffix: StripReadSuffix::True,
         gap_open: 6.0,
@@ -132,7 +132,7 @@ fn test_collated_suffix_stripping() -> Result<()> {
 }
 
 #[test]
-fn test_collated_unmatched_is_emitted_as_best() -> Result<()> {
+fn test_collated_unmatched_is_emitted_as_best() -> Result<(), Error> {
     // R2 only in stream0; stream1 has nothing matching.
     let s0 = vec![
         create_record(b"R1", "10M", &[], &[], "10", false)?,

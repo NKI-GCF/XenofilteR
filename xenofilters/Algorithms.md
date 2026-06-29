@@ -180,27 +180,80 @@ With `--add-decision-tag`:
 ### Chimeric fragment routing (optional, namesorted + paired-end)
 
 When `--chimeric-pairs A:B` is supplied, the cascade is preceded by a
-complementary-mapping check:
+two-phase complementary-mapping check.
 
-1. Look up `FragmentState` for stream A and stream B in the current `FragmentBuffer`.
-2. Collect *mapped segment identifiers* (0x40 = read 1, 0x80 = read 2) for each
-   stream, considering only primary, mapped, non-supplementary records.
-3. **Chimeric event**: both sets non-empty AND disjoint (no mate maps well in both
-   streams simultaneously).
+#### Phase 1 — Mate-split (paired-end only)
 
-On a chimeric event:
-- Stream A records → stream A assigned output + `XC:Z:<label_B>` tag.
-- Stream B records → stream B assigned output + `XC:Z:<label_A>` tag.
-- Remaining streams (outside the pair) → filtered (discarded) output.
-- `routing_counters[COUNTER_CHIMERIC_BASE + i]` incremented for each chimeric stream.
+For each configured pair [A, B], collect the set of *mapped segment identifiers*
+(0x40 = read 1, 0x80 = read 2) for primary, mapped, non-supplementary records
+in each stream.  A **mate-split chimeric** is declared when:
 
-The normal tournament cascade is **skipped** for detected chimeric fragments.
-Non-chimeric fragments proceed through the full Tier 1–3 cascade unchanged.
+1. Both sets are non-empty.
+2. The sets are **disjoint** — no mate maps as a primary in both streams.
 
-Condition 2 (disjointness) ensures that genuinely ambiguous reads — where a
-single mate aligns with high score to both species — are not misclassified
-as chimeric integration events.
+```text
+Human stream : read1 mapped (0x40)
+HPV stream   : read2 mapped (0x80)
+→ disjoint   → mate-split chimeric
+```
 
+#### Phase 2 — Read-split (single-end or paired-end)
+
+Handles the case where the same read spans a breakpoint: its 5′ portion aligns
+to stream A and its 3′ portion to stream B.  Both streams report it as a
+**primary** alignment.
+
+For each segment identifier present as a primary in **both** streams:
+
+1. Extract the mapped read-position range in each stream from the primary CIGAR
+   (excluding soft-clipped positions).
+2. Declare a **complementary** pair when:
+   - Each range ≥ 15 aligned bases.
+   - Overlap between ranges < 20 % of read length.
+   - Union of ranges ≥ 80 % of read length.
+3. **False-positive rejection**: If stream A carries a *supplementary* alignment
+   for the same read (the aligner mapped the complementary portion to stream A's
+   reference), compare MD mismatch counts:
+   - `mismatches(A_supplementary)` — wrong-species sequence on the source reference
+   - `mismatches(B_primary)` — same read region on the correct target reference
+   - If `A_supplementary` is *better* (fewer mismatches), the complementary clip
+     pattern is likely a repetitive-sequence artefact; the candidate is rejected.
+   - Otherwise stream B's alignment is at least as good → **read-split chimeric**.
+
+```text
+Human stream : read1 primary  25M25S  mapped [0,  25)
+               read1 supp     25S25M  on human (false positive; many mismatches)
+HPV stream   : read1 primary  25S25M  mapped [25, 50)  (few mismatches on HPV)
+               read2 primary  100M    mapped [0, 100)
+→ complementary + A_supp worse than B_primary  →  read-split chimeric
+```
+
+#### Emission
+
+On any chimeric event:
+
+| Stream | Records written |
+|--------|----------------|
+| Stream A (in pair) | All records → assigned output + `XC:Z:<label_B>` |
+| Stream B (in pair) | All records → assigned output + `XC:Z:<label_A>` |
+| Other streams      | All records → discarded output |
+
+For read-split events, stream A's supplementary (the false-positive mapping) is
+included in stream A's assigned output tagged with `XC:Z:`.  Downstream tools
+can exclude it with `samtools view -F 2048`.
+
+#### Filtering chimeric reads
+
+```bash
+# Reads whose pair crosses a human/HPV boundary
+samtools view -d XC: human_best.bam
+
+# Only human-side breakpoint-spanning reads (exclude supplementaries)
+samtools view -F 2048 -d XC: human_best.bam
+
+# Identify the other species a read is chimeric with
+samtools view -d XC:hpv human_best.bam
+```
 
 ---
 

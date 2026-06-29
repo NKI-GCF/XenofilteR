@@ -3,9 +3,9 @@ use crate::aln_stream::AlignmentStream;
 use crate::config::{Config, StripReadSuffix};
 use crate::filter_algorithm::hash_lookup::HashLookup;
 use crate::tests::create_record;
-use anyhow::Result;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::smallvec;
+use crate::Error;
 
 fn config() -> Config {
     Config {
@@ -21,14 +21,14 @@ fn make_lookup(
     stream0: Vec<RecordBuf>,
     stream1: Vec<RecordBuf>,
     cfg: Config,
-) -> Result<HashLookup<RecordBuf>> {
+) -> Result<HashLookup<RecordBuf>, Error> {
     let s0 = Box::new(MockStream::new(0, stream0)) as Box<dyn AlignmentStream<RecordBuf>>;
     let s1 = Box::new(MockStream::new(1, stream1)) as Box<dyn AlignmentStream<RecordBuf>>;
     HashLookup::new(cfg, smallvec![s0, s1], [None, None], [None, None])
 }
 
 #[test]
-fn test_hash_perfect_vs_imperfect_stream0_wins() -> Result<()> {
+fn test_hash_perfect_vs_imperfect_stream0_wins() -> Result<(), Error> {
     let s0 = vec![create_record(b"R1", "10M", &[], &[], "10", false)?];
     let s1 = vec![create_record(b"R1", "5M5S", &[], &[], "5", false)?];
     let mut h = make_lookup(s0, s1, config())?;
@@ -39,7 +39,7 @@ fn test_hash_perfect_vs_imperfect_stream0_wins() -> Result<()> {
 }
 
 #[test]
-fn test_hash_perfect_vs_imperfect_stream1_wins() -> Result<()> {
+fn test_hash_perfect_vs_imperfect_stream1_wins() -> Result<(), Error> {
     let s0 = vec![create_record(b"R1", "5M5S", &[], &[], "5", false)?];
     let s1 = vec![create_record(b"R1", "10M", &[], &[], "10", false)?];
     let mut h = make_lookup(s0, s1, config())?;
@@ -50,7 +50,7 @@ fn test_hash_perfect_vs_imperfect_stream1_wins() -> Result<()> {
 }
 
 #[test]
-fn test_hash_tie_is_ambiguous() -> Result<()> {
+fn test_hash_tie_is_ambiguous() -> Result<(), Error> {
     let s0 = vec![create_record(b"R1", "10M", &[], &[], "10", false)?];
     let s1 = vec![create_record(b"R1", "10M", &[], &[], "10", false)?];
     let mut h = make_lookup(s0, s1, config())?;
@@ -61,7 +61,7 @@ fn test_hash_tie_is_ambiguous() -> Result<()> {
 }
 
 #[test]
-fn test_hash_interleaved_streams() -> Result<()> {
+fn test_hash_interleaved_streams() -> Result<(), Error> {
     // R1 arrives in stream0 first, then R2; stream1 has R2 first then R1.
     let s0 = vec![
         create_record(b"R1", "10M", &[], &[], "10", false)?,
@@ -79,7 +79,7 @@ fn test_hash_interleaved_streams() -> Result<()> {
 }
 
 #[test]
-fn test_hash_unmapped_vs_mapped() -> Result<()> {
+fn test_hash_unmapped_vs_mapped() -> Result<(), Error> {
     let s0 = vec![create_record(b"R1", "", &[b'A'; 10], &[30; 10], "", false)?];
     let s1 = vec![create_record(b"R1", "10M", &[], &[], "10", false)?];
     let mut h = make_lookup(s0, s1, config())?;
@@ -90,7 +90,7 @@ fn test_hash_unmapped_vs_mapped() -> Result<()> {
 }
 
 #[test]
-fn test_hash_suffix_stripping() -> Result<()> {
+fn test_hash_suffix_stripping() -> Result<(), Error> {
     let cfg = Config {
         strip_read_suffix: StripReadSuffix::True,
         gap_open: 6.0,
@@ -108,7 +108,7 @@ fn test_hash_suffix_stripping() -> Result<()> {
 }
 
 #[test]
-fn test_hash_paired_end_both_mates_grouped() -> Result<()> {
+fn test_hash_paired_end_both_mates_grouped() -> Result<(), Error> {
     let s0 = vec![
         create_record(b"R1", "10M", &[], &[], "10", false)?,
         create_record(b"R1", "10M", &[], &[], "10", true)?,
@@ -125,7 +125,7 @@ fn test_hash_paired_end_both_mates_grouped() -> Result<()> {
 }
 
 #[test]
-fn test_hash_multiple_fragments() -> Result<()> {
+fn test_hash_multiple_fragments() -> Result<(), Error> {
     let s0 = vec![
         create_record(b"R1", "10M", &[], &[], "10", false)?,
         create_record(b"R2", "10M", &[], &[], "10", false)?,

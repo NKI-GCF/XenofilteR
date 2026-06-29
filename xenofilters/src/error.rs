@@ -1,5 +1,4 @@
 use thiserror::Error;
-use std::result::Result as StdResult;
 use noodles::sam::alignment::record::cigar::Op;
 use std::path::PathBuf;
 
@@ -22,6 +21,15 @@ pub(crate) enum Error {
     #[error("{bam_str} has no records")]
     BamHasNoRecords { bam_str: String },
 
+    #[error("Input read names do not have /1 or /2 suffixes, but strip_read_suffix is true.")]
+    ReadNamesMissingSuffixes,
+
+    #[error( "Input read names have /1 or /2 suffixes, but strip_read_suffix is false.")]
+    ReadNamesHaveSuffixes,
+
+    #[error("All input BAMs must be either paired-end or single-end.")]
+    MixedPairedAndSingleEnd,
+
     #[error("Record has no name")]
     RecordHasNoName,
 
@@ -30,6 +38,9 @@ pub(crate) enum Error {
 
     #[error("Cannot un-next more than one record")]
     CannotUnNext,
+
+    #[error("Input alignments must have the same read order.")]
+    InputAlignmentsMustHaveSameReadOrder,
 
     #[error("No BAM reader available for seek")]
     NoBamReaderForSeek,
@@ -40,6 +51,10 @@ pub(crate) enum Error {
     #[error("MockStream: no record at virtual offset {virtual_offset}")]
     MockStreamNoRecordAtVirtualOffset { virtual_offset: u64 },
 
+    #[error("--matching-algorithm hashlookup|collated requires exactly 2 alignment streams")]
+    AlgoRequiresTwoStreams,
+
+
     #[error("BAM read error: {0}")]
     BamReadError(String),
 
@@ -48,6 +63,10 @@ pub(crate) enum Error {
 
     #[error("fetch_by_virtual_offset not supported for this stream type")]
     FetchByVirtualOffsetNotSupported,
+
+    #[error("Coordinate-sorted input detected; \
+                     use --matching-algorithm hashlookup or collated.")]
+    CoordinateSortedInputDetected,
 
     #[error("No stream {nr}")]
     NoStream { nr: usize },
@@ -140,10 +159,10 @@ pub(crate) enum Error {
     BcfContigMissing { chrom_idx: usize },
 
     #[error("Invalid position {0}")]
-    InvalidPosition(i64),
+    InvalidPosition(usize),
 
     #[error("Unknown CIGAR op {0}")]
-    UnknownCigarOp(char),
+    UnknownCigarOp(u32),
 
     #[error("Invalid CIGAR character: {c}")]
     InvalidCigarChar { c: char },
@@ -206,6 +225,9 @@ pub(crate) enum Error {
     #[error("MdCigFlags already consumed for index {idx}")]
     MdCigFlagsAlreadyConsumed { idx: usize },
 
+    #[error("alignment {i} still has reads")]
+    AlignmentStillHasReads { i: usize },
+
     // --- Scoring Workers & Concurrency ---
     #[error("Missing driving records for full scoring")]
     MissingDrivingRecords,
@@ -213,8 +235,11 @@ pub(crate) enum Error {
     #[error("Missing lookup records for full scoring")]
     MissingLookupRecords,
 
-    //#[error("Score error stream {aln_idx}: {source}")]
-    //ScoreStreamError { aln_idx: usize, source: String },
+    #[error("alignment {j} still has reads after parallel processing")]
+    AlignmentStillHasReadsAfterParallelProcessing { j: usize },
+
+    #[error("Score error stream {0}: {1}")]
+    ScoreStreamError (usize, String),
 
     #[error("Scorer worker exited unexpectedly")]
     ScorerWorkerExited,

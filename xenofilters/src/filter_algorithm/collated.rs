@@ -23,7 +23,6 @@ use crate::filter_algorithm::line_by_line::{ordering::Decision, Scratch, READ_CT
 use crate::penalty::Penalty;
 use crate::region::tabix_query::{TabixBed, TabixVcf};
 use crate::variant::FragEvalVec;
-use anyhow::{anyhow, Result};
 use noodles::sam::alignment::record::cigar::Cigar;
 use noodles::sam::alignment::record::data::field::Tag;
 use noodles::sam::alignment::record_buf::data::field::Value;
@@ -32,6 +31,7 @@ use reader::{canonical_name, CollatedReader};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use crate::alignment::{pre_assess_alignments, PreAssessResult};
+use crate::Error;
 
 
 pub(crate) struct CollatedMatcher<R: SimpleRec> {
@@ -55,7 +55,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
         bed: [Option<TabixBed>; 2],
         vcf: [Option<TabixVcf>; 2],
-    ) -> Result<Self> {
+    ) -> Result<Self, Error> {
         assert_eq!(
             aln.len(),
             2,
@@ -105,7 +105,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
     //
     // Output order is NOT guaranteed (acceptable for Collated).
     // N-STREAM: scales to N waiting maps; memory is O(name-order skew × streams).
-    pub(crate) fn process(&mut self) -> Result<()> {
+    pub(crate) fn process(&mut self) -> Result<(), Error> {
         loop {
             let fa = self.a.next_fragment()?;
             let fb = self.b.next_fragment()?;
@@ -132,7 +132,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         Ok(())
     }
 
-    fn handle_fragment(&mut self, frag: FragmentState<R>) -> Result<()> {
+    fn handle_fragment(&mut self, frag: FragmentState<R>) -> Result<(), Error> {
         let nr = frag.get_nr();
         let key = canonical_name(frag.first_qname(), self.strip);
         if nr == 0 {
@@ -155,7 +155,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         &mut self,
         frag: &FragmentState<R>,
         aln_idx: usize,
-    ) -> Result<bool> {
+    ) -> Result<bool, Error> {
         if self.bed[aln_idx].is_none() && self.vcf[aln_idx].is_none() {
             return Ok(false);
         }
@@ -201,7 +201,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         }
         Ok(false)
     }
-    fn score_pair(&mut self, a: FragmentState<R>, b: FragmentState<R>) -> Result<()> {
+    fn score_pair(&mut self, a: FragmentState<R>, b: FragmentState<R>) -> Result<(), Error> {
         // Tier 1: unmapped fast-path — before BED/VCF I/O.
         let mut ord = a.partial_cmp(&b);
         if let Some(o) = ord {
@@ -258,7 +258,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         a: FragmentState<R>,
         b: FragmentState<R>,
         ord: std::cmp::Ordering,
-    ) -> Result<()> {
+    ) -> Result<(), Error> {
         use std::cmp::Ordering::{Equal, Greater, Less};
         match ord {
             Greater => {
@@ -292,7 +292,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         state: &FragmentState<R>,
         mcfs: SmallVec<[MdCigFlags<'_>; READ_CT]>,
         aln_idx: usize,
-    ) -> Result<f64> {
+    ) -> Result<f64, Error> {
         let mut segment: SmallVec<[&R; READ_CT]> = SmallVec::new();
         let mut seg_mcfs: SmallVec<[MdCigFlags; READ_CT]> = SmallVec::new();
         let mut mcfs_opt: SmallVec<[Option<MdCigFlags>; READ_CT]> =
@@ -310,7 +310,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         for idx in state.order_mates() {
             let flags = state
                 .flags(idx)
-                .ok_or_else(|| anyhow!("No flags for record {idx}"))?;
+                .ok_or(Error::NoFlagsForRecord {idx})?;
 
             if flags.is_secondary() {
                 // secondary alignments are not scored, but may be included in the output
@@ -331,15 +331,15 @@ impl<R: SimpleRec> CollatedMatcher<R> {
                 let tid = rec
                     .ref_seq_id()
                     .transpose()?
-                    .ok_or_else(|| anyhow!("No reference sequence ID"))?;
+                    .ok_or(Error::NoRefSeqId)?;
                 let start = rec
                     .alignment_start()
                     .transpose()?
-                    .ok_or_else(|| anyhow!("No alignment start"))?
+                    .ok_or(Error::NoAlignmentStart)?
                     .get();
                 let cig_len = mcfs_opt[idx]
                     .as_ref()
-                    .ok_or_else(|| anyhow!("MdCigFlags missing for {idx}"))?
+                    .ok_or(Error::MdCigFlagsMissing {idx})?
                     .get_cigar()
                     .len();
                 let end = start + cig_len;
@@ -353,28 +353,27 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             seg_mcfs.push(
                 mcfs_opt[idx]
                     .take()
-                    .ok_or_else(|| anyhow!("MdCigFlags consumed for {idx}"))?,
+                    .ok_or(Error::MdCigFlagsConsumed { idx })?,
             );
         }
 
         let base_score = Fragment::new(&self.penalties, segment, seg_mcfs)?
             .score(&mut self.scratch, &mut dvnt)
-            .map_err(|e| {
-                anyhow!(
-                    "Error scoring fragment for alignment {aln_idx}: {}\n{}",
-                    e,
-                    state
+            .map_err(|e| Error::FragmentScoringError{
+                aln_idx, 
+                message: e.to_string(),
+                state: state
                         .get_records()
                         .iter()
                         .map(stringify_record)
                         .collect::<Vec<_>>()
                         .join("\n")
-                )
-            })?;
+                }
+            )?;
         Ok(base_score + supplementary_penalty)
     }
 
-    fn emit_discarded(&mut self, mut frag: FragmentState<R>) -> Result<()> {
+    fn emit_discarded(&mut self, mut frag: FragmentState<R>) -> Result<(), Error> {
         let nr = frag.get_nr();
         for r in frag.drain_records() {
             let stream = if nr == 0 { &mut self.a } else { &mut self.b };
@@ -390,7 +389,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         mut frag: FragmentState<R>,
         decision: Option<&Decision>,
         best_state: Option<bool>,
-    ) -> Result<()> {
+    ) -> Result<(), Error> {
         let nr = frag.get_nr();
         let is_ambiguous = best_state.is_none();
         for r in frag.drain_records() {

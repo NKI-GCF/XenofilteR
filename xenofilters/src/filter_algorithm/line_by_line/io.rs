@@ -1,11 +1,11 @@
 use super::chimeric::ChimericDecision;
 use super::core::LineByLine;
 use crate::alignment::SimpleRec;
-use anyhow::Result;
 use noodles::sam::alignment::record::data::field::Tag;
 use noodles::sam::alignment::record_buf::data::field::Value;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use super::core::FragmentBuffer;
+use crate::Error;
 
 impl<R: SimpleRec> LineByLine<R> {
     /// Insert a single-byte aux tag into `rec`.
@@ -14,7 +14,7 @@ impl<R: SimpleRec> LineByLine<R> {
         rec: &mut RecordBuf,
         field: &[u8; 2],
         value: u8,
-    ) -> Result<()> {
+    ) -> Result<(), Error> {
         let tag = Tag::new(field[0], field[1]);
         let val = Value::from(value);
         rec.data_mut().insert(tag, val);
@@ -32,7 +32,7 @@ impl<R: SimpleRec> LineByLine<R> {
         i: usize,
         rec: RecordBuf,
         best_state: Option<bool>,
-    ) -> Result<()> {
+    ) -> Result<(), Error> {
         match (i, best_state) {
             (i, Some(false)) => self.routing_counters[i * 4] += 1,
             (i, Some(true)) => self.routing_counters[1 + (i * 4)] += 1,
@@ -77,40 +77,60 @@ impl<R: SimpleRec> LineByLine<R> {
         &mut self,
         best: &mut FragmentBuffer<R>,
         decision: ChimericDecision,
-    ) -> Result<()> {
-        let (chimeric_a, chimeric_b) = match decision {
-            ChimericDecision::Chimeric { stream_a, stream_b } => (stream_a, stream_b),
-            ChimericDecision::Normal => unreachable!("emit_chimeric called on non-chimeric"),
+    ) -> Result<(), Error> {
+        let (chimeric_a, chimeric_b, kind) = match decision {
+            ChimericDecision::Chimeric { stream_a, stream_b, kind } => {
+                (stream_a, stream_b, kind)
+            }
+            ChimericDecision::Normal => {
+                unreachable!("emit_chimeric called on non-chimeric decision")
+            }
         };
 
         let label_a = self.chimeric_label(chimeric_a);
         let label_b = self.chimeric_label(chimeric_b);
+        let tag_xc  = Tag::new(b'X', b'C');
 
-        let tag_xc = Tag::new(b'X', b'C');
+        tracing::debug!(
+            kind = ?kind,
+            stream_a = chimeric_a,
+            stream_b = chimeric_b,
+            label_a  = %label_a,
+            label_b  = %label_b,
+            "Emitting chimeric fragment"
+        );
 
-        best.drain(..).try_for_each(|mut state| -> Result<()> {
-            let nr = state.get_nr();
+        best.drain(..).try_for_each(|mut state| -> Result<(), Error> {
+            let nr               = state.get_nr();
             let is_chimeric_stream = nr == chimeric_a || nr == chimeric_b;
 
             if is_chimeric_stream {
-                // The XC:Z value is the OTHER stream's label.
                 let other_label = if nr == chimeric_a { &label_b } else { &label_a };
                 let xc_value    = Value::String(other_label.as_bytes().into());
 
-                state.drain_records().try_for_each(|r| -> Result<()> {
+                // For ReadSplit chimerism, stream A may contain a supplementary
+                // alignment that is a false-positive mapping of the split read's
+                // complementary portion to the wrong reference.  It is written
+                // here with the XC:Z tag so that its provenance is clear;
+                // downstream tools can identify it via the supplementary flag
+                // (SAM 0x800 / `samtools view -F 2048`).
+                //
+                // A future `--chimeric-suppress-supplementary` option could
+                // silently drop these records.
+                state.drain_records().try_for_each(|r| -> Result<(), Error> {
                     let header = self.aln[nr].header();
                     let mut rb = r.as_record_buf(header)?;
                     rb.data_mut().insert(tag_xc, xc_value.clone());
                     self.routing_counters[3 + (nr * 4)] += 1;
-                    self.aln[nr].write_record(rb, Some(true))  // → assigned output
+                    self.aln[nr].write_record(rb, Some(true))
                 })
             } else {
-                // Streams outside the chimeric pair are discarded.
-                state.drain_records().try_for_each(|r| -> Result<()> {
+                // Streams outside the chimeric pair are discarded normally.
+                state.drain_records().try_for_each(|r| -> Result<(), Error> {
                     let header = self.aln[nr].header();
                     let rb = r.as_record_buf(header)?;
-                    self.routing_counters[nr * 4] += 1;
-                    self.aln[nr].write_record(rb, Some(false)) // → filtered output
+                    self.routing_counters[nr << 1] += 1;
+                    self.aln[nr].write_record(rb, Some(false))
                 })
             }
         })
@@ -125,7 +145,7 @@ mod tests {
     use smallvec::smallvec;
 
     #[test]
-    fn test_add_aux_tags_inserts_expected_tag_and_value() -> Result<()> {
+    fn test_add_aux_tags_inserts_expected_tag_and_value() -> Result<(), Error> {
         let mut lbl: LineByLine<RecordBuf> = LineByLine::new(Config::default(), smallvec![])?;
         let mut rec = create_record(b"r", "5M", &[], &[], "5", false)?;
         lbl.add_aux_tags(&mut rec, b"XF", 42)?;

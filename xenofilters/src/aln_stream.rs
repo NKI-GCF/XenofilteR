@@ -5,7 +5,6 @@ use crate::config::{Config, StripReadSuffix};
 use crate::variant::{
     parse_population_record, parse_sample_record, Population, Sample, Store, StoreTrait,
 };
-use anyhow::{anyhow, ensure, Result};
 use noodles::bam::{io::Reader as BamReader, record::Record};
 use noodles::bgzf::io::Reader as BgzfReader;
 use noodles::bgzf::VirtualPosition;
@@ -16,21 +15,20 @@ use std::io::{Read as ioRead, Seek as ioSeek};
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::Arc;
+use crate::Error;
 
 pub(crate) trait AlignmentStream<R: SimpleRec> {
     fn next_qname(&self) -> &[u8];
-    fn un_next(&mut self, rec: R) -> Result<()>;
-    fn next_rec(&mut self) -> Result<Option<R>>;
-    fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<()>;
-    fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<()>;
+    fn un_next(&mut self, rec: R) -> Result<(), Error>;
+    fn next_rec(&mut self) -> Result<Option<R>, Error>;
+    fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<(), Error>;
+    fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<(), Error>;
     fn variant_store(&self) -> Option<Arc<dyn StoreTrait>>;
     fn header(&self) -> &Header;
     /// Seek to a BGZF virtual offset and read one full record for pass-2 output.
     /// Returns `Err` for stream types that do not support seeking (e.g. mock streams).
-    fn fetch_by_virtual_offset(&mut self, _virtual_offset: u64) -> Result<RecordBuf> {
-        Err(anyhow!(
-            "fetch_by_virtual_offset not supported for this stream type"
-        ))
+    fn fetch_by_virtual_offset(&mut self, _virtual_offset: u64) -> Result<RecordBuf, Error> {
+        Err(Error::FetchByVirtualOffsetNotSupported)
     }
 }
 
@@ -72,7 +70,7 @@ impl<R> AlnStream<R>
 where
     R: SimpleRec + FromBamRecord,
 {
-    pub(crate) fn new(opt: &mut Config, i: usize) -> Result<Self> {
+    pub(crate) fn new(opt: &mut Config, i: usize) -> Result<Self, Error> {
         let bam_str = opt.alignment[i].as_str();
         let file = File::open(bam_str)?;
         let mut bam = BamReader::new(file);
@@ -91,38 +89,32 @@ where
                 .split(|&b| b == b'\n')
                 .map(|s| s.split(|&b| b == b'\t').collect::<Vec<_>>())
             {
-                ensure!(
-                    parts.len() < 3
-                        || parts[0] != b"@HD"
-                        || (parts[2] != b"SO:coordinate" && parts[2] != b"GO:reference"),
-                    "Coordinate-sorted input detected; \
-                     use --matching-algorithm hashlookup or collated."
-                );
+                if parts.len() >= 3 && parts[0] == b"@HD" && (parts[2] == b"SO:coordinate" || parts[2] == b"GO:reference") {
+                    return Err(Error::CoordinateSortedInputDetected);
+                }
             }
         }
 
         let test_record = match bam.records().next() {
             Some(Ok(rec)) => rec,
-            Some(Err(e)) => return Err(anyhow!(e)),
-            None => return Err(anyhow!("{bam_str} has no records")),
+            Some(Err(e)) => return Err(e.into()),
+            None => return Err(Error::BamHasNoRecords {bam_str: bam_str.to_string()}),
         };
 
         let name = test_record
             .name()
-            .ok_or_else(|| anyhow!("Record has no name"))?;
+            .ok_or(Error::RecordHasNoReadName)?;
         opt.strip_read_suffix = match opt.strip_read_suffix {
             StripReadSuffix::True => {
-                ensure!(
-                    name.ends_with(b"/1") || name.ends_with(b"/2"),
-                    "Input read names do not have /1 or /2 suffixes, but strip_read_suffix is true."
-                );
+                if !name.ends_with(b"/1") && !name.ends_with(b"/2") {
+                    return Err(Error::ReadNamesMissingSuffixes);
+                }
                 StripReadSuffix::True
             }
             StripReadSuffix::False => {
-                ensure!(
-                    !name.ends_with(b"/1") && !name.ends_with(b"/2"),
-                    "Input read names have /1 or /2 suffixes, but strip_read_suffix is false."
-                );
+                if name.ends_with(b"/1") || name.ends_with(b"/2") {
+                    return Err(Error::ReadNamesHaveSuffixes);
+                }
                 StripReadSuffix::False
             }
             StripReadSuffix::Auto => {
@@ -137,10 +129,9 @@ where
         opt.is_paired = if i == 0 && opt.is_paired.is_none() {
             Some(test_record.flags().is_segmented())
         } else {
-            ensure!(
-                opt.is_paired == Some(test_record.flags().is_segmented()),
-                "All input BAMs must be either paired-end or single-end."
-            );
+            if opt.is_paired != Some(test_record.flags().is_segmented()) {
+                return Err(Error::MixedPairedAndSingleEnd);
+            }
             opt.is_paired
         };
 
@@ -213,15 +204,15 @@ where
             .map_or(b"", |n| n.as_ref())
     }
 
-    fn un_next(&mut self, rec: R) -> Result<()> {
+    fn un_next(&mut self, rec: R) -> Result<(), Error> {
         if self.next.is_some() {
-            return Err(anyhow!("Cannot un-next more than one record"));
+            return Err(Error::CannotUnNext);
         }
         self.next = Some(rec);
         Ok(())
     }
 
-    fn next_rec(&mut self) -> Result<Option<R>> {
+    fn next_rec(&mut self) -> Result<Option<R>, Error> {
         let header = &self.header;
         Ok(self
             .next
@@ -236,11 +227,11 @@ where
             .transpose()?)
     }
 
-    fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<()> {
+    fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<(), Error> {
         self.output_mode.write(rec, is_best, &self.header)
     }
 
-    fn init_writers(&mut self, opt: &Config, i: usize) -> Result<()> {
+    fn init_writers(&mut self, opt: &Config, i: usize) -> Result<(), Error> {
         let add_pg = !opt.no_program_line;
         let threads = self.threads.into();
 
@@ -297,19 +288,19 @@ where
         &self.header
     }
 
-    fn fetch_by_virtual_offset(&mut self, virtual_offset: u64) -> Result<RecordBuf> {
+    fn fetch_by_virtual_offset(&mut self, virtual_offset: u64) -> Result<RecordBuf, Error> {
         let vpos = VirtualPosition::from(virtual_offset);
         let bam = self
             .bam
             .as_mut()
-            .ok_or_else(|| anyhow!("No BAM reader available for seek"))?;
+            .ok_or_else(|| Error::NoBamReaderForSeek)?;
         bam.seek_vpos(vpos)?;
         let rec = bam
             .next_record() // ← use trait method
-            .ok_or_else(|| anyhow!("No record at virtual offset {virtual_offset}"))?
-            .map_err(|e| anyhow!("BAM read error: {e}"))?;
+            .ok_or(Error::NoRecordAtVirtualOffset { virtual_offset })?
+            .map_err(|e| Error::BamReadError(format!("{e}")))?;
         RecordBuf::try_from_alignment_record(&self.header, &rec)
-            .map_err(|e| anyhow!("RecordBuf conversion: {e}"))
+            .map_err(|e| Error::RecordBufConversion(format!("{e}")))
     }
 }
 
