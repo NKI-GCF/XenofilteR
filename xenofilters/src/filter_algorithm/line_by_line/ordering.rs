@@ -38,18 +38,17 @@
 //! candidate rather than one per read segment.
 
 use super::core::{FragmentBuffer, LineByLine, Scratch};
-use crate::alignment::{pre_assess_alignments, PreAssessResult};
 use crate::alignment::{FragmentState, MdCigFlags, SimpleRec};
-use crate::filter_algorithm::line_by_line::{READ_CT, ChimericDecision, detect_chimeric_event};
+use crate::filter_algorithm::line_by_line::{READ_CT, MAX_STREAMS, ChimericDecision, detect_chimeric_event};
 use crate::variant::StoreTrait;
 use crossbeam_channel::{bounded, Receiver, Sender};
 use noodles::sam::alignment::RecordBuf;
 use smallvec::{smallvec, SmallVec};
-use std::cmp::Ordering;
 use std::f64::consts::LN_10;
 use std::sync::Arc;
 use std::thread;
 use crate::Error;
+use crate::alignment::{BaseOp, ScoreOpIter};
 
 // -- Public decision type ------------------------------------------------------
 
@@ -124,53 +123,136 @@ fn worker_loop(rx: Receiver<FragmentBundle>, tx: Sender<ScoredFragment>) {
 /// Mirrors `LineByLine::resolve` + `decide_from_delta` + `apply_ordering` but
 /// operates on owned data with no `&mut self`.
 fn score_bundle(
-    best: &mut FragmentBuffer<RecordBuf>,
-    stores: &SmallVec<[Option<Arc<dyn StoreTrait>>; 2]>,
-    ctx: &ScoringContext,
+    best:    &mut FragmentBuffer<RecordBuf>,
+    stores:  &SmallVec<[Option<Arc<dyn StoreTrait>>; 2]>,
+    ctx:     &ScoringContext,
     scratch: &mut Scratch,
 ) -> Option<Decision> {
-    while best.len() > 1 {
-        let len_before = best.len();
+    if best.len() <= 1 { return None; }
 
-        let mut ord = best[0].partial_cmp(&best[1]);
-        if ord.is_none() {
-            let (mcfs1, mcfs2) = match best[0].cmp_perfect(&best[1], &mut ord) {
-                Ok(pair) => pair,
-                Err(_) => return None,
-            };
-            if ord.is_none() {
-                if let PreAssessResult::EarlyDecision(pa_ord) =
-                    pre_assess_alignments(&mcfs1, &mcfs2)
-                {
-                    drop(mcfs1);
-                    drop(mcfs2);
-                    let dec = apply_ordering_owned(best, pa_ord, ctx);
-                    if best.len() == len_before {
-                        return dec;
-                    }
-                    continue;
-                }
-                let a = &best[0];
-                let b = &best[1];
-                let store1 = stores.get(a.get_nr()).and_then(|s| s.as_deref());
-                let store2 = stores.get(b.get_nr()).and_then(|s| s.as_deref());
-                let s1 = score_candidate_owned(a, mcfs1, store1, ctx, scratch).ok()?;
-                let s1_vd = scratch.last_variant_delta;
-                let s2 = score_candidate_owned(b, mcfs2, store2, ctx, scratch).ok()?;
-                let s2_vd = scratch.last_variant_delta;
-                let dec = decide_from_delta_owned(best, s1 - s2, s1_vd, s2_vd, ctx);
-                if best.len() == len_before {
-                    return dec;
-                }
-                continue;
+    // -- Tier 1 ------------------------------------------------------------
+    {
+        let has_mapped = best.iter().any(|s| !s.is_all_unmapped());
+        if has_mapped {
+            for i in (0..best.len()).rev() {
+                if best[i].is_all_unmapped() { best.remove(i); }
             }
         }
-        let dec = apply_ordering_owned(best, ord.unwrap(), ctx);
-        if best.len() == len_before {
-            return dec;
+        if best.len() == 1 { return None; }
+        if !has_mapped     { return ctx.add_decision_tag.then_some(Decision::Ambiguous); }
+    }
+
+    // -- Single scan pass (mirrors run_tournament) -------------------------
+    let mut is_perfect     = [false;             MAX_STREAMS];
+    let mut match_bases    = [0usize;            MAX_STREAMS];
+    let mut supp_count_arr = [0usize;            MAX_STREAMS];
+    let mut nw_scores      = [f64::NEG_INFINITY; MAX_STREAMS];
+    let mut vdeltas        = [0.0f64;            MAX_STREAMS];
+    let mut any_perfect    = false;
+    let mut any_imperfect  = false;
+
+    for i in 0..best.len() {
+        let nr   = best[i].get_nr();
+        let mcfs = best[i].build_mcfs().ok()?;
+
+        let perf = mcfs.iter().filter(|m| !m.is_supplementary())
+                               .all(|m| m.is_perfect());
+        is_perfect[nr] = perf;
+        if perf { any_perfect = true; } else { any_imperfect = true; }
+
+        let mut pmb = 0usize;
+        let mut sc  = 0usize;
+        for mcf in &mcfs {
+            if mcf.is_supplementary() { continue; }
+            for op in ScoreOpIter::new(mcf) {
+                if matches!(op, Ok(BaseOp::Match)) { pmb += 1; }
+            }
+            sc += mcf.supp_count();
+        }
+        match_bases[nr]    = pmb;
+        supp_count_arr[nr] = sc;
+
+        if !perf {
+            let store = stores.get(nr).and_then(|s| s.as_deref());
+            nw_scores[nr] =
+                score_candidate_owned(&best[i], mcfs, store, ctx, scratch).ok()?;
+            vdeltas[nr] = scratch.last_variant_delta;
         }
     }
-    None
+
+    // -- Tier 2 ------------------------------------------------------------
+    if any_perfect && any_imperfect {
+        for i in (0..best.len()).rev() {
+            if !is_perfect[best[i].get_nr()] { best.remove(i); }
+        }
+        return if best.len() == 1 {
+            ctx.add_decision_tag.then_some(Decision::First)
+        } else {
+            ctx.add_decision_tag.then_some(Decision::Ambiguous)
+        };
+    }
+    if !any_imperfect {
+        return ctx.add_decision_tag.then_some(Decision::Ambiguous);
+    }
+
+    // -- Tier 2.5 ----------------------------------------------------------
+    {
+        let max_m = best.iter().map(|s| match_bases[s.get_nr()]).max()?;
+        let min_s = best.iter()
+            .filter(|s| match_bases[s.get_nr()] == max_m)
+            .map(|s| supp_count_arr[s.get_nr()])
+            .min()?;
+        if best.iter().any(|s| {
+            let nr = s.get_nr();
+            match_bases[nr] < max_m || supp_count_arr[nr] > min_s
+        }) {
+            for i in (0..best.len()).rev() {
+                let nr = best[i].get_nr();
+                if match_bases[nr] < max_m || supp_count_arr[nr] > min_s {
+                    best.remove(i);
+                }
+            }
+            if best.len() == 1 {
+                return ctx.add_decision_tag.then_some(Decision::First);
+            }
+        }
+    }
+
+    // -- Tier 3 ------------------------------------------------------------
+    let max_score = best.iter()
+        .map(|s| nw_scores[s.get_nr()])
+        .fold(f64::NEG_INFINITY, f64::max);
+
+    for i in (0..best.len()).rev() {
+        if nw_scores[best[i].get_nr()] < max_score - ctx.ambiguous_log_threshold {
+            best.remove(i);
+        }
+    }
+
+    if best.len() != 1 {
+        return ctx.add_decision_tag.then_some(Decision::Ambiguous);
+    }
+    if !ctx.add_decision_tag { return None; }
+
+    let winner_nr = best[0].get_nr();
+    let second_best = nw_scores.iter().enumerate()
+        .filter(|&(nr, &s)| nr != winner_nr && s > f64::NEG_INFINITY)
+        .map(|(_, &s)| s)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let margin = if second_best.is_finite() { max_score - second_best } else { f64::MAX };
+
+    if margin > ctx.ambiguous_log_threshold {
+        let phred = if margin.is_finite() {
+            ((10.0 * margin / LN_10) as u32).min(255) as u8
+        } else { 255 };
+        Some(if vdeltas[winner_nr] > 0.0 {
+            Decision::VariantRescued(phred)
+        } else {
+            Decision::PhredConfidence(phred)
+        })
+    } else {
+        Some(Decision::Ambiguous)
+    }
 }
 
 /// Score one candidate using its owned [`RecordBuf`]s.
@@ -271,60 +353,6 @@ fn score_candidate_owned(
     Ok(base_score + supplementary_penalty)
 }
 
-fn decide_from_delta_owned(
-    best: &mut FragmentBuffer<RecordBuf>,
-    mut delta: f64,
-    s1_vd: f64,
-    s2_vd: f64,
-    ctx: &ScoringContext,
-) -> Option<Decision> {
-    match delta {
-        d if d > ctx.ambiguous_log_threshold => {
-            best.remove(1); // best[0] wins; discard challenger
-            if ctx.add_decision_tag {
-                let phred = (10.0 * delta / LN_10).min(255.0) as u8;
-                return Some(if s1_vd > 0.0 {
-                    Decision::VariantRescued(phred)
-                } else {
-                    Decision::PhredConfidence(phred)
-                });
-            }
-        }
-        d if d < -ctx.ambiguous_log_threshold => {
-            best.remove(0); // best[1] wins; discard leader
-            delta = -delta;
-            if ctx.add_decision_tag {
-                let phred = (10.0 * delta / LN_10).min(255.0) as u8;
-                return Some(if s2_vd > 0.0 {
-                    Decision::VariantRescued(phred)
-                } else {
-                    Decision::PhredConfidence(phred)
-                });
-            }
-        }
-        _ => return ctx.add_decision_tag.then_some(Decision::Ambiguous),
-    }
-    None
-}
-
-fn apply_ordering_owned(
-    best: &mut FragmentBuffer<RecordBuf>,
-    ord: Ordering,
-    ctx: &ScoringContext,
-) -> Option<Decision> {
-    match ord {
-        Ordering::Greater => {
-            best.remove(1);
-            ctx.add_decision_tag.then_some(Decision::First)
-        }
-        Ordering::Less => {
-            best.remove(0);
-            ctx.add_decision_tag.then_some(Decision::Last)
-        }
-        Ordering::Equal => ctx.add_decision_tag.then_some(Decision::Ambiguous),
-    }
-}
-
 // -- LineByLine::process — dispatcher -----------------------------------------
 
 impl<R: SimpleRec> LineByLine<R> {
@@ -363,38 +391,15 @@ impl<R: SimpleRec> LineByLine<R> {
                     }
                 }
 
-                // -- Normal tournament cascade -----------------------------
+                // -- Tournament cascade (N-way round-robin) ----------------
+                //
+                // Each tier runs in O(N) over all streams simultaneously.
+                // Streams are eliminated in backward-sweep discard passes after
+                // each tier; emit_winners handles whatever remains in `best`.
+                //
+                // See `run_tournament` for the full tier description.
                 if best.len() > 1 {
-                    // Champion-vs-challenger sequential tournament.
-                    //
-                    // Each round compares best[0] (current leader) vs best[1] (next challenger).
-                    //   • Leader wins  → discard_at(1); leader stays at position 0.
-                    //   • Challenger wins → discard_at(0); challenger shifts to position 0
-                    //                       and becomes the new leader for the next round.
-                    //   • Tie detected → break; ALL remaining streams go to ambiguous output.
-                    //
-                    // Correctness: visiting pairs in order means a stream that beats [0]
-                    // immediately becomes the new [0] and must defeat every subsequent
-                    // challenger before being declared the winner.  No stream is silently
-                    // skipped.
-                    //
-                    // Known limitation: if best[0] = best[1] (tie) but best[2] > both,
-                    // best[2] never participates — all three go to ambiguous. A full
-                    // round-robin N-way tournament is tracked in ROADMAP v0.4.
-                    while best.len() > 1 {
-                        let len_before = best.len();
-                        decision = match self.resolve(&best)? {
-                            Resolution::Early(ord) =>
-                                self.apply_ordering(&mut best, ord)?,
-                            Resolution::NwDelta(d, s1_vd, s2_vd) =>
-                                self.decide_from_delta(&mut best, d, s1_vd, s2_vd)?,
-                        };
-                        // If best.len() did not decrease, no stream was eliminated:
-                        // the result was Equal / within ambiguous_threshold. Break to
-                        // avoid an infinite loop; emit_winners will route all remaining
-                        // streams to ambiguous output.
-                        if best.len() == len_before { break; }
-                    }
+                    decision = self.run_tournament(&mut best)?;
                 }
                 assert!(!best.is_empty());
                 self.emit_winners(&mut best, decision)?;
@@ -411,80 +416,231 @@ impl<R: SimpleRec> LineByLine<R> {
         Ok(())
     }
 
-    fn compute_score_delta<'b>(
-        &mut self,
-        state_a: &'b FragmentState<R>,
-        state_b: &'b FragmentState<R>,
-        mcfs1: SmallVec<[MdCigFlags<'b>; READ_CT]>,
-        mcfs2: SmallVec<[MdCigFlags<'b>; READ_CT]>,
-    ) -> Result<(f64, f64, f64), Error> {
-        let s1 = self.score_candidate(state_a, mcfs1, state_a.get_nr())?;
-        let s1_vd = self.scratch.last_variant_delta;
-        let s2 = self.score_candidate(state_b, mcfs2, state_b.get_nr())?;
-        let s2_vd = self.scratch.last_variant_delta;
-        Ok((s1 - s2, s1_vd, s2_vd))
-    }
-
-    fn resolve(&mut self, best: &FragmentBuffer<R>) -> Result<Resolution, Error> {
-        debug_assert!(best.len() >= 2, "resolve() requires at least 2 candidates");
-        // Always compare the current leader (best[0]) against the next
-        // challenger (best[1]).  The tournament loop in process_sequential
-        // ensures these are the only two streams in play per round.
-        let a = &best[0];
-        let b = &best[1];
-        let mut ord = a.partial_cmp(b);
-        if ord.is_none() {
-            let (mcfs1, mcfs2) = a.cmp_perfect(b, &mut ord)?;
-            if ord.is_none() {
-                if let PreAssessResult::EarlyDecision(pa_ord) =
-                    pre_assess_alignments(&mcfs1, &mcfs2)
-                {
-                    return Ok(Resolution::Early(pa_ord));
-                }
-                let (delta, s1_vd, s2_vd) = self.compute_score_delta(a, b, mcfs1, mcfs2)?;
-                return Ok(Resolution::NwDelta(delta, s1_vd, s2_vd));
-            }
-        }
-        Ok(Resolution::Early(ord.unwrap()))
-    }
-
-    fn decide_from_delta(
+    /// N-way round-robin tournament.
+    ///
+    /// Runs all scoring tiers in a single scan of `best`, storing per-stream
+    /// scalar results in fixed-size STACK arrays (N ≤ MAX_STREAMS = 32).
+    /// Discards happen after the scan in O(N) backward sweeps; no additional
+    /// heap containers are allocated.
+    ///
+    /// # Tier progression
+    ///
+    /// ```text
+    /// Tier 1   — unmapped filter      O(N) flag checks
+    /// Tier 2   — perfect/imperfect    O(N) MCF builds  (shared with tiers below)
+    /// Tier 2.5 — match-count max      O(N) ScoreOpIter walks per stream
+    /// Tier 3   — NW argmax            O(N) NW score evaluations
+    /// ```
+    ///
+    /// Each tier exits early when a winner is resolved; later tiers are skipped.
+    fn run_tournament(
         &mut self,
         best: &mut FragmentBuffer<R>,
-        mut delta: f64,
-        s1_vd: f64,
-        s2_vd: f64,
     ) -> Result<Option<Decision>, Error> {
-        match delta {
-            d if d > self.ambiguous_log_threshold => {
-                self.discard_at(best, 1)?; // best[0] wins; discard challenger
-                if self.add_decision_tag {
-                    let phred = (10.0 * delta / LN_10).min(255.0) as u8;
-                    return Ok(Some(if s1_vd > 0.0 {
-                        Decision::VariantRescued(phred)
-                    } else {
-                        Decision::PhredConfidence(phred)
-                    }));
-                }
-            }
-            d if d < -self.ambiguous_log_threshold => {
-                self.discard_at(best, 0)?; // best[1] wins; discard leader
-                delta = -delta;
-                if self.add_decision_tag {
-                    let phred = (10.0 * delta / LN_10).min(255.0) as u8;
-                    return Ok(Some(if s2_vd > 0.0 {
-                        Decision::VariantRescued(phred)
-                    } else {
-                        Decision::PhredConfidence(phred)
-                    }));
-                }
-            }
-            _ => return Ok(self.add_decision_tag.then_some(Decision::Ambiguous)),
+        if best.len() <= 1 {
+            return Ok(None);
         }
-        Ok(None)
+
+        // -- Tier 1: unmapped fast-path ------------------------------------
+        // Scan once to check whether ANY stream is mapped.
+        // If so, unmapped streams are discarded (backward sweep preserves indices).
+        {
+            let has_mapped = best.iter().any(|s| !s.is_all_unmapped());
+            if has_mapped {
+                for i in (0..best.len()).rev() {
+                    if best[i].is_all_unmapped() {
+                        self.discard_at(best, i)?;
+                    }
+                }
+            }
+            // Reached by both "all unmapped" (no discard) and "some unmapped" (discarded).
+            if best.len() == 1 {
+                return Ok(self.add_decision_tag.then_some(Decision::First));
+            }
+            if !has_mapped {
+                // Entire fragment is unmapped in every stream.
+                return Ok(self.add_decision_tag.then_some(Decision::Ambiguous));
+            }
+        }
+
+        // -- Single scan pass: MCF build + all tier metrics -----------------
+        //
+        // Per-stream results are stored indexed by `get_nr()` (the alignment stream
+        // number, 0..MAX_STREAMS).  This survives the backward-discard sweeps that
+        // follow: after removing elements from `best`, surviving fragments are
+        // looked up by `best[i].get_nr()`, not by their position in `best`.
+        //
+        // Stack arrays: N ≤ 32, total ≤ ~800 bytes.
+        let mut is_perfect     = [false;                MAX_STREAMS];
+        let mut match_bases    = [0usize;               MAX_STREAMS];
+        let mut supp_count_arr = [0usize;               MAX_STREAMS];
+        let mut nw_scores      = [f64::NEG_INFINITY;    MAX_STREAMS];
+        let mut vdeltas        = [0.0f64;               MAX_STREAMS];
+        let mut any_perfect    = false;
+        let mut any_imperfect  = false;
+
+        for i in 0..best.len() {
+            let nr = best[i].get_nr();
+
+            // `build_mcfs` borrows `best[i]` for lifetime 'r.  The borrow is
+            // immutable and released either when `mcfs` is moved into
+            // `score_candidate` (and eventually dropped inside it) or when
+            // `mcfs` drops at the end of this loop body.  In both cases the
+            // borrow is gone before the discard sweeps below mutably access
+            // `best`.
+            let mcfs = best[i].build_mcfs()?;
+
+            // -- Tier 2: perfection check ---------------------------------
+            let perf = mcfs
+                .iter()
+                .filter(|m| !m.is_supplementary())
+                .all(|m| m.is_perfect());
+            is_perfect[nr] = perf;
+            if perf { any_perfect = true; } else { any_imperfect = true; }
+
+            // -- Tier 2.5a: primary exact-match count ---------------------
+            // Walk each primary's ScoreOpIter once.  Supplementary records
+            // list their siblings via SA:Z on the primary; skip them here to
+            // avoid double-counting.
+            let mut pmb = 0usize; // primary_match_bases
+            let mut sc  = 0usize; // SA:Z-derived pending supplementary count
+            for mcf in &mcfs {
+                if mcf.is_supplementary() { continue; }
+                for op in ScoreOpIter::new(mcf) {
+                    if matches!(op, Ok(BaseOp::Match)) { pmb += 1; }
+                }
+                sc += mcf.supp_count();
+            }
+            match_bases[nr]    = pmb;
+            supp_count_arr[nr] = sc;
+
+            // -- Tier 3: NW score ------------------------------------------
+            // Computed only for imperfect streams; for perfect streams the
+            // MCFs drop here at zero extra cost (the ScoreOpIter walks above
+            // were needed for the match-count check anyway).
+            if !perf {
+                // `mcfs` is moved into `score_candidate`.  The SmallVec and
+                // the MdCigFlags inside it (which borrow `best[i]`) are alive
+                // for the duration of the call, then dropped.
+                nw_scores[nr] = self.score_candidate(&best[i], mcfs, nr)?;
+                vdeltas[nr]   = self.scratch.last_variant_delta;
+            }
+            // For perf==true: mcfs drops here.
+        }
+        // -- End scan pass.  All borrows from elements of `best` have dropped.
+        //    Backward-discard sweeps below may now mutably access `best`. --
+
+        // -- Tier 2: apply perfect / imperfect partition --------------------
+        if any_perfect && any_imperfect {
+            // Discard all imperfect streams; keep only perfect ones.
+            for i in (0..best.len()).rev() {
+                if !is_perfect[best[i].get_nr()] {
+                    self.discard_at(best, i)?;
+                }
+            }
+            // All remaining streams are perfect → indistinguishable here.
+            return Ok(if best.len() == 1 {
+                self.add_decision_tag.then_some(Decision::First)
+            } else {
+                self.add_decision_tag.then_some(Decision::Ambiguous)
+            });
+        }
+        if !any_imperfect {
+            // Every stream is perfect: genuinely ambiguous.
+            return Ok(self.add_decision_tag.then_some(Decision::Ambiguous));
+        }
+
+        // -- Tier 2.5: match-count domination ------------------------------
+        // N-way generalisation of pairwise AlignSig::subsumes:
+        //   dominant set = { nr : match_bases[nr] == max  AND
+        //                         supp_count[nr]  == min_among_max }
+        // Any stream NOT in the dominant set is discarded.
+        // If the dominant set is a strict subset of the competing streams,
+        // dominated streams are eliminated here (saves one NW evaluation each).
+        {
+            let max_m = best.iter()
+                .map(|s| match_bases[s.get_nr()])
+                .max()
+                .unwrap_or(0);
+            let min_s = best.iter()
+                .filter(|s| match_bases[s.get_nr()] == max_m)
+                .map(|s| supp_count_arr[s.get_nr()])
+                .min()
+                .unwrap_or(0);
+
+            let any_dominated = best.iter().any(|s| {
+                let nr = s.get_nr();
+                match_bases[nr] < max_m || supp_count_arr[nr] > min_s
+            });
+
+            if any_dominated {
+                for i in (0..best.len()).rev() {
+                    let nr = best[i].get_nr();
+                    if match_bases[nr] < max_m || supp_count_arr[nr] > min_s {
+                        self.discard_at(best, i)?;
+                    }
+                }
+                if best.len() == 1 {
+                    return Ok(self.add_decision_tag.then_some(Decision::First));
+                }
+                // Multiple dominant streams: continue to NW for tiebreaking.
+            }
+        }
+
+        // -- Tier 3: NW argmax ----------------------------------------------
+        // All remaining streams are imperfect; NW scores computed in scan pass.
+        // Find the highest score; discard every stream below max − threshold.
+        let max_score = best.iter()
+            .map(|s| nw_scores[s.get_nr()])
+            .fold(f64::NEG_INFINITY, f64::max);
+
+        for i in (0..best.len()).rev() {
+            if nw_scores[best[i].get_nr()] < max_score - self.ambiguous_log_threshold {
+                self.discard_at(best, i)?;
+            }
+        }
+
+        // -- Decision tag ---------------------------------------------------
+        if !self.add_decision_tag {
+            return Ok(None);
+        }
+        if best.len() != 1 {
+            return Ok(Some(Decision::Ambiguous));
+        }
+        let winner_nr = best[0].get_nr();
+
+        // Margin = winner's score minus the next-best NW score seen in this
+        // tournament round (including eliminated streams).
+        let second_best = nw_scores
+            .iter()
+            .enumerate()
+            .filter(|&(nr, &s)| nr != winner_nr && s > f64::NEG_INFINITY)
+            .map(|(_, &s)| s)
+            .fold(f64::NEG_INFINITY, f64::max);
+
+        let margin = if second_best.is_finite() {
+            max_score - second_best
+        } else {
+            f64::MAX  // winner was the only imperfect stream
+        };
+
+        Ok(if margin > self.ambiguous_log_threshold {
+            let phred = if margin.is_finite() {
+                ((10.0 * margin / std::f64::consts::LN_10) as u32).min(255) as u8
+            } else {
+                255
+            };
+            Some(if vdeltas[winner_nr] > 0.0 {
+                Decision::VariantRescued(phred)
+            } else {
+                Decision::PhredConfidence(phred)
+            })
+        } else {
+            Some(Decision::Ambiguous)
+        })
     }
 
-    /// Emit stream at position `idx` in `best` as filtered output and remove it.
+     /// Emit stream at position `idx` in `best` as filtered output and remove it.
     /// O(N) shift; N ≤ MAX_STREAMS = 32 so this is acceptable.
     fn discard_at(&mut self, best: &mut FragmentBuffer<R>, idx: usize) -> Result<(), Error> {
         let mut loser = best.remove(idx);
@@ -494,33 +650,7 @@ impl<R: SimpleRec> LineByLine<R> {
         })
     }
 
-    fn apply_ordering(
-        &mut self,
-        best: &mut FragmentBuffer<R>,
-        ord: Ordering,
-    ) -> Result<Option<Decision>, Error> {
-        match ord {
-            Ordering::Greater => {
-                // best[0] (current leader) beats best[1] (current challenger).
-                self.discard_at(best, 1)?;
-                Ok(self.add_decision_tag.then_some(Decision::First))
-            }
-            Ordering::Less => {
-                // best[1] (challenger) beats best[0] (leader).
-                // Removing position 0 shifts the challenger to position 0,
-                // making it the new leader for the next tournament round.
-                self.discard_at(best, 0)?;
-                Ok(self.add_decision_tag.then_some(Decision::Last))
-            }
-            Ordering::Equal => {
-                // Tie: caller breaks the tournament loop; remaining streams
-                // (including any not yet compared) all route to ambiguous output.
-                Ok(self.add_decision_tag.then_some(Decision::Ambiguous))
-            }
-        }
-    }
-
-    pub(crate) fn ingest_record(
+     pub(crate) fn ingest_record(
         &mut self,
         i: usize,
         rec: R,
@@ -778,15 +908,6 @@ impl LineByLine<RecordBuf> {
             })
         })
     }
-}
-
-/// Outcome of `resolve()`: either an early decision from Tiers 1–2.5,
-/// or a full NW score triple from Tier 3.
-enum Resolution {
-    /// Tiers 1, 2, or 2.5 produced a definitive ordering without NW DP.
-    Early(Ordering),
-    /// Full NW scoring completed; carries (delta, s1_variant_delta, s2_variant_delta).
-    NwDelta(f64, f64, f64),
 }
 
 #[cfg(test)]

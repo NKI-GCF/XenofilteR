@@ -49,13 +49,27 @@ impl<R: SimpleRec> FragmentState<R> {
     pub(crate) fn flags(&self, i: usize) -> Option<&Flags> {
         self.flags.get(i)
     }
-    // Sufficient check: for properly paired BAM the mate-unmapped flag mirrors
-    // the mate's state, so reading only the first record's flags is valid.
-    // Supplementary records cannot be unmapped by definition; they are never
-    // present when all primaries are unmapped (SA:Z is absent on unmapped primaries).
-    fn is_all_unmapped(&self) -> bool {
+    /// True when all primaries in this fragment are unmapped.
+    /// Used for O(1) per-stream Tier 1 classification in the N-way tournament.
+    pub(crate) fn is_all_unmapped(&self) -> bool {
         let f = &self.flags[0];
         f.is_unmapped() && (!f.is_segmented() || f.is_mate_unmapped())
+    }
+
+    /// Build `MdCigFlags` for every record in the fragment, in record order.
+    ///
+    /// Borrows from `self` with lifetime `'f`; the returned SmallVec keeps those
+    /// borrows alive.  Called before any mutable access to the fragment buffer so
+    /// the borrow checker sees no aliasing.  Matches the record-order iteration
+    /// expected by `score_candidate`.
+    pub(crate) fn build_mcfs<'f>(
+        &'f self,
+    ) -> Result<SmallVec<[MdCigFlags<'f>; READ_CT]>, Error> {
+        self.flags
+            .iter()
+            .zip(self.records.iter())
+            .map(|(flags, rec)| MdCigFlags::try_from_record(rec, flags))
+            .collect()
     }
 
     pub(crate) fn order_mates(&self) -> SmallVec<[usize; READ_CT]> {

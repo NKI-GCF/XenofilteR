@@ -209,7 +209,6 @@ fn test_process_multi_stream_sync() -> Result<(), Error> {
 fn test_handle_ordering_logic() -> Result<(), Error> {
     let lbl_setup: LineByLine<RecordBuf> =
         LineByLine::new(Config::default(), setup_mock_streams())?;
-    // Test logic in apply_ordering requires mocked AlnStream for write_record calls.
     // Direct testing of routing_counters incrementation via write_record:
     let mut lbl: LineByLine<RecordBuf> = lbl_setup;
     let rec = create_record(b"r1", "M10", &[], &[], "10", false)?;
@@ -240,34 +239,6 @@ fn test_fragment_finished_transitions() -> Result<(), Error> {
 
     // Different QName: finishes fragment
     // Note: this will attempt to call aln[i].un_next(), requiring a mock AlnStream.
-    Ok(())
-}
-
-#[test]
-fn test_handle_ordering_drain_logic() -> Result<(), Error> {
-    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(Config::default(), setup_mock_streams())?;
-    let mut best: FragmentBuffer<RecordBuf> = smallvec![
-        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0)?,
-        FragmentState::from_record(create_record(b"R1", "5M5S", &[], &[], "5", false)?, 1)?,
-    ];
-    let mut ord = best[0].partial_cmp(&best[1]);
-    assert_eq!(ord, None);
-
-    let _ = best[0].cmp_perfect(&best[1], &mut ord)?;
-    assert_eq!(ord, Some(Ordering::Greater));
-
-    // stream 0 better than stream 1
-    lbl.apply_ordering(&mut best, ord.unwrap())?;
-    lbl.print_counters(1);
-
-    assert_eq!(best.len(), 1);
-    assert_eq!(best[0].get_nr(), 0);
-    assert_eq!(lbl.routing_counters[4], 1); // stream 1 discarded
-    eprintln!("Writing best fragment from stream {}", best[0].get_nr());
-    lbl.emit_winners(&mut best, None)?;
-    lbl.print_counters(0);
-    assert_eq!(lbl.routing_counters[1], 1); // stream 0 assigned
-
     Ok(())
 }
 
@@ -313,24 +284,6 @@ fn test_line_by_line_full_flow() -> Result<(), Error> {
     let fin = lbl.ingest_record(0, rec2, &mut best)?;
     // This will attempt to call aln[0].un_next(), ensure your mock handles this.
     assert!(fin);
-    Ok(())
-}
-
-#[test]
-fn test_scoring_path_coverage() -> Result<(), Error> {
-    let config = Config::default();
-    // Mock stream needs to exist to avoid indexing panics
-    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(config, smallvec![])?;
-
-    // Populate records with valid CIGAR/MD data to avoid null-pointer panics
-    let mut best: FragmentBuffer<RecordBuf> = smallvec![
-        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0)?,
-        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 1)?,
-    ];
-
-    // Pass explicit Equal ordering to avoid scoring path (which needs non-empty aln)
-    let result = lbl.apply_ordering(&mut best, Ordering::Equal);
-    assert!(result.is_ok());
     Ok(())
 }
 
@@ -395,87 +348,6 @@ fn test_ambiguous_log_threshold_conversion() -> Result<(), Error> {
     config.ambiguous_threshold = 3;
     let lbl: LineByLine<RecordBuf> = LineByLine::new(config, aln)?;
     assert!((lbl.test_ambiguous_log_threshold() - ln_10 * 3.0 / 10.0).abs() < 1e-9);
-
-    Ok(())
-}
-
-#[test]
-fn test_handle_ordering_quick_paths_respect_decision_tag() -> Result<(), Error> {
-    let config = Config {
-        add_decision_tag: true,
-        ..Config::default()
-    };
-    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(config, setup_mock_streams())?;
-
-    let mut best: FragmentBuffer<RecordBuf> = smallvec![
-        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0)?,
-        FragmentState::from_record(create_record(b"R1", "5M5S", &[], &[], "5", false)?, 1)?,
-    ];
-
-    let dec = lbl.apply_ordering(&mut best, Ordering::Greater)?;
-    assert!(matches!(dec, Some(Decision::First)));
-
-    let dec = lbl.apply_ordering(&mut best, Ordering::Less)?;
-    assert!(matches!(dec, Some(Decision::Last)));
-
-    let dec = lbl.apply_ordering(&mut best, Ordering::Equal)?;
-    assert!(matches!(dec, Some(Decision::Ambiguous)));
-
-    Ok(())
-}
-
-#[test]
-fn test_handle_ordering_ambiguous_when_below_threshold_and_negative_delta() -> Result<(), Error> {
-    let config = Config {
-        add_decision_tag: true,
-        ambiguous_threshold: 30, // higher than your observed delta → forces ambiguous
-        ..Config::default()
-    };
-    let aln = setup_mock_streams_observed_examples();
-    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(config, aln)?;
-
-    let mut best: FragmentBuffer<RecordBuf> = smallvec![
-        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0)?,
-        FragmentState::from_record(create_record(b"R1", "5M5S", &[], &[], "5", false)?, 1)?,
-    ];
-    let mut ord = None;
-    let (mcfs1, mcfs2) = best[0].cmp_perfect(&best[1], &mut ord)?;
-    let (delta, s1_vd, s2_vd) = lbl.compute_score_delta(&best[0], &best[1], mcfs1, mcfs2)?;
-    let decision = lbl.decide_from_delta(&mut best, delta, s1_vd, s2_vd)?;
-    assert!(matches!(decision, Some(Decision::Ambiguous)));
-
-    // Also test negative-delta case (we flip sign internally)
-    // (reuse the same best – just swap first/last scores by changing order or use a second mock)
-    // The code already does `delta = -delta` and then uses the positive value for phred.
-    let best_flipped: FragmentBuffer<RecordBuf> = smallvec![
-        FragmentState::from_record(create_record(b"R1", "5M5S", &[], &[], "5", false)?, 1)?,
-        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0)?,
-    ];
-    let (mcfs1, mcfs2) = best_flipped[0].cmp_perfect(&best_flipped[1], &mut ord)?;
-    let (delta, s1_vd, s2_vd) = lbl.compute_score_delta(&best[0], &best[1], mcfs1, mcfs2)?;
-    let decision_flipped = lbl.decide_from_delta(&mut best, delta, s1_vd, s2_vd)?;
-    assert!(matches!(decision_flipped, Some(Decision::Ambiguous)));
-
-    Ok(())
-}
-
-#[test]
-fn test_handle_ordering_when_decision_tag_is_disabled() -> Result<(), Error> {
-    let config = Config {
-        add_decision_tag: false,
-        ..Config::default()
-    };
-    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(config, setup_mock_streams())?;
-
-    let mut best: FragmentBuffer<RecordBuf> = smallvec![
-        FragmentState::from_record(create_record(b"R1", "10M", &[], &[], "10", false)?, 0)?,
-        FragmentState::from_record(create_record(b"R1", "5M5S", &[], &[], "5", false)?, 1)?,
-    ];
-    let mut ord = None;
-    let (mcfs1, mcfs2) = best[0].cmp_perfect(&best[1], &mut ord)?;
-    let (delta, s1_vd, s2_vd) = lbl.compute_score_delta(&best[0], &best[1], mcfs1, mcfs2)?;
-    let decision = lbl.decide_from_delta(&mut best, delta, s1_vd, s2_vd)?;
-    assert!(decision.is_none()); // no Decision object when tag is off
 
     Ok(())
 }
