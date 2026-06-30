@@ -29,7 +29,13 @@ use crate::penalty::Penalty;
 use crate::region::{AmbiguousRegions, DiagnosticVariants};
 use crate::variant::FragEvalVec;
 use assemble::{insert, EarlyKind, FragmentTable, PendingFragment, ScoringRecord, StreamKind};
-use noodles::sam::alignment::record::Cigar;
+use noodles::sam::alignment::record::Cigar as CigarTrait;
+use noodles::sam::alignment::record::cigar::op::{Kind, Op};
+use noodles::sam::alignment::record::data::field::{Tag, Value};
+use noodles::core::Position;
+use noodles::sam::alignment::record_buf::{
+    data::field::Value as BufValue, Cigar, Data, QualityScores, RecordBuf, Sequence,
+};
 use smallvec::SmallVec;
 use stage::StagedOutput;
 use std::cmp::Ordering;
@@ -112,22 +118,20 @@ impl<R: SimpleRec> HashLookup<R> {
     pub(crate) fn process(&mut self) -> Result<(), Error> {
         let mut exhausted = [false; 2];
         loop {
-            let mut progress = false;
+            let mut finished = true;
             for (nr, ex) in exhausted.iter_mut().enumerate() {
                 if *ex {
                     continue;
                 }
                 match self.next_scoring_record(nr)? {
-                    None => {
-                        *ex = true;
-                    }
+                    None => *ex = true,
                     Some((key, rec)) => {
-                        progress = true;
+                        finished = false;
                         self.ingest(key, rec, nr)?;
                     }
                 }
             }
-            if !progress {
+            if finished {
                 break;
             }
             self.staged.flush(
@@ -151,8 +155,6 @@ impl<R: SimpleRec> HashLookup<R> {
     }
 
     fn next_scoring_record(&mut self, nr: usize) -> Result<Option<(Box<[u8]>, ScoringRecord)>, Error> {
-        use noodles::sam::alignment::record::cigar::op::Kind;
-        use noodles::sam::alignment::record::data::field::{Tag, Value};
 
         let rec = match self.aln[nr].next_rec()? {
             Some(r) => r,
@@ -507,12 +509,6 @@ impl<R: SimpleRec> HashLookup<R> {
         records: &SmallVec<[ScoringRecord; 2]>,
         aln_idx: usize,
     ) -> Result<f64, Error> {
-        use noodles::core::Position;
-        use noodles::sam::alignment::record::cigar::op::{Kind, Op};
-        use noodles::sam::alignment::record::data::field::Tag;
-        use noodles::sam::alignment::record_buf::{
-            data::field::Value as BufValue, Cigar, Data, QualityScores, RecordBuf, Sequence,
-        };
 
         let mut penalty = 0.0;
 
