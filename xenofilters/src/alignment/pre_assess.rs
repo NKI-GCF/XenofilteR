@@ -25,6 +25,7 @@ use super::read_profile::{
     build_read_profile, compare_fragment_profiles, FragmentProfile, ReadOp, ReadSpaceDecision,
 };
 use crate::alignment::MdCigFlags;
+use crate::filter_algorithm::hash_lookup::assemble::ScoringRecord;
 use crate::filter_algorithm::line_by_line::READ_CT;
 use smallvec::SmallVec;
 use std::cmp::Ordering;
@@ -234,8 +235,8 @@ pub(crate) fn pre_assess_alignments(
 /// `match_count_raw` (same match-count semantics as Tier 2.5a above) and
 /// respects `supp_count` from the SA:Z tag parsed in `next_scoring_record`.
 pub(crate) fn pre_assess_scoring_records(
-    recs_a: &[crate::filter_algorithm::hash_lookup::assemble::ScoringRecord],
-    recs_b: &[crate::filter_algorithm::hash_lookup::assemble::ScoringRecord],
+    recs_a: &[ScoringRecord],
+    recs_b: &[ScoringRecord],
 ) -> PreAssessResult {
     let primaries_a: SmallVec<[_; 2]> = recs_a
         .iter()

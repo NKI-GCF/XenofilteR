@@ -1,8 +1,8 @@
+use crate::Error;
 use crate::variant::Variant;
 use noodles::bcf::record::Record;
-use noodles::vcf::variant::record::samples::{Sample as NoodlesSample, series::Value};
 use noodles::vcf::Header;
-use crate::Error;
+use noodles::vcf::variant::record::samples::{Sample as NoodlesSample, series::Value};
 
 // FIXME, a variant could have multiple ALT alleles, and the GT could be 0/2, so we should ideally
 // have one Sample per ALT allele, and check if each ALT allele is present in the GT. For
@@ -38,7 +38,10 @@ impl Variant for Sample {
 }
 
 /// Example parser for Sample-Specific VCF (checks FORMAT tags "GT" and "GQ")
-pub(crate) fn parse_sample_record(record: &mut Record, header: &Header) -> Result<Vec<Sample>, Error> {
+pub(crate) fn parse_sample_record(
+    record: &mut Record,
+    header: &Header,
+) -> Result<Vec<Sample>, Error> {
     // Genotype representation as a vector of GenotypeAllele.
     // 1. Get GT and GQ from FORMAT
     let samples = record.samples()?;
@@ -68,7 +71,11 @@ pub(crate) fn parse_sample_record(record: &mut Record, header: &Header) -> Resul
         let is_called = gt == alt_index;
 
         variants.push(Sample {
-            pos: record.variant_start().transpose()?.map(|p| p.get()).unwrap_or(0),
+            pos: record
+                .variant_start()
+                .transpose()?
+                .map(|p| p.get())
+                .unwrap_or(0),
             ref_a: ref_a.clone(),
             alt_a: alt_a.to_vec(),
             genotype_quality: gq as f64,

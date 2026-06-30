@@ -1,11 +1,11 @@
+use crate::Error;
+use crate::LineByLine;
 use crate::alignment::FragmentState;
 use crate::config::{Config, StripReadSuffix};
 use crate::filter_algorithm::line_by_line::core::FragmentBuffer;
 use crate::tests::create_record;
-use crate::LineByLine;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::smallvec;
-use crate::Error;
 
 // %s/\vmock_rec\((b".*?")/create_record(\1, "10M", &[], &[], "10", false)?/g
 #[test]

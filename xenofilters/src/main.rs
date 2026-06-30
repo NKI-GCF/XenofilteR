@@ -8,27 +8,27 @@ mod alignment;
 mod aln_stream;
 mod bam;
 mod config;
+mod error;
 mod filter_algorithm;
 mod penalty;
 mod region;
 mod variant;
-mod error;
 
 use aln_stream::{AlignmentStream, AlnStream};
 use clap::Parser;
 use config::{Config, MatchingAlgorithm};
+pub(crate) use error::Error;
 use filter_algorithm::{
     collated::CollatedMatcher, hash_lookup::HashLookup, line_by_line::LineByLine,
 };
 use noodles::bam::record::Record as BamRecord;
-use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::Header;
+use noodles::sam::alignment::record_buf::RecordBuf;
 use region::{AmbiguousRegions, DiagnosticVariants};
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use std::collections::HashMap;
 use std::path::Path;
-use tracing_subscriber::{fmt, EnvFilter};
-pub(crate) use error::Error;
+use tracing_subscriber::{EnvFilter, fmt};
 
 fn get_log_level(verbose_count: u8) -> &'static str {
     match verbose_count {

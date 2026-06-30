@@ -4,10 +4,10 @@
 //! reference overlapping this position carries evidence for species N.
 //! Reads overlapping any diagnostic position must go through full scoring.
 
+use crate::Error;
 use noodles::bcf;
 use std::collections::HashMap;
 use std::path::Path;
-use crate::Error;
 
 #[derive(Debug, Clone)]
 pub(crate) struct DiagnosticSite {
@@ -28,10 +28,16 @@ pub(crate) struct DiagnosticVariants {
 }
 
 impl DiagnosticVariants {
-    pub(crate) fn from_vcf(path: &Path, name_to_id: &HashMap<String, usize>) -> Result<Self, Error> {
+    pub(crate) fn from_vcf(
+        path: &Path,
+        name_to_id: &HashMap<String, usize>,
+    ) -> Result<Self, Error> {
         let mut reader = bcf::io::reader::Builder::default()
             .build_from_path(path)
-            .map_err(|e| Error::CannotOpenVcfBcf { path: path.to_path_buf(), source: e })?;
+            .map_err(|e| Error::CannotOpenVcfBcf {
+                path: path.to_path_buf(),
+                source: e,
+            })?;
         let header = reader.read_header()?;
 
         let mut per_ref: HashMap<usize, Vec<DiagnosticSite>> = HashMap::new();

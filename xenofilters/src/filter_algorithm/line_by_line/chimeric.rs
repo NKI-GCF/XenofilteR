@@ -56,9 +56,9 @@
 use crate::alignment::{FragmentState, SimpleRec};
 use crate::filter_algorithm::line_by_line::core::FragmentBuffer;
 use noodles::sam::alignment::record::{
-    data::field::{Tag, Value},
-    cigar::op::Kind,
     Flags,
+    cigar::op::Kind,
+    data::field::{Tag, Value},
 };
 use smallvec::SmallVec;
 
@@ -88,7 +88,7 @@ pub(crate) enum ChimericDecision {
     Chimeric {
         stream_a: usize,
         stream_b: usize,
-        kind:     ChimericKind,
+        kind: ChimericKind,
     },
     /// No chimeric event; proceed with the normal tournament cascade.
     Normal,
@@ -103,8 +103,8 @@ pub(crate) enum ChimericDecision {
 /// `0x00` = single-end or unknown.
 fn segment_id(flags: &Flags) -> u8 {
     match (flags.is_first_segment(), flags.is_last_segment()) {
-        (true,  _    ) => 0x40,
-        (false, true ) => 0x80,
+        (true, _) => 0x40,
+        (false, true) => 0x80,
         (false, false) => 0x00,
     }
 }
@@ -137,23 +137,27 @@ fn mapped_read_range<R: SimpleRec>(rec: &R) -> (usize, usize) {
         return (0, 0);
     }
 
-    let mut read_pos          = 0usize;
+    let mut read_pos = 0usize;
     let mut map_start: Option<usize> = None;
-    let mut map_end           = 0usize;
+    let mut map_end = 0usize;
 
     for op_result in rec.cigar().as_ref().iter() {
-        let op  = match op_result { Ok(o) => o, Err(_) => break };
+        let op = match op_result {
+            Ok(o) => o,
+            Err(_) => break,
+        };
         let len = op.len();
         match op.kind() {
-            Kind::SoftClip => { read_pos += len; }
-            Kind::HardClip | Kind::Pad => {}
-            Kind::Match
-            | Kind::SequenceMatch
-            | Kind::SequenceMismatch
-            | Kind::Insertion => {
-                if map_start.is_none() { map_start = Some(read_pos); }
+            Kind::SoftClip => {
                 read_pos += len;
-                map_end   = read_pos;
+            }
+            Kind::HardClip | Kind::Pad => {}
+            Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch | Kind::Insertion => {
+                if map_start.is_none() {
+                    map_start = Some(read_pos);
+                }
+                read_pos += len;
+                map_end = read_pos;
             }
             Kind::Deletion | Kind::Skip => {}
         }
@@ -168,23 +172,23 @@ fn mapped_read_range<R: SimpleRec>(rec: &R) -> (usize, usize) {
 /// - Each arm must contribute ≥ 15 aligned bases.
 /// - Overlap < 20 % of `read_len` (tolerance for aligner boundary fuzz).
 /// - Union ≥ 80 % of `read_len` (together they explain the full read).
-fn is_complementary(
-    range_a:  (usize, usize),
-    range_b:  (usize, usize),
-    read_len: usize,
-) -> bool {
+fn is_complementary(range_a: (usize, usize), range_b: (usize, usize), read_len: usize) -> bool {
     let (a0, a1) = range_a;
     let (b0, b1) = range_b;
 
-    if a1 <= a0 || b1 <= b0 || read_len == 0 { return false; }
+    if a1 <= a0 || b1 <= b0 || read_len == 0 {
+        return false;
+    }
     let mapped_a = a1 - a0;
     let mapped_b = b1 - b0;
-    if mapped_a < 15 || mapped_b < 15 { return false; }
+    if mapped_a < 15 || mapped_b < 15 {
+        return false;
+    }
 
     // Overlap between mapped ranges.
     let overlap = a1.min(b1).saturating_sub(a0.max(b0));
     // Union of mapped ranges.
-    let union   = a1.max(b1) - a0.min(b0);
+    let union = a1.max(b1) - a0.min(b0);
 
     // overlap < 20 % of read_len  AND  union ≥ 80 % of read_len
     overlap * 5 < read_len && union * 10 >= read_len * 8
@@ -210,21 +214,23 @@ fn md_mismatches_from_record<R: SimpleRec>(rec: &R) -> usize {
             // SAFETY: we only read from this slice inside this scope.
             unsafe { std::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) }
         }
-        _ => return usize::MAX,  // MD absent → treat as maximally mismatched
+        _ => return usize::MAX, // MD absent → treat as maximally mismatched
     };
 
     let mut count = 0usize;
-    let mut i     = 0usize;
+    let mut i = 0usize;
     while i < md_bytes.len() {
         let b = md_bytes[i];
         if b.is_ascii_digit() {
             i += 1;
         } else if b == b'^' {
             i += 1;
-            while i < md_bytes.len() && !md_bytes[i].is_ascii_digit() { i += 1; }
+            while i < md_bytes.len() && !md_bytes[i].is_ascii_digit() {
+                i += 1;
+            }
         } else if matches!(b, b'A' | b'C' | b'G' | b'T' | b'N') {
             count += 1;
-            i     += 1;
+            i += 1;
         } else {
             i += 1;
         }
@@ -257,13 +263,17 @@ fn detect_split_read<R: SimpleRec>(
         // Primary in stream A for this segment.
         let primary_a = state_a.get_records().iter().find(|r| {
             let Ok(f) = r.flags() else { return false };
-            !f.is_secondary() && !f.is_supplementary() && !f.is_unmapped()
+            !f.is_secondary()
+                && !f.is_supplementary()
+                && !f.is_unmapped()
                 && segment_id(&f) == seg_id
         });
         // Primary in stream B for this segment.
         let primary_b = state_b.get_records().iter().find(|r| {
             let Ok(f) = r.flags() else { return false };
-            !f.is_secondary() && !f.is_supplementary() && !f.is_unmapped()
+            !f.is_secondary()
+                && !f.is_supplementary()
+                && !f.is_unmapped()
                 && segment_id(&f) == seg_id
         });
 
@@ -273,9 +283,14 @@ fn detect_split_read<R: SimpleRec>(
         };
 
         // Read length: use whichever record has quality scores available.
-        let read_len = rec_a.quality_scores().as_ref().len()
+        let read_len = rec_a
+            .quality_scores()
+            .as_ref()
+            .len()
             .max(rec_b.quality_scores().as_ref().len());
-        if read_len == 0 { continue; }
+        if read_len == 0 {
+            continue;
+        }
 
         let range_a = mapped_read_range(rec_a);
         let range_b = mapped_read_range(rec_b);
@@ -297,14 +312,14 @@ fn detect_split_read<R: SimpleRec>(
 
         if let Some(sa) = supp_a {
             let mis_supp = md_mismatches_from_record(sa);
-            let mis_b    = md_mismatches_from_record(rec_b);
+            let mis_b = md_mismatches_from_record(rec_b);
 
             if mis_supp < mis_b {
                 // Stream A's supplementary alignment of the complementary region
                 // is better than stream B's primary → false positive; skip.
                 tracing::debug!(
                     seg_id,
-                    mismatches_supp_a    = mis_supp,
+                    mismatches_supp_a = mis_supp,
                     mismatches_primary_b = mis_b,
                     "Read-split candidate rejected: stream A supplementary \
                      explains the complementary region better than stream B"
@@ -332,7 +347,7 @@ fn detect_split_read<R: SimpleRec>(
 ///
 /// Returns the first matching `Chimeric` decision, or `Normal`.
 pub(crate) fn detect_chimeric_event<R: SimpleRec>(
-    best:           &FragmentBuffer<R>,
+    best: &FragmentBuffer<R>,
     chimeric_pairs: &[[usize; 2]],
 ) -> ChimericDecision {
     for &[a, b] in chimeric_pairs {
@@ -345,7 +360,10 @@ pub(crate) fn detect_chimeric_event<R: SimpleRec>(
         };
 
         // ── Phase 1: mate-split (requires paired-end data) ───────────────
-        let has_paired = sa.get_records().iter().chain(sb.get_records().iter())
+        let has_paired = sa
+            .get_records()
+            .iter()
+            .chain(sb.get_records().iter())
             .any(|r| r.flags().map_or(false, |f| f.is_segmented()));
 
         if has_paired {
@@ -358,7 +376,7 @@ pub(crate) fn detect_chimeric_event<R: SimpleRec>(
                     return ChimericDecision::Chimeric {
                         stream_a: a,
                         stream_b: b,
-                        kind:     ChimericKind::MateSplit,
+                        kind: ChimericKind::MateSplit,
                     };
                 }
             }
@@ -369,7 +387,9 @@ pub(crate) fn detect_chimeric_event<R: SimpleRec>(
             return ChimericDecision::Chimeric {
                 stream_a: a,
                 stream_b: b,
-                kind:     ChimericKind::ReadSplit { read_seg_id: seg_id },
+                kind: ChimericKind::ReadSplit {
+                    read_seg_id: seg_id,
+                },
             };
         }
     }

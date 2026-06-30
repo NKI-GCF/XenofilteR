@@ -16,23 +16,22 @@ pub(crate) mod reader;
 #[cfg(test)]
 pub(crate) mod tests;
 
-use crate::alignment::{stringify_record, Fragment, FragmentState, MdCigFlags, SimpleRec};
+use crate::Error;
+use crate::alignment::{Fragment, FragmentState, MdCigFlags, SimpleRec, stringify_record};
+use crate::alignment::{PreAssessResult, pre_assess_alignments};
 use crate::aln_stream::AlignmentStream;
 use crate::config::{Config, StripReadSuffix};
-use crate::filter_algorithm::line_by_line::{ordering::Decision, Scratch, READ_CT};
+use crate::filter_algorithm::line_by_line::{READ_CT, Scratch, ordering::Decision};
 use crate::penalty::Penalty;
 use crate::region::tabix_query::{TabixBed, TabixVcf};
 use crate::variant::FragEvalVec;
 use noodles::sam::alignment::record::cigar::Cigar;
 use noodles::sam::alignment::record::data::field::Tag;
-use noodles::sam::alignment::record_buf::data::field::Value;
 use noodles::sam::alignment::record_buf::RecordBuf;
-use reader::{canonical_name, CollatedReader};
+use noodles::sam::alignment::record_buf::data::field::Value;
+use reader::{CollatedReader, canonical_name};
 use smallvec::SmallVec;
 use std::collections::HashMap;
-use crate::alignment::{pre_assess_alignments, PreAssessResult};
-use crate::Error;
-
 
 pub(crate) struct CollatedMatcher<R: SimpleRec> {
     a: CollatedReader<R>,
@@ -191,13 +190,15 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             let end = start + rec.cigar().len();
 
             if let Some(bed) = &mut self.bed[aln_idx]
-                && bed.overlaps(chrom, start, end)? {
-                    return Ok(true);
-                }
+                && bed.overlaps(chrom, start, end)?
+            {
+                return Ok(true);
+            }
             if let Some(vcf) = &mut self.vcf[aln_idx]
-                && vcf.overlaps(chrom, start, end)? {
-                    return Ok(true);
-                }
+                && vcf.overlaps(chrom, start, end)?
+            {
+                return Ok(true);
+            }
         }
         Ok(false)
     }
@@ -214,7 +215,10 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         let (mcfs1, mcfs2) = a.cmp_perfect(&b, &mut ord)?;
 
         // Tier 2: perfect-match fast-path (no region forces scoring).
-        if let Some(o) = ord && !a_needs_scoring && !b_needs_scoring {
+        if let Some(o) = ord
+            && !a_needs_scoring
+            && !b_needs_scoring
+        {
             drop(mcfs1);
             drop(mcfs2);
             return self.apply_ordered(a, b, o);
@@ -223,14 +227,14 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         // Tier 2.5: unified pre-assessment — single CIGAR+MD walk per record.
         // Guard: only when no BED/VCF region forces full scoring (diagnostic variants
         // must be scored via NW to properly account for variant rescue).
-        if !a_needs_scoring && !b_needs_scoring
-            && let PreAssessResult::EarlyDecision(pa_ord) =
-                pre_assess_alignments(&mcfs1, &mcfs2)
-            {
-                drop(mcfs1);
-                drop(mcfs2);
-                return self.apply_ordered(a, b, pa_ord);
-            }
+        if !a_needs_scoring
+            && !b_needs_scoring
+            && let PreAssessResult::EarlyDecision(pa_ord) = pre_assess_alignments(&mcfs1, &mcfs2)
+        {
+            drop(mcfs1);
+            drop(mcfs2);
+            return self.apply_ordered(a, b, pa_ord);
+        }
 
         // Tier 3: full NW scoring.
         let s1 = self.nw_score_fragment(&a, mcfs1, 0)?;
@@ -308,9 +312,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         let mut supplementary_penalty = 0.0;
 
         for idx in state.order_mates() {
-            let flags = state
-                .flags(idx)
-                .ok_or(Error::NoFlagsForRecord {idx})?;
+            let flags = state.flags(idx).ok_or(Error::NoFlagsForRecord { idx })?;
 
             if flags.is_secondary() {
                 // secondary alignments are not scored, but may be included in the output
@@ -328,10 +330,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
                 if flags.is_supplementary() {
                     supplementary_penalty += self.penalties.chimeric_junction_penalty;
                 }
-                let tid = rec
-                    .ref_seq_id()
-                    .transpose()?
-                    .ok_or(Error::NoRefSeqId)?;
+                let tid = rec.ref_seq_id().transpose()?.ok_or(Error::NoRefSeqId)?;
                 let start = rec
                     .alignment_start()
                     .transpose()?
@@ -339,7 +338,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
                     .get();
                 let cig_len = mcfs_opt[idx]
                     .as_ref()
-                    .ok_or(Error::MdCigFlagsMissing {idx})?
+                    .ok_or(Error::MdCigFlagsMissing { idx })?
                     .get_cigar()
                     .len();
                 let end = start + cig_len;
@@ -359,17 +358,16 @@ impl<R: SimpleRec> CollatedMatcher<R> {
 
         let base_score = Fragment::new(&self.penalties, segment, seg_mcfs)?
             .score(&mut self.scratch, &mut dvnt)
-            .map_err(|e| Error::FragmentScoringError{
-                aln_idx, 
+            .map_err(|e| Error::FragmentScoringError {
+                aln_idx,
                 message: e.to_string(),
                 state: state
-                        .get_records()
-                        .iter()
-                        .map(stringify_record)
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                }
-            )?;
+                    .get_records()
+                    .iter()
+                    .map(stringify_record)
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            })?;
         Ok(base_score + supplementary_penalty)
     }
 
@@ -418,7 +416,10 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         let len = self.routing_counters.len();
         for nr in 0..(len / 4) {
             for (i, set) in ["discard", "out", "ambig"].iter().enumerate() {
-                eprintln!("collated[{set}:{i}]: {}", self.routing_counters[i + (nr * 4)]);
+                eprintln!(
+                    "collated[{set}:{i}]: {}",
+                    self.routing_counters[i + (nr * 4)]
+                );
             }
         }
     }

@@ -1,6 +1,6 @@
-use thiserror::Error;
 use noodles::sam::alignment::record::cigar::Op;
 use std::path::PathBuf;
+use thiserror::Error;
 
 /// A type alias for `Result` that uses `Error` as the error type.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -24,7 +24,7 @@ pub(crate) enum Error {
     #[error("Input read names do not have /1 or /2 suffixes, but strip_read_suffix is true.")]
     ReadNamesMissingSuffixes,
 
-    #[error( "Input read names have /1 or /2 suffixes, but strip_read_suffix is false.")]
+    #[error("Input read names have /1 or /2 suffixes, but strip_read_suffix is false.")]
     ReadNamesHaveSuffixes,
 
     #[error("All input BAMs must be either paired-end or single-end.")]
@@ -55,7 +55,6 @@ pub(crate) enum Error {
     #[error("--matching-algorithm hashlookup|collated requires exactly 2 alignment streams")]
     AlgoRequiresTwoStreams,
 
-
     #[error("BAM read error: {0}")]
     BamReadError(String),
 
@@ -65,8 +64,10 @@ pub(crate) enum Error {
     #[error("fetch_by_virtual_offset not supported for this stream type")]
     FetchByVirtualOffsetNotSupported,
 
-    #[error("Coordinate-sorted input detected; \
-                     use --matching-algorithm hashlookup or collated.")]
+    #[error(
+        "Coordinate-sorted input detected; \
+                     use --matching-algorithm hashlookup or collated."
+    )]
     CoordinateSortedInputDetected,
 
     #[error("No stream {nr}")]
@@ -87,28 +88,49 @@ pub(crate) enum Error {
     InvalidPathUtf8 { path: PathBuf },
 
     #[error("Cannot create output file '{path}': {source}", path = path.display())]
-    CreateOutputFileFailed { path: PathBuf, source: std::io::Error },
+    CreateOutputFileFailed {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 
     #[error("Cannot open index {path}: {source}", path = path.display())]
-    CannotOpenIndex { path: PathBuf, source: std::io::Error },
+    CannotOpenIndex {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 
     #[error("Cannot read tabix index {path}: {source}", path = path.display())]
-    CannotReadTabixIndex { path: PathBuf, source: std::io::Error },
+    CannotReadTabixIndex {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 
     #[error("No tabix index found for {path} (tried .tbi and .<ext>.tbi)", path = path.display())]
     TabixIndexNotFound { path: PathBuf },
 
     #[error("Cannot open VCF {path}: {source}", path = path.display())]
-    CannotOpenVcf { path: PathBuf, source: std::io::Error },
+    CannotOpenVcf {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 
     #[error("Cannot open VCF/BCF {path}: {source}", path = path.display())]
-    CannotOpenVcfBcf { path: PathBuf, source: std::io::Error },
+    CannotOpenVcfBcf {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 
     #[error("Failed to open VCF/BCF {path}: {source}", path = path.display())]
-    FailedToOpenVcfBcf { path: PathBuf, source: std::io::Error },
+    FailedToOpenVcfBcf {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 
     #[error("Cannot open BED file {path}: {source}", path = path.display())]
-    CannotOpenBedFile { path: PathBuf, source: std::io::Error },
+    CannotOpenBedFile {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 
     // --- Format Parsing & Genomics Metadata Validation ---
     #[error("Invalid region {0}")]
@@ -139,7 +161,10 @@ pub(crate) enum Error {
     MissingOrInvalidGtTag,
 
     #[error("BED parse error in {path}: {source}", path = path.display())]
-    BedParseError { path: PathBuf, source: std::io::Error },
+    BedParseError {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 
     #[error("Invalid chromosome name {0}")]
     BedInvalidChromName(String),
@@ -243,7 +268,7 @@ pub(crate) enum Error {
     AlignmentStillHasReadsAfterParallelProcessing { j: usize },
 
     #[error("Score error stream {0}: {1}")]
-    ScoreStreamError (usize, String),
+    ScoreStreamError(usize, String),
 
     #[error("Scorer worker exited unexpectedly")]
     ScorerWorkerExited,
@@ -258,7 +283,11 @@ pub(crate) enum Error {
     ScorerWorkersExited,
 
     #[error("Error scoring fragment for alignment {aln_idx}: {message}\n{state}")]
-    FragmentScoringError { aln_idx: usize, message: String, state: String },
+    FragmentScoringError {
+        aln_idx: usize,
+        message: String,
+        state: String,
+    },
 
     #[error("Scoring error: {message}\n{state}")]
     ScoringError { message: String, state: String },
@@ -278,36 +307,50 @@ pub(crate) enum Error {
     #[error("--chimeric-pairs is only supported with --matching-algorithm namesorted")]
     ChimericPairsRequiresNamesorted,
 
-    #[error("--ambiguous-regions / --diagnostic-variants have no effect with --matching-algorithm namesorted")]
+    #[error(
+        "--ambiguous-regions / --diagnostic-variants have no effect with --matching-algorithm namesorted"
+    )]
     NamesortedUnsupportedOptions,
 
     #[error("Multi-threaded scoring is only supported with --matching-algorithm namesorted.")]
     MultiThreadedScoringRequiresNamesorted,
 
-    #[error("Single alignment stream detected. If this is intentional for within-species disambiguation, \
-        please pass --single-alignment-mode.")]
+    #[error(
+        "Single alignment stream detected. If this is intentional for within-species disambiguation, \
+        please pass --single-alignment-mode."
+    )]
     SingleStreamMissingFlag,
 
-    #[error("Cannot use single alignment mode with stdin because the stream must be duplicated via file system access.")]
+    #[error(
+        "Cannot use single alignment mode with stdin because the stream must be duplicated via file system access."
+    )]
     SingleStreamStdinUnsupported,
 
     #[error("--single-alignment-mode is only supported with --matching-algorithm namesorted.")]
     SingleStreamRequiresNamesorted,
 
-    #[error("--single-alignment-mode can only be used with exactly 1 alignment stream (got {count}).")]
+    #[error(
+        "--single-alignment-mode can only be used with exactly 1 alignment stream (got {count})."
+    )]
     SingleAlignmentModeExpectsOneStream { count: usize },
 
-    #[error("At least two alignments required when not running in single alignment mode (got {count}).")]
+    #[error(
+        "At least two alignments required when not running in single alignment mode (got {count})."
+    )]
     InsufficientAlignmentStreams { count: usize },
 
-    #[error("More than 2 alignment streams requires --matching-algorithm namesorted \
-        (hashlookup and collated are limited to 2 streams by design)")]
+    #[error(
+        "More than 2 alignment streams requires --matching-algorithm namesorted \
+        (hashlookup and collated are limited to 2 streams by design)"
+    )]
     MultiStreamRequiresNamesorted,
 
     #[error("namesorted supports at most {max} alignment streams (got {count})")]
     MaxStreamsExceeded { count: usize, max: usize },
 
-    #[error("Cannot use --merged-output in combination with --output, --discarded-output, or --ambiguous-output.")]
+    #[error(
+        "Cannot use --merged-output in combination with --output, --discarded-output, or --ambiguous-output."
+    )]
     MergedOutputConflict,
 
     #[error("--ambiguous-regions: at most 2 files (one per stream), got {count}")]
@@ -322,18 +365,26 @@ pub(crate) enum Error {
     #[error("Population variant stream index {idx} out of bounds (max {max})")]
     PopulationVariantIndexOutOfBounds { idx: usize, max: usize },
 
-    #[error("Single alignment mode requires both strain slots (index 0 and 1) to have a variant profile. \
+    #[error(
+        "Single alignment mode requires both strain slots (index 0 and 1) to have a variant profile. \
         An option like '--sample-variant 0:a.vcf --population-variant 0:b.vcf' is invalid because strain 1 \
-        then has no variants.")]
+        then has no variants."
+    )]
     SingleStreamMissingVariantProfiles,
 
-    #[error("More output paths ({count}) than logical alignment processing streams ({max}) specified")]
+    #[error(
+        "More output paths ({count}) than logical alignment processing streams ({max}) specified"
+    )]
     TooManyOutputPaths { count: usize, max: usize },
 
-    #[error("More discarded output paths ({count}) than logical alignment processing streams ({max}) specified")]
+    #[error(
+        "More discarded output paths ({count}) than logical alignment processing streams ({max}) specified"
+    )]
     TooManyDiscardedOutputPaths { count: usize, max: usize },
 
-    #[error("Only one ambiguous output file is allowed when operating on a single alignment stream (got {count}).")]
+    #[error(
+        "Only one ambiguous output file is allowed when operating on a single alignment stream (got {count})."
+    )]
     SingleStreamTooManyAmbiguousOutputs { count: usize },
 
     #[error("More ambiguous output paths ({count}) than input ({max}) specified")]

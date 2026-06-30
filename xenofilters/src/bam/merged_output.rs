@@ -29,17 +29,17 @@
 //! - In the parallel pipeline this runs on the IO thread only, after scoring
 //!   is complete, so it does not affect worker throughput.
 
+use crate::Error;
 use noodles::sam::{
     alignment::{
         record::data::field::Tag,
-        record_buf::{data::field::Value, RecordBuf},
+        record_buf::{RecordBuf, data::field::Value},
     },
     header::{
-        record::value::{map::ReadGroup, Map},
         Header,
+        record::value::{Map, map::ReadGroup},
     },
 };
-use crate::Error;
 
 /// Suffixes appended to `RG:Z` tag values.
 pub(crate) const SUFFIX_FILTERED: &str = "_xenofilt";

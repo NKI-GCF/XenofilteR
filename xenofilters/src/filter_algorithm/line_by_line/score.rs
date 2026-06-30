@@ -1,8 +1,8 @@
 use super::core::LineByLine;
-use crate::alignment::{stringify_record, Fragment, FragmentState, MdCigFlags, SimpleRec};
+use crate::Error; // Assuming your error enum lives here
+use crate::alignment::{Fragment, FragmentState, MdCigFlags, SimpleRec, stringify_record};
 use crate::filter_algorithm::line_by_line::READ_CT;
 use crate::variant::FragEvalVec;
-use crate::Error; // Assuming your error enum lives here
 use smallvec::SmallVec;
 
 impl<R: SimpleRec> LineByLine<R> {

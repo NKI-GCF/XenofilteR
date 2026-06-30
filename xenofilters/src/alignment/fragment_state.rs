@@ -1,11 +1,11 @@
+use crate::Error;
 use crate::alignment::MdCigFlags;
 use crate::alignment::SimpleRec;
 use crate::filter_algorithm::line_by_line::READ_CT;
 use noodles::sam::alignment::record::Cigar;
 use noodles::sam::alignment::record::Flags;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use std::cmp::Ordering;
-use crate::Error;
 
 #[derive(PartialEq, Debug)]
 pub(crate) struct FragmentState<R> {
@@ -62,9 +62,7 @@ impl<R: SimpleRec> FragmentState<R> {
     /// borrows alive.  Called before any mutable access to the fragment buffer so
     /// the borrow checker sees no aliasing.  Matches the record-order iteration
     /// expected by `score_candidate`.
-    pub(crate) fn build_mcfs<'f>(
-        &'f self,
-    ) -> Result<SmallVec<[MdCigFlags<'f>; READ_CT]>, Error> {
+    pub(crate) fn build_mcfs<'f>(&'f self) -> Result<SmallVec<[MdCigFlags<'f>; READ_CT]>, Error> {
         self.flags
             .iter()
             .zip(self.records.iter())

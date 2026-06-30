@@ -8,13 +8,13 @@
 //! - BED query: use tabix index chunks to check overlap; parse overlapping records.
 //! - VCF indexed reader: `vcf::io::IndexedReader` provides `.query(&header, &region)`.
 
+use crate::Error;
 use noodles::bgzf;
 use noodles::core::Region;
 use noodles::csi::BinningIndex;
 use noodles::{tabix, vcf};
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use crate::Error;
 
 fn read_tabix_index(path: &Path) -> Result<tabix::Index, Error> {
     // Try <file>.tbi, then <file>.<ext>.tbi
@@ -26,22 +26,23 @@ fn read_tabix_index(path: &Path) -> Result<tabix::Index, Error> {
     };
     for tbi_path in &[&tbi1, &tbi2] {
         if tbi_path.exists() {
-            let mut reader = tabix::io::Reader::new(
-                File::open(tbi_path)
-                    .map_err(|e| Error::CannotOpenIndex {
-                        path: tbi_path.to_path_buf(),
-                        source: e
-                    })?,
-            );
+            let mut reader = tabix::io::Reader::new(File::open(tbi_path).map_err(|e| {
+                Error::CannotOpenIndex {
+                    path: tbi_path.to_path_buf(),
+                    source: e,
+                }
+            })?);
             return reader
                 .read_index()
                 .map_err(|e| Error::CannotReadTabixIndex {
                     path: tbi_path.to_path_buf(),
-                    source: e
+                    source: e,
                 });
         }
     }
-    Err(Error::TabixIndexNotFound { path: path.to_path_buf() })
+    Err(Error::TabixIndexNotFound {
+        path: path.to_path_buf(),
+    })
 }
 
 pub(crate) struct TabixBed {
@@ -55,7 +56,12 @@ impl TabixBed {
     }
 
     /// Returns `true` if any BED record overlaps `[start, end)` (0-based).
-    pub(crate) fn overlaps(&mut self, chrom: &str, start: usize, end: usize) -> Result<bool, Error> {
+    pub(crate) fn overlaps(
+        &mut self,
+        chrom: &str,
+        start: usize,
+        end: usize,
+    ) -> Result<bool, Error> {
         // Convert to 1-based inclusive for Region.
         let region_str = format!("{}:{}-{}", chrom, start + 1, end);
         let region: Region = region_str
@@ -83,11 +89,10 @@ pub(crate) struct TabixVcf {
 impl TabixVcf {
     pub(crate) fn open(path: &Path) -> Result<Self, Error> {
         let index = read_tabix_index(path)?;
-        let file = File::open(path)
-            .map_err(|e| Error::CannotOpenVcf {
-                path: path.to_path_buf(),
-                source: e
-            })?;
+        let file = File::open(path).map_err(|e| Error::CannotOpenVcf {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
         let mut reader = vcf::io::IndexedReader::new(file, index);
         let header = reader
             .read_header()
@@ -96,7 +101,12 @@ impl TabixVcf {
     }
 
     /// Returns `true` if any diagnostic variant overlaps `[start, end)` (1-based, BAM coords).
-    pub(crate) fn overlaps(&mut self, chrom: &str, start: usize, end: usize) -> Result<bool, Error> {
+    pub(crate) fn overlaps(
+        &mut self,
+        chrom: &str,
+        start: usize,
+        end: usize,
+    ) -> Result<bool, Error> {
         let region_str = format!("{}:{}-{}", chrom, start, end);
         let region: Region = region_str
             .parse()
@@ -108,4 +118,3 @@ impl TabixVcf {
         Ok(query.records().next().is_none())
     }
 }
-

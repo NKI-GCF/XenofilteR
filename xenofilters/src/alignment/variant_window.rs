@@ -2,9 +2,9 @@
 //! window of aligned read. Split out of `fragment.rs` so each piece can be
 //! unit-tested without a full Fragment/Scratch/BAM-record harness.
 
+use crate::Error;
 use crate::filter_algorithm::line_by_line::Scratch;
 use crate::penalty::Penalty;
-use crate::Error;
 
 /// Geometry of how a `[ref_start, ref_end)` scoring window overlaps a
 /// candidate variant's reference span `[vnt_start, vnt_ref_end)`.
@@ -109,7 +109,10 @@ pub(crate) fn align_alt_to_read(
             #[cfg(test)]
             eprintln!(
                 "[align_alt_to_read] i={i} j={j} read_idx={} alt={} read={} match={} per_base={per_base_score}",
-                read_offset + j - 1, alt_base as char, read_base as char, alt_base == read_base
+                read_offset + j - 1,
+                alt_base as char,
+                read_base as char,
+                alt_base == read_base
             );
 
             scratch.curr[j].m = per_base_score

@@ -1,14 +1,14 @@
+use crate::Error;
+use crate::LineByLine;
 use crate::alignment::FragmentState;
 use crate::aln_stream::AlignmentStream;
 use crate::config::Config;
 use crate::filter_algorithm::line_by_line::{core::FragmentBuffer, ordering::Decision};
-use crate::tests::{create_record, MockStream};
-use crate::LineByLine;
+use crate::tests::{MockStream, create_record};
 use noodles::sam::alignment::record::Flags;
 use noodles::sam::alignment::record_buf::RecordBuf;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use std::cmp::Ordering;
-use crate::Error;
 
 pub(crate) fn setup_mock_streams() -> SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> {
     let stream1 = MockStream::new(
@@ -128,7 +128,7 @@ fn test_branch_counters_and_skipping() -> Result<(), Error> {
     lbl.print_counters(0);
     assert_eq!(lbl.routing_counters[2], 2); // ambiguous:0: 2
     assert_eq!(lbl.routing_counters[0], 1); // discard:0:
-                                            // ingest_record should skip secondary
+    // ingest_record should skip secondary
     let mut best: FragmentBuffer<RecordBuf> = smallvec![];
     let finished = lbl.ingest_record(0, secondary, &mut best).unwrap();
     assert!(!finished);

@@ -276,9 +276,10 @@ fn test_merged_output_mutually_exclusive_with_output() {
     config.output = vec![PathBuf::from("out1.bam")];
 
     let err = config.validate_and_init().unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("Cannot use --merged-output in combination"));
+    assert!(
+        err.to_string()
+            .contains("Cannot use --merged-output in combination")
+    );
 }
 
 #[test]
@@ -288,9 +289,10 @@ fn test_merged_output_mutually_exclusive_with_discarded() {
     config.discarded_output = vec![PathBuf::from("discarded.bam")];
 
     let err = config.validate_and_init().unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("Cannot use --merged-output in combination"));
+    assert!(
+        err.to_string()
+            .contains("Cannot use --merged-output in combination")
+    );
 }
 
 #[test]
@@ -300,9 +302,10 @@ fn test_merged_output_mutually_exclusive_with_ambiguous() {
     config.ambiguous_output = vec![PathBuf::from("ambig.bam")];
 
     let err = config.validate_and_init().unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("Cannot use --merged-output in combination"));
+    assert!(
+        err.to_string()
+            .contains("Cannot use --merged-output in combination")
+    );
 }
 
 #[test]

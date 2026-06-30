@@ -3,20 +3,20 @@
 //! BAM output helpers — single-threaded and multithreaded writers,
 //! plus the merged-output variant.
 
+use crate::Error;
 use noodles::bam::io::Writer as BamWriter;
 use noodles::bgzf::io::{
+    MultithreadedWriter, Writer as BgzfSyncWriter,
     multithreaded_writer::Builder as MultiBuilder,
     writer::{Builder, CompressionLevel},
-    MultithreadedWriter, Writer as BgzfSyncWriter,
 };
 use noodles::sam::{
-    alignment::{io::Write as AlignmentWrite, record_buf::RecordBuf},
-    header::record::value::{map::program::tag, Map},
     Header,
+    alignment::{io::Write as AlignmentWrite, record_buf::RecordBuf},
+    header::record::value::{Map, map::program::tag},
 };
 use std::io::Stdout;
 use std::{fs::File, num::NonZeroUsize, path::Path};
-use crate::Error;
 
 // -- @PG helper ----------------------------------------------------------------
 
@@ -114,7 +114,9 @@ impl MergedOutput {
 pub(crate) fn path_unicode_ok<'a, P: 'a + AsRef<Path>>(path: P) -> Result<(), Error> {
     path.as_ref()
         .to_str()
-        .ok_or_else(|| Error::InvalidPathUtf8 { path: path.as_ref().to_path_buf() })?;
+        .ok_or_else(|| Error::InvalidPathUtf8 {
+            path: path.as_ref().to_path_buf(),
+        })?;
     Ok(())
 }
 
@@ -136,8 +138,10 @@ pub(crate) fn out_from_file(
 
 /// Shared writer construction logic.
 fn open_writer(f: &Path, header: &Header, threads: usize) -> Result<BamOutput, Error> {
-    let file =
-        File::create(f).map_err(|e| Error::CreateOutputFileFailed { path: f.to_path_buf(), source: e })?;
+    let file = File::create(f).map_err(|e| Error::CreateOutputFileFailed {
+        path: f.to_path_buf(),
+        source: e,
+    })?;
 
     if threads <= 1 {
         let enc = Builder::default()

@@ -4,6 +4,7 @@
 //   - LineByLine::new() reads score_threads from config
 //   - process() dispatcher added (sequential vs parallel)
 
+use crate::Error;
 use crate::alignment::FragmentState;
 use crate::alignment::SimpleRec;
 use crate::aln_stream::AlignmentStream;
@@ -13,7 +14,6 @@ use crate::{
 };
 use noodles::sam::alignment::Record;
 use smallvec::SmallVec;
-use crate::Error;
 
 pub(crate) const READ_CT: usize = 8;
 pub(crate) const VNT_LEN: usize = 16;
@@ -110,11 +110,11 @@ pub(crate) struct LineByLine<R> {
     pub(super) score_threads: usize,
 
     /// Canonical chimeric stream-index pairs (lower index first).
-    pub(super) chimeric_pairs:     Vec<[usize; 2]>,
+    pub(super) chimeric_pairs: Vec<[usize; 2]>,
 
     /// Per-stream labels used for the `XC:Z:` SAM tag.
     /// `chimeric_label(i)` returns `stream_labels[i]` or `"stream_N"`.
-    pub(super) stream_labels:      Vec<String>,
+    pub(super) stream_labels: Vec<String>,
 }
 
 impl<R: SimpleRec> LineByLine<R> {

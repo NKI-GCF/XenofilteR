@@ -1,10 +1,10 @@
+use crate::Error;
 use crate::aln_stream::tests::MockStream;
 use crate::config::{Config, StripReadSuffix};
 use crate::filter_algorithm::collated::CollatedMatcher;
 use crate::tests::create_record;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::smallvec;
-use crate::Error;
 
 fn config() -> Config {
     Config {
@@ -76,7 +76,7 @@ fn test_collated_streams_in_different_order() -> Result<(), Error> {
     m.process()?;
     // R1: stream0 perfect wins
     assert_eq!(m.routing_counters[1], 1); // out:0 (R1)
-                                         // R2: stream1 perfect wins
+    // R2: stream1 perfect wins
     assert_eq!(m.routing_counters[5], 1); // out:1 (R2)
     Ok(())
 }

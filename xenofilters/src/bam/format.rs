@@ -7,4 +7,3 @@ pub(crate) enum BamFormat {
     Sam,
     Cram,
 }
-

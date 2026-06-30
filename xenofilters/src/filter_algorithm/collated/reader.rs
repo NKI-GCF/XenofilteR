@@ -1,22 +1,25 @@
-
 //! [`CollatedReader`] extracts complete [`FragmentState`]s from a collated
 //! BAM stream — consuming all records that share a canonical read name
 //! before returning.
 
+use crate::Error;
 use crate::alignment::{FragmentState, SimpleRec};
 use crate::aln_stream::AlignmentStream;
 use crate::config::StripReadSuffix;
 use crate::variant::StoreTrait;
-use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::Header;
+use noodles::sam::alignment::record_buf::RecordBuf;
 use std::sync::Arc;
-use crate::Error;
 
 /// Strip the `/1` or `/2` suffix from `raw` according to `mode`.
 pub(crate) fn canonical_name(raw: &[u8], mode: StripReadSuffix) -> Box<[u8]> {
     let stripped = match mode {
         StripReadSuffix::True => {
-            if raw.len() >= 2 { &raw[..raw.len() - 2] } else { raw }
+            if raw.len() >= 2 {
+                &raw[..raw.len() - 2]
+            } else {
+                raw
+            }
         }
         StripReadSuffix::Variable => {
             if raw.ends_with(b"/1") || raw.ends_with(b"/2") {
@@ -43,7 +46,12 @@ impl<R: SimpleRec> CollatedReader<R> {
         strip: StripReadSuffix,
         species_nr: usize,
     ) -> Self {
-        Self { inner, peeked: None, strip, species_nr }
+        Self {
+            inner,
+            peeked: None,
+            strip,
+            species_nr,
+        }
     }
 
     /// Yield the next complete fragment (all records sharing a canonical name),
@@ -98,7 +106,11 @@ impl<R: SimpleRec> CollatedReader<R> {
         self.inner.variant_store()
     }
 
-    pub(crate) fn write_record(&mut self, rec: RecordBuf, state: Option<bool>) -> Result<(), Error> {
+    pub(crate) fn write_record(
+        &mut self,
+        rec: RecordBuf,
+        state: Option<bool>,
+    ) -> Result<(), Error> {
         self.inner.write_record(rec, state)
     }
 }

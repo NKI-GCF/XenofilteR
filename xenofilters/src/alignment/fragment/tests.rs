@@ -1,14 +1,14 @@
 use super::*;
-use crate::alignment::fragment::SimpleRec;
+use crate::Error;
 use crate::alignment::MdCigFlags;
+use crate::alignment::fragment::SimpleRec;
 use crate::config::Config;
 use crate::penalty::Penalty;
 use crate::tests::create_record;
 use crate::variant::{Eval, Variant};
 use noodles::sam::alignment::record::Flags;
 use noodles::sam::alignment::record_buf::RecordBuf;
-use smallvec::{smallvec, SmallVec};
-use crate::Error;
+use smallvec::{SmallVec, smallvec};
 
 pub(crate) fn setup_penalties() -> Penalty {
     let c = Config::default();

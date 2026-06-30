@@ -1,13 +1,13 @@
-use crate::alignment::{align_alt_to_read, weighted_ref_score, MdCigFlags, VariantWindow};
+use crate::Error;
 use crate::alignment::{BaseOp, ScoreOpIter};
-use crate::filter_algorithm::line_by_line::{Scratch, READ_CT};
-use crate::penalty::{Penalty, MAX_Q};
+use crate::alignment::{MdCigFlags, VariantWindow, align_alt_to_read, weighted_ref_score};
+use crate::filter_algorithm::line_by_line::{READ_CT, Scratch};
+use crate::penalty::{MAX_Q, Penalty};
 use crate::variant::{Eval, FragEvalVec, VNT_CT};
+use noodles::sam::Header;
 use noodles::sam::alignment::Record;
 use noodles::sam::alignment::RecordBuf;
-use noodles::sam::Header;
 use smallvec::SmallVec;
-use crate::Error;
 
 pub(crate) struct Fragment<'r, R> {
     pen: &'r Penalty,
@@ -347,7 +347,8 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         #[cfg(test)]
         eprintln!(
             "[score_variant_against_segment] vnt=[{},{}) window={window:?} read_offset={read_offset} weighted_ref={weighted_ref} alt_score={alt_score}",
-            vnt_eval.start(), vnt_eval.ref_end()
+            vnt_eval.start(),
+            vnt_eval.ref_end()
         );
 
         Ok(Some((weighted_ref, alt_score)))
@@ -392,7 +393,7 @@ where
         self.seg[seg_i]
             .quality_at(nt_i)
             .map(|q| (q as usize).min(MAX_Q - 1))
-            .ok_or_else(|| Error::QualityScoreOutOfBounds{ nt_i, seg_i})
+            .ok_or_else(|| Error::QualityScoreOutOfBounds { nt_i, seg_i })
     }
 }
 

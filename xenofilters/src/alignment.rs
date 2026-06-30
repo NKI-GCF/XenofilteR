@@ -10,12 +10,12 @@ pub(crate) use fragment::{Fragment, SimpleRec};
 pub(crate) use fragment_state::FragmentState;
 pub(crate) use md_cig_flags::MdCigFlags;
 pub(crate) use ops::{BaseOp, ScoreOpIter};
-pub(crate) use pre_assess::{pre_assess_alignments, pre_assess_scoring_records, PreAssessResult};
-pub(crate) use variant_window::{align_alt_to_read, weighted_ref_score, VariantWindow};
+pub(crate) use pre_assess::{PreAssessResult, pre_assess_alignments, pre_assess_scoring_records};
+pub(crate) use variant_window::{VariantWindow, align_alt_to_read, weighted_ref_score};
 
+use noodles::sam::alignment::Record;
 use noodles::sam::alignment::record::cigar::op::Kind;
 use noodles::sam::alignment::record::data::field::{Tag, Value};
-use noodles::sam::alignment::Record;
 
 pub(crate) fn stringify_record<R: Record + PartialEq>(rec: &R) -> String {
     let qname = rec.name();
@@ -52,8 +52,8 @@ pub(crate) fn stringify_record<R: Record + PartialEq>(rec: &R) -> String {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    pub(crate) use ops::tests::*;
     use crate::Error;
+    pub(crate) use ops::tests::*;
 
     #[test]
     fn test_stringify_record_includes_qname_cigar_md_and_orientation() -> Result<(), Error> {

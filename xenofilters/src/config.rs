@@ -1,11 +1,11 @@
+use crate::Error;
+use crate::filter_algorithm::line_by_line::MAX_STREAMS;
 use crate::{
     bam::BamFormat,
-    penalty::{Penalty, MAX_Q},
+    penalty::{MAX_Q, Penalty},
 };
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
-use crate::filter_algorithm::line_by_line::MAX_STREAMS;
-use crate::Error;
 
 const ARG_MAX: usize = 4;
 
@@ -229,20 +229,28 @@ pub(crate) struct Config {
 }
 
 impl Config {
-pub(super) fn validate_and_init(&mut self) -> Result<(), Error> {
+    pub(super) fn validate_and_init(&mut self) -> Result<(), Error> {
         let aln_count = self.alignment.len();
         // -- Chimeric pair parsing --------------------------------------------
         let mut parsed_chimeric_pairs: Vec<[usize; 2]> = Vec::new();
         for raw in &self.chimeric_pairs {
-            let (a_str, b_str) = raw.split_once(':').ok_or(
-                Error::ChimericPairsInvalidFormat { raw: raw.clone() }
-            )?;
-            let a = a_str.trim().parse::<usize>().map_err(|_| {
-                Error::ChimericPairsInvalidIndex { index_str: a_str.to_string() }
-            })?;
-            let b = b_str.trim().parse::<usize>().map_err(|_| {
-                Error::ChimericPairsInvalidIndex { index_str: b_str.to_string() }
-            })?;
+            let (a_str, b_str) = raw
+                .split_once(':')
+                .ok_or(Error::ChimericPairsInvalidFormat { raw: raw.clone() })?;
+            let a =
+                a_str
+                    .trim()
+                    .parse::<usize>()
+                    .map_err(|_| Error::ChimericPairsInvalidIndex {
+                        index_str: a_str.to_string(),
+                    })?;
+            let b =
+                b_str
+                    .trim()
+                    .parse::<usize>()
+                    .map_err(|_| Error::ChimericPairsInvalidIndex {
+                        index_str: b_str.to_string(),
+                    })?;
 
             if a == b {
                 return Err(Error::ChimericPairsIdenticalIndices { raw: raw.clone() });
@@ -309,20 +317,30 @@ pub(super) fn validate_and_init(&mut self) -> Result<(), Error> {
                     return Err(Error::MultiStreamRequiresNamesorted);
                 }
                 if aln_count > MAX_STREAMS {
-                    return Err(Error::MaxStreamsExceeded { count: aln_count, max: MAX_STREAMS });
+                    return Err(Error::MaxStreamsExceeded {
+                        count: aln_count,
+                        max: MAX_STREAMS,
+                    });
                 }
             }
         }
         if self.merged_output.is_some() {
-            if !self.output.is_empty() || !self.discarded_output.is_empty() || !self.ambiguous_output.is_empty() {
+            if !self.output.is_empty()
+                || !self.discarded_output.is_empty()
+                || !self.ambiguous_output.is_empty()
+            {
                 return Err(Error::MergedOutputConflict);
             }
         }
         if self.ambiguous_regions.len() > 2 {
-            return Err(Error::TooManyAmbiguousRegionsFiles { count: self.ambiguous_regions.len() });
+            return Err(Error::TooManyAmbiguousRegionsFiles {
+                count: self.ambiguous_regions.len(),
+            });
         }
         if self.diagnostic_variants.len() > 2 {
-            return Err(Error::TooManyDiagnosticVariantsFiles { count: self.diagnostic_variants.len() });
+            return Err(Error::TooManyDiagnosticVariantsFiles {
+                count: self.diagnostic_variants.len(),
+            });
         }
         // Determine effective dimensions (logical comparisons)
         let logical_len = if aln_count == 1 { 2 } else { aln_count };
@@ -336,7 +354,10 @@ pub(super) fn validate_and_init(&mut self) -> Result<(), Error> {
         for (i, arg) in self.sample_variants.iter().enumerate() {
             let (idx, path) = Self::parse_variant_string(arg, i)?;
             if idx >= logical_len {
-                return Err(Error::SampleVariantIndexOutOfBounds { idx, max: logical_len });
+                return Err(Error::SampleVariantIndexOutOfBounds {
+                    idx,
+                    max: logical_len,
+                });
             }
             normalized_samples[idx] = path;
             stream_has_variants[idx] = true;
@@ -345,7 +366,10 @@ pub(super) fn validate_and_init(&mut self) -> Result<(), Error> {
         for (i, arg) in self.population_variants.iter().enumerate() {
             let (idx, path) = Self::parse_variant_string(arg, i)?;
             if idx >= logical_len {
-                return Err(Error::PopulationVariantIndexOutOfBounds { idx, max: logical_len });
+                return Err(Error::PopulationVariantIndexOutOfBounds {
+                    idx,
+                    max: logical_len,
+                });
             }
             normalized_populations[idx] = path;
             stream_has_variants[idx] = true;
@@ -368,19 +392,30 @@ pub(super) fn validate_and_init(&mut self) -> Result<(), Error> {
 
         // 3. Output bounds validation
         if self.output.len() > logical_len {
-            return Err(Error::TooManyOutputPaths { count: self.output.len(), max: logical_len });
+            return Err(Error::TooManyOutputPaths {
+                count: self.output.len(),
+                max: logical_len,
+            });
         }
         if self.discarded_output.len() > logical_len {
-            return Err(Error::TooManyDiscardedOutputPaths { count: self.discarded_output.len(), max: logical_len });
+            return Err(Error::TooManyDiscardedOutputPaths {
+                count: self.discarded_output.len(),
+                max: logical_len,
+            });
         }
 
         if aln_count == 1 {
             if self.ambiguous_output.len() > 1 {
-                return Err(Error::SingleStreamTooManyAmbiguousOutputs { count: self.ambiguous_output.len() });
+                return Err(Error::SingleStreamTooManyAmbiguousOutputs {
+                    count: self.ambiguous_output.len(),
+                });
             }
         } else {
             if self.ambiguous_output.len() > logical_len {
-                return Err(Error::TooManyAmbiguousOutputPaths { count: self.ambiguous_output.len(), max: logical_len });
+                return Err(Error::TooManyAmbiguousOutputPaths {
+                    count: self.ambiguous_output.len(),
+                    max: logical_len,
+                });
             }
         }
 
@@ -411,8 +446,9 @@ pub(super) fn validate_and_init(&mut self) -> Result<(), Error> {
     /// Parse `"<idx>:<path>"` or fall back to `(default_idx, path)`.
     fn parse_variant_string(arg: &str, default_idx: usize) -> Result<(usize, PathBuf), Error> {
         if let Some((idx_str, path_str)) = arg.split_once(':')
-            && let Ok(idx) = idx_str.parse::<usize>() {
-                return Ok((idx, PathBuf::from(path_str)));
+            && let Ok(idx) = idx_str.parse::<usize>()
+        {
+            return Ok((idx, PathBuf::from(path_str)));
         }
         Ok((default_idx, PathBuf::from(arg)))
     }
@@ -443,7 +479,7 @@ pub(super) fn validate_and_init(&mut self) -> Result<(), Error> {
             log_likelihood_mismatch,
             log_likelihood_match,
             chimeric_junction_penalty: self.gap_open
-            + (self.chimeric_junction_bases as f64) * self.gap_extend,
+                + (self.chimeric_junction_bases as f64) * self.gap_extend,
         }
     }
 }

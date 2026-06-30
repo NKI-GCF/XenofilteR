@@ -1,11 +1,11 @@
-use crate::aln_stream::tests::MockStream;
+use crate::Error;
 use crate::aln_stream::AlignmentStream;
+use crate::aln_stream::tests::MockStream;
 use crate::config::{Config, StripReadSuffix};
 use crate::filter_algorithm::hash_lookup::HashLookup;
 use crate::tests::create_record;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::smallvec;
-use crate::Error;
 
 fn config() -> Config {
     Config {

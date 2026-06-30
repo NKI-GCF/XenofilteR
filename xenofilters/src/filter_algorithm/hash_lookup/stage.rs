@@ -2,16 +2,16 @@
 //! sequence number. Pass-2 seeks are performed here by calling
 //! `fetch_by_virtual_offset` on the appropriate `AlignmentStream`.
 
+use crate::Error;
 use crate::alignment::SimpleRec;
 use crate::aln_stream::AlignmentStream;
 use crate::filter_algorithm::hash_lookup::ScoredFragment;
 use crate::filter_algorithm::line_by_line::ordering::Decision;
 use noodles::sam::alignment::record::data::field::Tag;
-use noodles::sam::alignment::record_buf::data::field::Value;
 use noodles::sam::alignment::record_buf::RecordBuf;
+use noodles::sam::alignment::record_buf::data::field::Value;
 use smallvec::SmallVec;
 use std::collections::BTreeMap;
-use crate::Error;
 
 // CONCURRENCY STUB — HashLookup pass-2 seek-IO thread
 //
@@ -142,7 +142,7 @@ fn fetch<R: SimpleRec>(
     virtual_offset: u64,
 ) -> Result<RecordBuf, Error> {
     aln.get_mut(nr)
-        .ok_or(Error::NoStream{ nr})?
+        .ok_or(Error::NoStream { nr })?
         .fetch_by_virtual_offset(virtual_offset)
 }
 

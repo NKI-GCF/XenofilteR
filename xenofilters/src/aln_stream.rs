@@ -1,21 +1,21 @@
+use crate::Error;
 use crate::alignment::SimpleRec;
-use crate::bam::{out_from_file, path_unicode_ok, OutputMode};
+use crate::bam::{OutputMode, out_from_file, path_unicode_ok};
 use crate::config::MatchingAlgorithm;
 use crate::config::{Config, StripReadSuffix};
 use crate::variant::{
-    parse_population_record, parse_sample_record, Population, Sample, Store, StoreTrait,
+    Population, Sample, Store, StoreTrait, parse_population_record, parse_sample_record,
 };
 use noodles::bam::{io::Reader as BamReader, record::Record};
-use noodles::bgzf::io::Reader as BgzfReader;
 use noodles::bgzf::VirtualPosition;
-use noodles::sam::alignment::record_buf::RecordBuf;
+use noodles::bgzf::io::Reader as BgzfReader;
 use noodles::sam::Header;
+use noodles::sam::alignment::record_buf::RecordBuf;
 use std::fs::File;
 use std::io::{Read as ioRead, Seek as ioSeek};
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::Arc;
-use crate::Error;
 
 pub(crate) trait AlignmentStream<R: SimpleRec> {
     fn next_qname(&self) -> &[u8];
@@ -89,7 +89,10 @@ where
                 .split(|&b| b == b'\n')
                 .map(|s| s.split(|&b| b == b'\t').collect::<Vec<_>>())
             {
-                if parts.len() >= 3 && parts[0] == b"@HD" && (parts[2] == b"SO:coordinate" || parts[2] == b"GO:reference") {
+                if parts.len() >= 3
+                    && parts[0] == b"@HD"
+                    && (parts[2] == b"SO:coordinate" || parts[2] == b"GO:reference")
+                {
                     return Err(Error::CoordinateSortedInputDetected);
                 }
             }
@@ -98,12 +101,14 @@ where
         let test_record = match bam.records().next() {
             Some(Ok(rec)) => rec,
             Some(Err(e)) => return Err(e.into()),
-            None => return Err(Error::BamHasNoRecords {bam_str: bam_str.to_string()}),
+            None => {
+                return Err(Error::BamHasNoRecords {
+                    bam_str: bam_str.to_string(),
+                });
+            }
         };
 
-        let name = test_record
-            .name()
-            .ok_or(Error::RecordHasNoReadName)?;
+        let name = test_record.name().ok_or(Error::RecordHasNoReadName)?;
         opt.strip_read_suffix = match opt.strip_read_suffix {
             StripReadSuffix::True => {
                 if !name.ends_with(b"/1") && !name.ends_with(b"/2") {
@@ -243,7 +248,7 @@ where
                 // LineByLine and routing records from all streams through a shared writer
                 // (Arc<Mutex<MergedOutput>> or caller-level aggregation).
                 // Tracked in TODO_rust.md.
-                use crate::bam::{expand_header, MergedOutput};
+                use crate::bam::{MergedOutput, expand_header};
                 let expanded = expand_header(self.header.clone());
                 self.output_mode =
                     OutputMode::Merged(MergedOutput::new(path, expanded, add_pg, threads)?);
@@ -290,10 +295,7 @@ where
 
     fn fetch_by_virtual_offset(&mut self, virtual_offset: u64) -> Result<RecordBuf, Error> {
         let vpos = VirtualPosition::from(virtual_offset);
-        let bam = self
-            .bam
-            .as_mut()
-            .ok_or_else(|| Error::NoBamReaderForSeek)?;
+        let bam = self.bam.as_mut().ok_or_else(|| Error::NoBamReaderForSeek)?;
         bam.seek_vpos(vpos)?;
         let rec = bam
             .next_record() // ← use trait method

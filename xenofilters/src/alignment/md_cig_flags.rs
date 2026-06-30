@@ -1,6 +1,6 @@
-use noodles::sam::alignment::record::{data::field::Tag, data::field::Value, Cigar, Flags, Record};
-use std::cmp::Ordering;
 use crate::Error;
+use noodles::sam::alignment::record::{Cigar, Flags, Record, data::field::Tag, data::field::Value};
+use std::cmp::Ordering;
 
 pub(crate) struct MdCigFlags<'r> {
     flags: &'r Flags,
@@ -18,7 +18,10 @@ pub(crate) struct MdCigFlags<'r> {
 
 impl<'r> MdCigFlags<'r> {
     /// Build an `MdCigRef` from a stored `MdCigFlags` and its matching record.
-    pub(crate) fn try_from_record<R: Record>(record: &'r R, flags: &'r Flags) -> Result<Self, Error> {
+    pub(crate) fn try_from_record<R: Record>(
+        record: &'r R,
+        flags: &'r Flags,
+    ) -> Result<Self, Error> {
         if flags.is_unmapped() {
             return Err(Error::UnmappedRecordInMdCigFlags);
         }

@@ -1,3 +1,4 @@
+use crate::Error;
 use crate::aln_stream::BamStreamReader;
 use crate::bam::{BamFormat, OutputMode};
 use crate::config::{Config, StripReadSuffix};
@@ -6,11 +7,10 @@ use crate::variant::StoreTrait;
 use crate::{AlignmentStream, AlnStream};
 use noodles::bam::io::Reader as BamReader;
 use noodles::bgzf::VirtualPosition;
-use noodles::sam::{alignment::record_buf::RecordBuf, Header};
+use noodles::sam::{Header, alignment::record_buf::RecordBuf};
 use std::fs::File;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
-use crate::Error;
 
 // A dummy struct to test default trait methods
 struct DefaultStream;
@@ -357,9 +357,11 @@ fn test_next_qname_returns_pending_records_name() -> Result<(), Error> {
 fn test_un_next_errors_when_already_occupied() -> Result<(), Error> {
     let mut stream = empty_aln_stream();
     stream.un_next(create_record(b"r1", "5M", &[], &[30; 5], "5", false)?)?;
-    assert!(stream
-        .un_next(create_record(b"r2", "5M", &[], &[30; 5], "5", false)?)
-        .is_err());
+    assert!(
+        stream
+            .un_next(create_record(b"r2", "5M", &[], &[30; 5], "5", false)?)
+            .is_err()
+    );
     Ok(())
 }
 

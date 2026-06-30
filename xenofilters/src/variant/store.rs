@@ -1,11 +1,11 @@
 // src/variant/store.rs  (diff: StoreTrait gains Send + Sync supertraits)
-use crate::variant::{Variant, Eval};
-use noodles::bcf::{record::Record, io::reader::Builder};
-use std::path::Path;
+use crate::Error;
+use crate::variant::{Eval, Variant};
+use noodles::bcf::{io::reader::Builder, record::Record};
+use noodles::vcf::Header;
 use smallvec::SmallVec;
 use std::collections::HashMap;
-use noodles::vcf::Header;
-use crate::Error;
+use std::path::Path;
 
 pub(crate) const VNT_CT: usize = 4;
 
@@ -44,8 +44,13 @@ impl<V: Variant> Store<V> {
         f: &Path,
         parser: impl Fn(&mut Record, &Header) -> Result<Vec<V>, Error>,
     ) -> Result<Store<V>, Error> {
-        let mut bcf_reader = Builder::default().build_from_path(f)
-            .map_err(|e| Error::FailedToOpenVcfBcf{path: f.to_path_buf(), source: e})?;
+        let mut bcf_reader =
+            Builder::default()
+                .build_from_path(f)
+                .map_err(|e| Error::FailedToOpenVcfBcf {
+                    path: f.to_path_buf(),
+                    source: e,
+                })?;
 
         let mut per_chr = HashMap::new();
         let mut max_variant_len: usize = 1;
@@ -63,13 +68,14 @@ impl<V: Variant> Store<V> {
                 let pos = v.pos();
                 if is_sorted {
                     if let Some(last) = last_pos
-                        && pos < last {
-                            tracing::warn!(
-                                path = %f.display(),
-                                "Variants are not sorted by position; sorting now."
-                            );
-                            is_sorted = false;
-                        }
+                        && pos < last
+                    {
+                        tracing::warn!(
+                            path = %f.display(),
+                            "Variants are not sorted by position; sorting now."
+                        );
+                        is_sorted = false;
+                    }
                     last_pos = Some(pos);
                 }
                 let span = v.end() - pos;
@@ -85,7 +91,10 @@ impl<V: Variant> Store<V> {
             }
         }
 
-        Ok(Store { per_chr, max_variant_len })
+        Ok(Store {
+            per_chr,
+            max_variant_len,
+        })
     }
 
     pub(crate) fn overlapping(
@@ -102,7 +111,7 @@ impl<V: Variant> Store<V> {
         let upper = read_end;
 
         let start_idx = chr_vars.partition_point(|v| v.pos() < lower);
-        let end_idx   = chr_vars.partition_point(|v| v.pos() < upper);
+        let end_idx = chr_vars.partition_point(|v| v.pos() < upper);
 
         let mut hits = SmallVec::new();
         for v in &chr_vars[start_idx..end_idx] {
