@@ -33,7 +33,7 @@ Items marked ✓ are complete; ○ are planned; ◑ are in progress.
   multi-base insertions and deletions.
 - ○ **Multiple ALT alleles** — `parse_sample_record` and `parse_population_record` currently
   handle only the first ALT. Extend to iterate all ALTs and pick the highest-scoring one.
-- ○ **Error-type unification** — consolidate `AlignmentError`, `anyhow::Error`, and
+- [✓] **Error-type unification** — consolidate `AlignmentError`, `anyhow::Error`, and
   `std::io::Error` into a single `xenofilters::Error` via `thiserror`.
 
 ---
