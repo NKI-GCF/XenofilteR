@@ -280,7 +280,6 @@ impl<R: SimpleRec> HashLookup<R> {
         let dk = pending.driving.early_kind();
         let lk = pending.lookup.early_kind();
 
-        // 1. Handle full scoring early to avoid unnecessary unpacking logic
         if dk.is_none() && lk.is_none() {
             let StreamKind::Scoring { records: recs_a } = pending.driving else {
                 return Err(Error::MissingDrivingRecords);
@@ -291,7 +290,6 @@ impl<R: SimpleRec> HashLookup<R> {
             return self.evaluate_scoring_pair(*recs_a, *recs_b, driving_offsets, lookup_offsets, supp_offsets);
         }
 
-        // 2. Collapse the matrix into structural outcomes: (winner_nr, decision, is_ambiguous)
         use EarlyKind::*;
         let (winner_nr, decision, is_ambiguous) = match (dk, lk) {
             (Some(d1), Some(d2)) if d1 == d2 => (0, Decision::Ambiguous, true),
@@ -300,7 +298,6 @@ impl<R: SimpleRec> HashLookup<R> {
             (None, None) => unreachable!(),
         };
 
-        // 3. Lazily project offset tagging via simple closures
         let drv = || driving_offsets.iter().map(|&o| (0, o));
         let lkp = || lookup_offsets.iter().map(|&o| (1, o));
 
@@ -336,11 +333,11 @@ impl<R: SimpleRec> HashLookup<R> {
         offsets_b: SmallVec<[u64; 2]>,
         supp_offsets: [SmallVec<[u64; 1]>; 2],
     ) -> Result<ScoredFragment, Error> {
-        // 1. Transform raw offsets upfront to eliminate copy-paste iteration blocks
+
         let off_a: SmallVec<[(usize, u64); 2]> = offsets_a.iter().map(|&o| (0, o)).collect();
         let off_b: SmallVec<[(usize, u64); 2]> = offsets_b.iter().map(|&o| (1, o)).collect();
 
-        // 2. Reduce logic down to its core outcome variables: (winner_nr, decision, is_ambiguous)
+        // Reduce logic down to its core outcome variables: (winner_nr, decision, is_ambiguous)
         let (winner_nr, decision, is_ambiguous) = match pre_assess_scoring_records(&recs_a, &recs_b) {
             PreAssessResult::EarlyDecision(ord) => match ord {
                 Ordering::Greater => (0, self.add_decision_tag.then_some(Decision::First), false),
@@ -359,7 +356,7 @@ impl<R: SimpleRec> HashLookup<R> {
             }
         };
 
-        // 3. Routinely distribute vectors based on outcome metadata
+        //  Routinely distribute vectors based on outcome metadata
         let (winner_offsets, loser_offsets) = if is_ambiguous {
             let mut both = off_a;
             both.extend(off_b);
