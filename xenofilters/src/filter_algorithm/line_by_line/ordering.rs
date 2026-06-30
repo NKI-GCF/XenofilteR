@@ -54,6 +54,7 @@ use std::thread;
 
 // -- Public decision type ------------------------------------------------------
 
+#[derive(PartialEq, Debug)]
 pub(crate) enum Decision {
     First,
     Last,

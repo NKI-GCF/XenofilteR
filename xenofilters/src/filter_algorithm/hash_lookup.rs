@@ -274,128 +274,52 @@ impl<R: SimpleRec> HashLookup<R> {
 
     fn resolve_fragment(&mut self, pending: PendingFragment) -> Result<ScoredFragment, Error> {
         let supp_offsets = pending.supplementary_offsets;
-        let dk = pending.driving.early_kind();
-        let lk = pending.lookup.early_kind();
         let driving_offsets = pending.driving.virtual_offsets();
         let lookup_offsets = pending.lookup.virtual_offsets();
 
-        // Consume scoring records before match (moving out of pending).
-        let (driving_records, lookup_records) = match (pending.driving, pending.lookup) {
-            (StreamKind::Scoring { records: ra }, StreamKind::Scoring { records: rb }) => {
-                (Some(*ra), Some(*rb))
-            }
-            (StreamKind::Scoring { records: ra }, _) => (Some(*ra), None),
-            (_, StreamKind::Scoring { records: rb }) => (None, Some(*rb)),
-            _ => (None, None),
+        let dk = pending.driving.early_kind();
+        let lk = pending.lookup.early_kind();
+
+        // 1. Handle full scoring early to avoid unnecessary unpacking logic
+        if dk.is_none() && lk.is_none() {
+            let StreamKind::Scoring { records: recs_a } = pending.driving else {
+                return Err(Error::MissingDrivingRecords);
+            };
+            let StreamKind::Scoring { records: recs_b } = pending.lookup else {
+                return Err(Error::MissingLookupRecords);
+            };
+            return self.evaluate_scoring_pair(*recs_a, *recs_b, driving_offsets, lookup_offsets, supp_offsets);
+        }
+
+        // 2. Collapse the matrix into structural outcomes: (winner_nr, decision, is_ambiguous)
+        use EarlyKind::*;
+        let (winner_nr, decision, is_ambiguous) = match (dk, lk) {
+            (Some(d1), Some(d2)) if d1 == d2 => (0, Decision::Ambiguous, true),
+            (Some(AllPerfect), _) | (None, Some(AllUnmapped)) => (0, Decision::First, false),
+            (Some(AllUnmapped), _) | (None, Some(AllPerfect)) => (1, Decision::Last, false),
+            (None, None) => unreachable!(),
         };
 
-        match (dk, lk) {
-            // Both early-classified.
-            (Some(d), Some(l)) => {
-                use EarlyKind::*;
-                match (d, l) {
-                    (AllPerfect, AllPerfect) | (AllUnmapped, AllUnmapped) => {
-                        let dec = self.add_decision_tag.then_some(Decision::Ambiguous);
-                        let winner_offsets = driving_offsets
-                            .iter()
-                            .map(|&o| (0, o))
-                            .chain(lookup_offsets.iter().map(|&o| (1, o)))
-                            .collect();
-                        Ok(ScoredFragment {
-                            winner_offsets,
-                            loser_offsets: SmallVec::new(),
-                            supp_offsets,
-                            decision: dec,
-                            winner_nr: 0,
-                            is_ambiguous: true,
-                        })
-                    }
-                    (AllPerfect, AllUnmapped) => {
-                        let dec = self.add_decision_tag.then_some(Decision::First);
-                        Ok(ScoredFragment {
-                            winner_offsets: driving_offsets.iter().map(|&o| (0, o)).collect(),
-                            loser_offsets: lookup_offsets.iter().map(|&o| (1, o)).collect(),
-                            supp_offsets,
-                            decision: dec,
-                            winner_nr: 0,
-                            is_ambiguous: false,
-                        })
-                    }
-                    (AllUnmapped, AllPerfect) => {
-                        let dec = self.add_decision_tag.then_some(Decision::Last);
-                        Ok(ScoredFragment {
-                            winner_offsets: lookup_offsets.iter().map(|&o| (1, o)).collect(),
-                            loser_offsets: driving_offsets.iter().map(|&o| (0, o)).collect(),
-                            supp_offsets,
-                            decision: dec,
-                            winner_nr: 1,
-                            is_ambiguous: false,
-                        })
-                    }
-                }
-            }
-            // Driving early, lookup needs scoring.
-            (Some(EarlyKind::AllPerfect), None) => {
-                let dec = self.add_decision_tag.then_some(Decision::First);
-                Ok(ScoredFragment {
-                    winner_offsets: driving_offsets.iter().map(|&o| (0, o)).collect(),
-                    loser_offsets: lookup_offsets.iter().map(|&o| (1, o)).collect(),
-                    supp_offsets,
-                    decision: dec,
-                    winner_nr: 0,
-                    is_ambiguous: false,
-                })
-            }
-            (Some(EarlyKind::AllUnmapped), None) => {
-                // Driving unmapped; Scoring stream has ≥1 mapped primary (else it would be AllUnmapped).
-                let dec = self.add_decision_tag.then_some(Decision::Last);
-                Ok(ScoredFragment {
-                    winner_offsets: lookup_offsets.iter().map(|&o| (1, o)).collect(),
-                    loser_offsets: driving_offsets.iter().map(|&o| (0, o)).collect(),
-                    supp_offsets,
-                    decision: dec,
-                    winner_nr: 1,
-                    is_ambiguous: false,
-                })
-            }
-            // Lookup early, driving needs scoring.
-            (None, Some(EarlyKind::AllPerfect)) => {
-                let dec = self.add_decision_tag.then_some(Decision::Last);
-                Ok(ScoredFragment {
-                    winner_offsets: lookup_offsets.iter().map(|&o| (1, o)).collect(),
-                    loser_offsets: driving_offsets.iter().map(|&o| (0, o)).collect(),
-                    supp_offsets,
-                    decision: dec,
-                    winner_nr: 1,
-                    is_ambiguous: false,
-                })
-            }
-            (None, Some(EarlyKind::AllUnmapped)) => {
-                let dec = self.add_decision_tag.then_some(Decision::First);
-                Ok(ScoredFragment {
-                    winner_offsets: driving_offsets.iter().map(|&o| (0, o)).collect(),
-                    loser_offsets: lookup_offsets.iter().map(|&o| (1, o)).collect(),
-                    supp_offsets,
-                    decision: dec,
-                    winner_nr: 0,
-                    is_ambiguous: false,
-                })
-            }
-            // Both need full scoring.
-            (None, None) => {
-                let recs_a = driving_records
-                    .ok_or(Error::MissingDrivingRecords)?;
-                let recs_b = lookup_records
-                    .ok_or(Error::MissingLookupRecords)?;
-                self.evaluate_scoring_pair(
-                    recs_a,
-                    recs_b,
-                    driving_offsets,
-                    lookup_offsets,
-                    supp_offsets,
-                )
-            }
-        }
+        // 3. Lazily project offset tagging via simple closures
+        let drv = || driving_offsets.iter().map(|&o| (0, o));
+        let lkp = || lookup_offsets.iter().map(|&o| (1, o));
+
+        let (winner_offsets, loser_offsets) = if is_ambiguous {
+            (drv().chain(lkp()).collect(), SmallVec::new())
+        } else if winner_nr == 0 {
+            (drv().collect(), lkp().collect())
+        } else {
+            (lkp().collect(), drv().collect())
+        };
+
+        Ok(ScoredFragment {
+            winner_offsets,
+            loser_offsets,
+            supp_offsets,
+            decision: self.add_decision_tag.then_some(decision),
+            winner_nr,
+            is_ambiguous,
+        })
     }
 
     /// Run Tier 2.5 pre-assessment then, if necessary, full NW scoring for a
@@ -412,89 +336,48 @@ impl<R: SimpleRec> HashLookup<R> {
         offsets_b: SmallVec<[u64; 2]>,
         supp_offsets: [SmallVec<[u64; 1]>; 2],
     ) -> Result<ScoredFragment, Error> {
-        // Tier 2.5: CIGAR/MD structural subsumption.
-        // Borrows recs_a/recs_b immutably — both are still available for nw_score_records below.
-        match pre_assess_scoring_records(&recs_a, &recs_b) {
-            PreAssessResult::EarlyDecision(ord) => {
-                let off_a: SmallVec<[(usize, u64); 2]> =
-                    offsets_a.iter().map(|&o| (0, o)).collect();
-                let off_b: SmallVec<[(usize, u64); 2]> =
-                    offsets_b.iter().map(|&o| (1, o)).collect();
-                return match ord {
-                    Ordering::Greater => Ok(ScoredFragment {
-                        winner_offsets: off_a,
-                        loser_offsets: off_b,
-                        supp_offsets,
-                        decision: self.add_decision_tag.then_some(Decision::First),
-                        winner_nr: 0,
-                        is_ambiguous: false,
-                    }),
-                    Ordering::Less => Ok(ScoredFragment {
-                        winner_offsets: off_b,
-                        loser_offsets: off_a,
-                        supp_offsets,
-                        decision: self.add_decision_tag.then_some(Decision::Last),
-                        winner_nr: 1,
-                        is_ambiguous: false,
-                    }),
-                    Ordering::Equal => {
-                        let mut both = off_a;
-                        both.extend(off_b);
-                        Ok(ScoredFragment {
-                            winner_offsets: both,
-                            loser_offsets: SmallVec::new(),
-                            supp_offsets,
-                            decision: self.add_decision_tag.then_some(Decision::Ambiguous),
-                            winner_nr: 0,
-                            is_ambiguous: true,
-                        })
-                    }
-                };
-            }
-            PreAssessResult::FullScoring => {}
-        }
-
-        // Full NW scoring.
-        let score_a = self.nw_score_records(&recs_a, 0)?;
-        let score_b = self.nw_score_records(&recs_b, 1)?;
-        let delta = score_a - score_b;
-
+        // 1. Transform raw offsets upfront to eliminate copy-paste iteration blocks
         let off_a: SmallVec<[(usize, u64); 2]> = offsets_a.iter().map(|&o| (0, o)).collect();
         let off_b: SmallVec<[(usize, u64); 2]> = offsets_b.iter().map(|&o| (1, o)).collect();
 
-        if delta > self.ambiguous_log_threshold {
-            let dec = self.phred_delta(delta);
-            Ok(ScoredFragment {
-                winner_offsets: off_a,
-                loser_offsets: off_b,
-                supp_offsets,
-                decision: dec,
-                winner_nr: 0,
-                is_ambiguous: false,
-            })
-        } else if delta < -self.ambiguous_log_threshold {
-            let dec = self.phred_delta(-delta);
-            Ok(ScoredFragment {
-                winner_offsets: off_b,
-                loser_offsets: off_a,
-                supp_offsets,
-                decision: dec,
-                winner_nr: 1,
-                is_ambiguous: false,
-            })
-        } else {
-            let dec = self.add_decision_tag.then_some(Decision::Ambiguous);
+        // 2. Reduce logic down to its core outcome variables: (winner_nr, decision, is_ambiguous)
+        let (winner_nr, decision, is_ambiguous) = match pre_assess_scoring_records(&recs_a, &recs_b) {
+            PreAssessResult::EarlyDecision(ord) => match ord {
+                Ordering::Greater => (0, self.add_decision_tag.then_some(Decision::First), false),
+                Ordering::Less => (1, self.add_decision_tag.then_some(Decision::Last), false),
+                Ordering::Equal => (0, self.add_decision_tag.then_some(Decision::Ambiguous), true),
+            },
+            PreAssessResult::FullScoring => {
+                let delta = self.nw_score_records(&recs_a, 0)? - self.nw_score_records(&recs_b, 1)?;
+                if delta > self.ambiguous_log_threshold {
+                    (0, self.phred_delta(delta), false)
+                } else if delta < -self.ambiguous_log_threshold {
+                    (1, self.phred_delta(-delta), false)
+                } else {
+                    (0, self.add_decision_tag.then_some(Decision::Ambiguous), true)
+                }
+            }
+        };
+
+        // 3. Routinely distribute vectors based on outcome metadata
+        let (winner_offsets, loser_offsets) = if is_ambiguous {
             let mut both = off_a;
             both.extend(off_b);
-            Ok(ScoredFragment {
-                winner_offsets: both,
-                loser_offsets: SmallVec::new(),
-                supp_offsets,
-                decision: dec,
-                winner_nr: 0,
-                is_ambiguous: true,
-            })
-        }
+            (both, SmallVec::new())
+        } else if winner_nr == 0 {
+            (off_a, off_b)
+        } else {
+            (off_b, off_a)
+        };
+
+        Ok(ScoredFragment {
+            winner_offsets,
+            loser_offsets,
+            supp_offsets,
+            decision,
+            winner_nr,
+            is_ambiguous,
+        })
     }
 
     fn phred_delta(&self, abs_delta: f64) -> Option<Decision> {
