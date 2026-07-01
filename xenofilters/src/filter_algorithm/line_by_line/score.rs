@@ -1,8 +1,10 @@
 use super::core::LineByLine;
-use crate::Error; // Assuming your error enum lives here
-use crate::alignment::{Fragment, FragmentState, MdCigFlags, SimpleRec, stringify_record};
+use crate::alignment::{
+    mate_slot, segment_id, stringify_record, Fragment, FragmentState, MdCigFlags, SimpleRec,
+};
 use crate::filter_algorithm::line_by_line::READ_CT;
 use crate::variant::FragEvalVec;
+use crate::Error; // Assuming your error enum lives here
 use smallvec::SmallVec;
 
 impl<R: SimpleRec> LineByLine<R> {
@@ -11,6 +13,7 @@ impl<R: SimpleRec> LineByLine<R> {
         state: &'r FragmentState<R>,
         mcfs: SmallVec<[MdCigFlags<'r>; READ_CT]>,
         aln_idx: usize,
+        cancel_slot: [bool; 2],
     ) -> Result<f64, Error> {
         let mut segment: SmallVec<[&R; READ_CT]> = SmallVec::new();
         let mut seg_mcfs: SmallVec<[MdCigFlags; READ_CT]> = SmallVec::new();
@@ -32,6 +35,16 @@ impl<R: SimpleRec> LineByLine<R> {
             let flags = state
                 .flags(idx)
                 .ok_or(Error::NoFlagsForRecordInAlignment { idx, aln_idx })?;
+
+            // Skip every record (primary or supplementary) belonging to a
+            // unanimously-cancelled mate slot: its contribution is provably
+            // identical across all competing streams, so it is excluded from
+            // the NW segment entirely rather than scored and subtracted out.
+            let slot = mate_slot(segment_id(flags));
+            if cancel_slot[slot] {
+                mcfs_opt[idx] = None; // release the borrow; never consumed
+                continue;
+            }
 
             // Supplementary alignments contribute BOTH:
             //   1. A chimeric-junction penalty:

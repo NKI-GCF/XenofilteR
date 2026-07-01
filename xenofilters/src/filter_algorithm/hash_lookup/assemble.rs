@@ -21,6 +21,7 @@
 //! identical-contribution in both streams (Unmapped-Unmapped or
 //! Perfect-Perfect), even when the fragment as a whole requires scoring.
 
+use crate::alignment::{mate_slot, segment_id, MateKind};
 use crate::region::{AmbiguousRegions, DiagnosticVariants};
 use noodles::sam::alignment::record::Flags;
 use smallvec::SmallVec;
@@ -103,45 +104,6 @@ impl RecordKind {
     pub(crate) fn is_supplementary(&self) -> bool {
         self.flags().is_supplementary()
     }
-}
-
-/// Encode the segment role of a primary record as a byte:
-/// `0x40` = first segment (read 1), `0x80` = last segment (read 2),
-/// `0x00` = single-end or unknown. Shared mate-slot encoding with the
-/// chimeric-detection module.
-pub(crate) fn segment_id(flags: &Flags) -> u8 {
-    match (flags.is_first_segment(), flags.is_last_segment()) {
-        (true, _) => 0x40,
-        (false, true) => 0x80,
-        (false, false) => 0x00,
-    }
-}
-
-/// Map a segment id to a fixed mate slot (0 = forward/single-end, 1 = reverse).
-pub(crate) fn mate_slot(seg_id: u8) -> usize {
-    if seg_id == 0x80 {
-        1
-    } else {
-        0
-    }
-}
-
-// ---------------------------------------------------------------------------
-// MateKind — per-mate classification used for partial-scoring cancellation
-// ---------------------------------------------------------------------------
-
-/// Per-mate alignment quality classification, used to detect when a mate's
-/// contribution is provably identical across both streams and can be
-/// excluded from NW scoring entirely.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MateKind {
-    /// Mate is unmapped — never NW-scored in either stream.
-    Unmapped,
-    /// Mate is a perfect match — scores `log_lik_match[q_i]` at every
-    /// position, identical in both streams (same quality string).
-    Perfect,
-    /// Mate is mapped but imperfect — must be scored normally.
-    Other,
 }
 
 // ---------------------------------------------------------------------------

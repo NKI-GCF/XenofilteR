@@ -1,10 +1,11 @@
-use crate::Error;
+use crate::alignment::mate_kind::{mate_slot, segment_id, MateClassifiable, MateKind};
 use crate::alignment::MdCigFlags;
 use crate::alignment::SimpleRec;
 use crate::filter_algorithm::line_by_line::READ_CT;
+use crate::Error;
 use noodles::sam::alignment::record::Cigar;
 use noodles::sam::alignment::record::Flags;
-use smallvec::{SmallVec, smallvec};
+use smallvec::{smallvec, SmallVec};
 use std::cmp::Ordering;
 
 #[derive(PartialEq, Debug)]
@@ -140,6 +141,32 @@ impl<R: SimpleRec> PartialOrd for FragmentState<R> {
             (false, true) => Some(Ordering::Greater),
             (false, false) => None,
         }
+    }
+}
+
+impl<R: SimpleRec> MateClassifiable for FragmentState<R> {
+    /// Classifies each present mate without erroring on unmapped records:
+    /// unmapped is detected from flags directly, never passed into
+    /// `MdCigFlags::try_from_record` (which requires a mapped record).
+    fn mate_kinds(&self) -> [Option<MateKind>; 2] {
+        let mut kinds: [Option<MateKind>; 2] = [None, None];
+        for (flags, rec) in self.flags.iter().zip(self.records.iter()) {
+            if flags.is_secondary() || flags.is_supplementary() {
+                continue; // only primaries determine the mate's classification
+            }
+            let slot = mate_slot(segment_id(flags));
+            let kind = if flags.is_unmapped() {
+                MateKind::Unmapped
+            } else {
+                match MdCigFlags::try_from_record(rec, flags) {
+                    Ok(mcf) if mcf.is_perfect() => MateKind::Perfect,
+                    Ok(_) => MateKind::Other,
+                    Err(_) => MateKind::Other, // malformed MD/CIGAR — must be scored
+                }
+            };
+            kinds[slot] = Some(kind);
+        }
+        kinds
     }
 }
 

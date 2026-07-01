@@ -19,8 +19,8 @@ pub(crate) mod stage;
 #[cfg(test)]
 pub(crate) mod tests;
 
+use crate::alignment::{mate_slot, segment_id, Fragment, MateKind, MdCigFlags, SimpleRec};
 use crate::alignment::{pre_assess_scoring_records, PreAssessResult};
-use crate::alignment::{Fragment, MdCigFlags, SimpleRec};
 use crate::aln_stream::AlignmentStream;
 use crate::config::{Config, StripReadSuffix};
 use crate::filter_algorithm::collated::reader::canonical_name;
@@ -30,8 +30,7 @@ use crate::region::{AmbiguousRegions, DiagnosticVariants};
 use crate::variant::FragEvalVec;
 use crate::Error;
 use assemble::{
-    insert, mate_slot, segment_id, EarlyKind, FragmentTable, MappedRecord, MateKind,
-    PendingFragment, RecordKind, StreamKind,
+    insert, EarlyKind, FragmentTable, MappedRecord, PendingFragment, RecordKind, StreamKind,
 };
 use noodles::core::Position;
 use noodles::sam::alignment::record::cigar::op::{Kind, Op};

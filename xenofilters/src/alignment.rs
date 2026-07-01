@@ -1,5 +1,6 @@
 mod fragment;
 mod fragment_state;
+pub(crate) mod mate_kind;
 mod md_cig_flags;
 mod ops;
 pub(crate) mod pre_assess;
@@ -8,14 +9,15 @@ mod variant_window;
 
 pub(crate) use fragment::{Fragment, SimpleRec};
 pub(crate) use fragment_state::FragmentState;
+pub(crate) use mate_kind::{mate_slot, segment_id, MateClassifiable, MateKind};
 pub(crate) use md_cig_flags::MdCigFlags;
 pub(crate) use ops::{BaseOp, ScoreOpIter};
-pub(crate) use pre_assess::{PreAssessResult, pre_assess_alignments, pre_assess_scoring_records};
-pub(crate) use variant_window::{VariantWindow, align_alt_to_read, weighted_ref_score};
+pub(crate) use pre_assess::{pre_assess_alignments, pre_assess_scoring_records, PreAssessResult};
+pub(crate) use variant_window::{align_alt_to_read, weighted_ref_score, VariantWindow};
 
-use noodles::sam::alignment::Record;
 use noodles::sam::alignment::record::cigar::op::Kind;
 use noodles::sam::alignment::record::data::field::{Tag, Value};
+use noodles::sam::alignment::Record;
 
 pub(crate) fn stringify_record<R: Record + PartialEq>(rec: &R) -> String {
     let qname = rec.name();

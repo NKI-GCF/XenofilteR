@@ -38,16 +38,17 @@
 //! candidate rather than one per read segment.
 
 use super::core::{FragmentBuffer, LineByLine, Scratch};
-use crate::Error;
+use crate::alignment::{mate_slot, segment_id, MateClassifiable, MateKind};
 use crate::alignment::{BaseOp, ScoreOpIter};
 use crate::alignment::{FragmentState, MdCigFlags, SimpleRec};
 use crate::filter_algorithm::line_by_line::{
-    ChimericDecision, MAX_STREAMS, READ_CT, detect_chimeric_event,
+    detect_chimeric_event, ChimericDecision, MAX_STREAMS, READ_CT,
 };
 use crate::variant::StoreTrait;
-use crossbeam_channel::{Receiver, Sender, bounded};
+use crate::Error;
+use crossbeam_channel::{bounded, Receiver, Sender};
 use noodles::sam::alignment::RecordBuf;
-use smallvec::{SmallVec, smallvec};
+use smallvec::{smallvec, SmallVec};
 use std::f64::consts::LN_10;
 use std::sync::Arc;
 use std::thread;
@@ -152,7 +153,37 @@ fn score_bundle(
             return ctx.add_decision_tag.then_some(Decision::Ambiguous);
         }
     }
+    // ── Pass 0: per-mate classification (cheap, borrow-only) ───────────
+    // Must precede scoring so cancel_slot is known before any NW call.
+    let mut mate_kinds_arr = [[None, None]; MAX_STREAMS];
+    for s in best.iter() {
+        mate_kinds_arr[s.get_nr()] = s.mate_kinds();
+    }
 
+    // Unanimous cancellation: a mate slot cancels only when EVERY stream
+    // still in `best` agrees on the same non-Other kind for that slot.
+    // One disagreeing or absent-but-relevant stream blocks cancellation.
+    let mut cancel_kind: [Option<MateKind>; 2] = [None, None];
+    let mut cancel_ok = [true, true];
+    for s in best.iter() {
+        let mk = mate_kinds_arr[s.get_nr()];
+        for slot in 0..2 {
+            match (mk[slot], cancel_kind[slot]) {
+                (Some(MateKind::Other), _) | (_, _)
+                    if matches!(mk[slot], Some(MateKind::Other)) =>
+                {
+                    cancel_ok[slot] = false;
+                }
+                (Some(k), None) => cancel_kind[slot] = Some(k),
+                (Some(k), Some(prev)) if prev != k => cancel_ok[slot] = false,
+                _ => {}
+            }
+        }
+    }
+    let cancel_slot = [
+        cancel_ok[0] && cancel_kind[0].is_some(),
+        cancel_ok[1] && cancel_kind[1].is_some(),
+    ];
     // -- Single scan pass (mirrors run_tournament) -------------------------
     let mut is_perfect = [false; MAX_STREAMS];
     let mut match_bases = [0usize; MAX_STREAMS];
@@ -195,7 +226,8 @@ fn score_bundle(
 
         if !perf {
             let store = stores.get(nr).and_then(|s| s.as_deref());
-            nw_scores[nr] = score_candidate_owned(&best[i], mcfs, store, ctx, scratch).ok()?;
+            nw_scores[nr] =
+                score_candidate_owned(&best[i], mcfs, store, ctx, scratch, cancel_slot).ok()?;
             vdeltas[nr] = scratch.last_variant_delta;
         }
     }
@@ -305,8 +337,9 @@ fn score_candidate_owned(
     store: Option<&dyn StoreTrait>,
     ctx: &ScoringContext,
     scratch: &mut Scratch,
+    cancel_slot: [bool; 2],
 ) -> Result<f64, Error> {
-    use crate::alignment::{Fragment, stringify_record};
+    use crate::alignment::{stringify_record, Fragment};
     use crate::variant::FragEvalVec;
 
     let mut segment: SmallVec<[&RecordBuf; READ_CT]> = SmallVec::new();
@@ -329,6 +362,17 @@ fn score_candidate_owned(
         if flags.is_secondary() {
             continue;
         }
+
+        // Skip every record (primary or supplementary) belonging to a
+        // unanimously-cancelled mate slot: its contribution is provably
+        // identical across all competing streams, so it is excluded from
+        // the NW segment entirely rather than scored and subtracted out.
+        let slot = mate_slot(segment_id(flags));
+        if cancel_slot[slot] {
+            mcfs_opt[idx] = None; // release the borrow; never consumed
+            continue;
+        }
+
         let rec = &state.get_records()[idx];
 
         // Supplementary alignments contribute BOTH a chimeric-junction
@@ -497,7 +541,39 @@ impl<R: SimpleRec> LineByLine<R> {
             }
         }
 
-        // -- Single scan pass: MCF build + all tier metrics -----------------
+        // ── Pass 0: per-mate classification (cheap, borrow-only) ───────────
+        // Must precede scoring so cancel_slot is known before any NW call.
+        let mut mate_kinds_arr = [[None, None]; MAX_STREAMS];
+        for s in best.iter() {
+            mate_kinds_arr[s.get_nr()] = s.mate_kinds();
+        }
+
+        // Unanimous cancellation: a mate slot cancels only when EVERY stream
+        // still in `best` agrees on the same non-Other kind for that slot.
+        // One disagreeing or absent-but-relevant stream blocks cancellation.
+        let mut cancel_kind: [Option<MateKind>; 2] = [None, None];
+        let mut cancel_ok = [true, true];
+        for s in best.iter() {
+            let mk = mate_kinds_arr[s.get_nr()];
+            for slot in 0..2 {
+                match (mk[slot], cancel_kind[slot]) {
+                    (Some(MateKind::Other), _) | (_, _)
+                        if matches!(mk[slot], Some(MateKind::Other)) =>
+                    {
+                        cancel_ok[slot] = false;
+                    }
+                    (Some(k), None) => cancel_kind[slot] = Some(k),
+                    (Some(k), Some(prev)) if prev != k => cancel_ok[slot] = false,
+                    _ => {}
+                }
+            }
+        }
+        let cancel_slot = [
+            cancel_ok[0] && cancel_kind[0].is_some(),
+            cancel_ok[1] && cancel_kind[1].is_some(),
+        ];
+
+        // -- Scan pass: MCF build + all tier metrics ----------------------
         //
         // Per-stream results are stored indexed by `get_nr()` (the alignment stream
         // number, 0..MAX_STREAMS).  This survives the backward-discard sweeps that
@@ -512,16 +588,8 @@ impl<R: SimpleRec> LineByLine<R> {
         let mut vdeltas = [0.0f64; MAX_STREAMS];
         let mut any_perfect = false;
         let mut any_imperfect = false;
-
         for i in 0..best.len() {
             let nr = best[i].get_nr();
-
-            // `build_mcfs` borrows `best[i]` for lifetime 'r.  The borrow is
-            // immutable and released either when `mcfs` is moved into
-            // `score_candidate` (and eventually dropped inside it) or when
-            // `mcfs` drops at the end of this loop body.  In both cases the
-            // borrow is gone before the discard sweeps below mutably access
-            // `best`.
             let mcfs = best[i].build_mcfs()?;
 
             // -- Tier 2: perfection check ---------------------------------
@@ -564,10 +632,9 @@ impl<R: SimpleRec> LineByLine<R> {
                 // `mcfs` is moved into `score_candidate`.  The SmallVec and
                 // the MdCigFlags inside it (which borrow `best[i]`) are alive
                 // for the duration of the call, then dropped.
-                nw_scores[nr] = self.score_candidate(&best[i], mcfs, nr)?;
+                nw_scores[nr] = self.score_candidate(&best[i], mcfs, nr, cancel_slot)?;
                 vdeltas[nr] = self.scratch.last_variant_delta;
             }
-            // For perf==true: mcfs drops here.
         }
         // -- End scan pass.  All borrows from elements of `best` have dropped.
         //    Backward-discard sweeps below may now mutably access `best`. --

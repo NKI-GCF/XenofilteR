@@ -18,7 +18,7 @@ pub(crate) mod tests;
 
 use crate::Error;
 use crate::alignment::{Fragment, FragmentState, MdCigFlags, SimpleRec, stringify_record};
-use crate::alignment::{PreAssessResult, pre_assess_alignments};
+use crate::alignment::{PreAssessResult, pre_assess_alignments, mate_slot, segment_id};
 use crate::aln_stream::AlignmentStream;
 use crate::config::{Config, StripReadSuffix};
 use crate::filter_algorithm::line_by_line::{READ_CT, Scratch, ordering::Decision};
@@ -32,6 +32,7 @@ use noodles::sam::alignment::record_buf::data::field::Value;
 use reader::{CollatedReader, canonical_name};
 use smallvec::SmallVec;
 use std::collections::HashMap;
+use crate::alignment::{MateClassifiable, MateKind};
 
 pub(crate) struct CollatedMatcher<R: SimpleRec> {
     a: CollatedReader<R>,
@@ -202,6 +203,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         }
         Ok(false)
     }
+
     fn score_pair(&mut self, a: FragmentState<R>, b: FragmentState<R>) -> Result<(), Error> {
         // Tier 1: unmapped fast-path — before BED/VCF I/O.
         let mut ord = a.partial_cmp(&b);
@@ -236,9 +238,23 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             return self.apply_ordered(a, b, pa_ord);
         }
 
+        // 2-way mate cancellation: a mate slot cancels only when BOTH streams
+        // agree on the same non-Other kind. Region overlap on either stream
+        // forces full scoring of every mate (variant rescue must see it).
+        let cancel_slot = if a_needs_scoring || b_needs_scoring {
+            [false, false]
+        } else {
+            let mk_a = a.mate_kinds();
+            let mk_b = b.mate_kinds();
+            [
+                matches!((mk_a[0], mk_b[0]), (Some(x), Some(y)) if x == y && x != MateKind::Other),
+                matches!((mk_a[1], mk_b[1]), (Some(x), Some(y)) if x == y && x != MateKind::Other),
+            ]
+        };
+
         // Tier 3: full NW scoring.
-        let s1 = self.nw_score_fragment(&a, mcfs1, 0)?;
-        let s2 = self.nw_score_fragment(&b, mcfs2, 1)?;
+        let s1 = self.nw_score_fragment(&a, mcfs1, 0, cancel_slot)?;
+        let s2 = self.nw_score_fragment(&b, mcfs2, 1, cancel_slot)?;
         let delta = s1 - s2;
 
         if delta > self.ambiguous_log_threshold {
@@ -296,6 +312,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         state: &FragmentState<R>,
         mcfs: SmallVec<[MdCigFlags<'_>; READ_CT]>,
         aln_idx: usize,
+        cancel_slot: [bool; 2],
     ) -> Result<f64, Error> {
         let mut segment: SmallVec<[&R; READ_CT]> = SmallVec::new();
         let mut seg_mcfs: SmallVec<[MdCigFlags; READ_CT]> = SmallVec::new();
@@ -314,6 +331,17 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         for idx in state.order_mates() {
             let flags = state.flags(idx).ok_or(Error::NoFlagsForRecord { idx })?;
 
+            // Skip every record (primary or supplementary) belonging to a
+            // unanimously-cancelled mate slot: its contribution is provably
+            // identical across all competing streams, so it is excluded from
+            // the NW segment entirely rather than scored and subtracted out.
+            let slot = mate_slot(segment_id(flags));
+            if cancel_slot[slot] {
+                mcfs_opt[idx] = None; // release the borrow; never consumed
+                continue;
+            }
+
+            // FIXME: I think this should be supplementary, not secondary.
             if flags.is_secondary() {
                 // secondary alignments are not scored, but may be included in the output
                 // after ordering, secondary alignments are always after the primary
