@@ -1,14 +1,470 @@
 use super::*;
-use crate::Error;
-use crate::alignment::MdCigFlags;
-use crate::alignment::fragment::SimpleRec;
-use crate::config::Config;
-use crate::penalty::Penalty;
-use crate::tests::create_record;
-use crate::variant::{Eval, Variant};
+use crate::{
+    alignment::{fragment::SimpleRec, MdCigFlags, ScoreOpIter},
+    config::Config,
+    filter_algorithm::line_by_line::Scratch,
+    penalty::Penalty,
+    tests::create_record,
+    variant::{Eval, Variant},
+    Error,
+};
 use noodles::sam::alignment::record::Flags;
 use noodles::sam::alignment::record_buf::RecordBuf;
-use smallvec::{SmallVec, smallvec};
+use smallvec::{smallvec, SmallVec};
+use std::cmp::Ordering;
+
+// ---------------------------------------------------------------------------
+// Test penalty helpers
+// ---------------------------------------------------------------------------
+
+/// Flat penalties: match=0, mismatch=-1, gap_open=-2, gap_extend=-0.5.
+/// Quality-independent — use for unit-testing score logic without Q noise.
+fn flat_penalties() -> Penalty {
+    let c = Config::default();
+    let mut p = c.to_penalties();
+    p.log_likelihood_match = [0.0; 93];
+    p.log_likelihood_mismatch = [-1.0; 93];
+    p.gap_open = -2.0;
+    p.gap_extend = -0.5;
+    p
+}
+
+/// Real penalties: matches near 0, mismatch = -(q/10) × scaling.
+/// Use for quality-edge-case tests.
+fn real_penalties() -> Penalty {
+    Config {
+        mismatch_penalty: 4.0,
+        gap_open: 6.0,
+        gap_extend: 1.0,
+        ..Config::default()
+    }
+    .to_penalties()
+}
+
+fn score_one(cigar: &str, md: &str, qual: &[u8], pen: &Penalty) -> f64 {
+    let rec = create_record(b"r", cigar, &[], qual, md, false).unwrap();
+    let flags = rec.flags();
+    let mut frag = Fragment::new(
+        pen,
+        smallvec![&rec],
+        smallvec![MdCigFlags::try_from_record(&rec, &flags).unwrap()],
+    )
+    .unwrap();
+    let mut dvnt = smallvec![smallvec![]];
+    let mut scratch = Scratch::new();
+    frag.score(&mut scratch, &mut dvnt).unwrap()
+}
+
+// ---------------------------------------------------------------------------
+// NW scoring — table-driven
+// ---------------------------------------------------------------------------
+
+#[test]
+fn scoring_table() {
+    // (label, cigar, md, score_expected_with_flat_penalties)
+    // Derivations:
+    //   All match: 0.0
+    //   1 mismatch in 10M: -1.0
+    //   2 mismatch in 10M: -2.0
+    //   5S5M (5 clips): 5×(-1) + 5×0 = -5.0
+    //   5M1D5M: 10×0 + gap_open + 1×gap_extend = -2.5
+    //   5M2I5M: 10×0 + gap_open + 2×gap_extend = -3.0
+    struct Row {
+        cigar: &'static str,
+        md: &'static str,
+        want: f64,
+    }
+    let q30 = vec![30u8; 15]; // generous budget
+    let flat = flat_penalties();
+    let cases: &[Row] = &[
+        Row {
+            cigar: "10M",
+            md: "10",
+            want: 0.0,
+        },
+        Row {
+            cigar: "10M",
+            md: "9A0",
+            want: -1.0,
+        },
+        Row {
+            cigar: "10M",
+            md: "4A4A0",
+            want: -2.0,
+        },
+        Row {
+            cigar: "5S5M",
+            md: "5",
+            want: -5.0,
+        },
+        Row {
+            cigar: "5M1D5M",
+            md: "5^A5",
+            want: -2.5,
+        },
+        Row {
+            cigar: "5M2I3M",
+            md: "10",
+            want: -3.0,
+        },
+        Row {
+            cigar: "5M1D2I2M",
+            md: "5^A5",
+            want: -5.5,
+        }, // gap_open×2 + 1×ext + 2×ext = -2-0.5-2-1 = -5.5
+    ];
+    let mut misses = vec![];
+    for c in cases {
+        eprintln!(
+            "scoring test: cigar={} md={} want={}",
+            c.cigar, c.md, c.want
+        );
+        let got = score_one(c.cigar, c.md, &q30[..c.cigar.len().max(10)], &flat);
+        if (got - c.want).abs() >= 1e-9 {
+            misses.push(format!(
+                "[cigar={} md={}] want {} got {}",
+                c.cigar, c.md, c.want, got
+            ));
+        }
+    }
+    if !misses.is_empty() {
+        panic!(
+            "{} scoring tests failed:\n{}",
+            misses.len(),
+            misses.join("\n")
+        );
+    }
+}
+
+/// A single base mismatch at quality 5 should cost -0.5 with real penalties
+/// (mismatch = -(q/10) × 1.0).  If stream A has mismatch at q=5 and stream B
+/// at q=30, stream A pays less penalty and wins, even though both have the same
+/// CIGAR/MD profile.  This is the intended quality-weighted behaviour.
+#[test]
+fn quality_determines_winner_at_equal_cigar_md() {
+    let pen = real_penalties();
+    let score_q5 = score_one("5M", "4A0", &[5u8; 5], &pen); // mismatch at q=5  → -0.5
+    let score_q30 = score_one("5M", "4A0", &[30u8; 5], &pen); // mismatch at q=30 → -3.0
+    assert!(
+        score_q5 > score_q30,
+        "lower-quality mismatch should score higher (less penalised): q5={score_q5} q30={score_q30}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Weighted interval scheduling — table-driven
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy)]
+struct V {
+    pos: usize,
+    ref_len: usize,
+    alt_len: usize,
+    delta: f64,
+}
+
+struct MockVariant {
+    pos: usize,
+    ref_a: Vec<u8>,
+    alt_a: Vec<u8>,
+}
+impl Variant for MockVariant {
+    fn pos(&self) -> usize {
+        self.pos
+    }
+    fn ref_allele(&self) -> &[u8] {
+        &self.ref_a
+    }
+    fn alt_allele(&self) -> &[u8] {
+        &self.alt_a
+    }
+    fn p_variant(&self) -> f64 {
+        0.1
+    } // unused in these tests
+}
+
+fn mk_eval(v: V) -> Eval<'static> {
+    let mv: &'static MockVariant = Box::leak(Box::new(MockVariant {
+        pos: v.pos,
+        ref_a: vec![b'A'; v.ref_len],
+        alt_a: vec![b'A'; v.alt_len],
+    }));
+    let mut e = Eval::new();
+    e.set_variant(mv);
+    e.update(0.0, v.delta);
+    e
+}
+
+#[test]
+fn wis_table() {
+    struct Row {
+        label: &'static str,
+        variants: &'static [V],
+        want: f64,
+    }
+    // Interval [pos, pos + max(ref_len, alt_len))
+    let cases: &[Row] = &[
+        Row {
+            label: "empty",
+            variants: &[],
+            want: 0.0,
+        },
+        Row {
+            label: "single positive",
+            variants: &[V {
+                pos: 10,
+                ref_len: 1,
+                alt_len: 1,
+                delta: 7.5,
+            }],
+            want: 7.5,
+        },
+        Row {
+            label: "single zero",
+            variants: &[V {
+                pos: 10,
+                ref_len: 1,
+                alt_len: 1,
+                delta: 0.0,
+            }],
+            want: 0.0,
+        },
+        Row {
+            label: "single negative",
+            variants: &[V {
+                pos: 10,
+                ref_len: 1,
+                alt_len: 1,
+                delta: -5.,
+            }],
+            want: 0.0,
+        },
+        // [10,11) and [20,21) — non-overlapping → sum
+        Row {
+            label: "two non-overlapping",
+            variants: &[
+                V {
+                    pos: 10,
+                    ref_len: 1,
+                    alt_len: 1,
+                    delta: 3.0,
+                },
+                V {
+                    pos: 20,
+                    ref_len: 1,
+                    alt_len: 1,
+                    delta: 2.0,
+                },
+            ],
+            want: 5.0,
+        },
+        // [10,20) and [15,25) — overlapping; pick the larger
+        Row {
+            label: "two overlapping pick best",
+            variants: &[
+                V {
+                    pos: 10,
+                    ref_len: 10,
+                    alt_len: 10,
+                    delta: 5.0,
+                },
+                V {
+                    pos: 15,
+                    ref_len: 10,
+                    alt_len: 10,
+                    delta: 8.0,
+                },
+            ],
+            want: 8.0,
+        },
+        // [10,20) and [15,17) and [40,41) — inner + disjoint
+        // Best chain: inner(20.0) + disjoint(3.0) = 23.0 vs outer(5.0) + disjoint(3.0)
+        Row {
+            label: "nested variants best chain",
+            variants: &[
+                V {
+                    pos: 10,
+                    ref_len: 20,
+                    alt_len: 20,
+                    delta: 5.0,
+                },
+                V {
+                    pos: 15,
+                    ref_len: 2,
+                    alt_len: 2,
+                    delta: 20.0,
+                },
+                V {
+                    pos: 40,
+                    ref_len: 1,
+                    alt_len: 1,
+                    delta: 3.0,
+                },
+            ],
+            want: 23.0,
+        },
+        // Touching but non-overlapping: [10,20) [20,30) → both count
+        Row {
+            label: "touching boundaries non-overlapping",
+            variants: &[
+                V {
+                    pos: 10,
+                    ref_len: 10,
+                    alt_len: 10,
+                    delta: 5.0,
+                },
+                V {
+                    pos: 20,
+                    ref_len: 10,
+                    alt_len: 10,
+                    delta: 7.0,
+                },
+            ],
+            want: 12.0,
+        },
+        // Insertion: end = pos + alt_len when alt > ref
+        Row {
+            label: "insertion span respected",
+            variants: &[
+                V {
+                    pos: 10,
+                    ref_len: 1,
+                    alt_len: 20,
+                    delta: 10.0,
+                }, // [10, 30)
+                V {
+                    pos: 25,
+                    ref_len: 1,
+                    alt_len: 1,
+                    delta: 50.0,
+                }, // overlaps insertion span
+            ],
+            want: 50.0,
+        },
+    ];
+    for c in cases {
+        let mut dvnt: FragEvalVec<'_> =
+            smallvec![c.variants.iter().copied().map(mk_eval).collect()];
+        let mut dp = smallvec![];
+        let got = wis_max_rescue_delta(&mut dvnt, &mut dp);
+        assert!(
+            (got - c.want).abs() < 1e-9,
+            "[{}] want {} got {}",
+            c.label,
+            c.want,
+            got
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Variant rescue: p_variant threshold
+// ---------------------------------------------------------------------------
+
+#[test]
+fn variant_rescue_p_variant_table() {
+    // delta = alt_score - incurred = (p×lm + (1-p)×lmm) - ((1-p)×lm + p×lmm)
+    //       = (2p-1)×(lm-lmm)
+    // With flat penalties (lm=0, lmm=-1): delta = (2p-1)×1 = 2p-1
+    // p < 0.5 → negative → no rescue; p=0.5 → 0; p > 0.5 → positive.
+    struct Row {
+        label: &'static str,
+        p: f64,
+        want_positive: bool,
+    }
+    let cases: &[Row] = &[
+        Row {
+            label: "p=0.1 no rescue",
+            p: 0.1,
+            want_positive: false,
+        },
+        Row {
+            label: "p=0.49 no rescue",
+            p: 0.49,
+            want_positive: false,
+        },
+        Row {
+            label: "p=0.5  zero",
+            p: 0.5,
+            want_positive: false,
+        }, // exactly zero
+        Row {
+            label: "p=0.51 rescue",
+            p: 0.51,
+            want_positive: true,
+        },
+        Row {
+            label: "p=1.0  rescue",
+            p: 1.0,
+            want_positive: true,
+        },
+    ];
+
+    // Read: "AAGAA" (base at position 2 matches alt 'G')
+    let pen = flat_penalties();
+    for c in cases {
+        let rec = create_record(b"r", "5M", b"AAGAA", &[30u8; 5], "5", false).unwrap();
+        let flags = rec.flags();
+        let mv: &'static _ = Box::leak(Box::new(MockVariant {
+            pos: 2,
+            ref_a: vec![b'A'],
+            alt_a: vec![b'G'],
+        }));
+        // Override p_variant via a wrapper; easier to leak a struct with p embedded.
+        struct PVariant {
+            inner: MockVariant,
+            p: f64,
+        }
+        impl Variant for PVariant {
+            fn pos(&self) -> usize {
+                self.inner.pos()
+            }
+            fn ref_allele(&self) -> &[u8] {
+                self.inner.ref_allele()
+            }
+            fn alt_allele(&self) -> &[u8] {
+                self.inner.alt_allele()
+            }
+            fn p_variant(&self) -> f64 {
+                self.p
+            }
+        }
+        let pv: &'static _ = Box::leak(Box::new(PVariant {
+            inner: MockVariant {
+                pos: 2,
+                ref_a: vec![b'A'],
+                alt_a: vec![b'G'],
+            },
+            p: c.p,
+        }));
+        let mut ev = Eval::new();
+        ev.set_variant(pv as &dyn Variant);
+
+        let mut dvnt: FragEvalVec<'_> = smallvec![smallvec![ev]];
+        let mut scratch = Scratch::new();
+        let mut frag = Fragment::new(
+            &pen,
+            smallvec![&rec],
+            smallvec![MdCigFlags::try_from_record(&rec, &flags).unwrap()],
+        )
+        .unwrap();
+        let _ = frag.score(&mut scratch, &mut dvnt).unwrap();
+        let delta = scratch.last_variant_delta;
+        if c.want_positive {
+            assert!(
+                delta > 0.0,
+                "[{}] expected positive delta, got {delta}",
+                c.label
+            );
+        } else {
+            assert!(
+                delta <= 0.0,
+                "[{}] expected non-positive delta, got {delta}",
+                c.label
+            );
+        }
+    }
+}
 
 pub(crate) fn setup_penalties() -> Penalty {
     let c = Config::default();
@@ -162,7 +618,7 @@ fn test_score_variants_in_window_boundaries() -> Result<(), Error> {
 
 #[test]
 fn maximize_delta_exact_zero_mutant() {
-    let mut dvnt: FragEvalVec = smallvec![smallvec![mk_eval(10, 1, 1, 0.0)]];
+    let mut dvnt: FragEvalVec = smallvec![smallvec![mk_eval2(10, 1, 1, 0.0)]];
     let mut dp = SmallVec::new();
 
     // If it were >=, the variant with delta 0.0 would be included and processed.
@@ -225,7 +681,7 @@ fn test_q() -> Result<(), Error> {
     assert!(fragment.q(0, 5).is_err());
     Ok(())
 }
-fn mk_eval(pos: usize, ref_len: usize, alt_len: usize, delta: f64) -> Eval<'static> {
+fn mk_eval2(pos: usize, ref_len: usize, alt_len: usize, delta: f64) -> Eval<'static> {
     let v: &'static TestVariant = Box::leak(Box::new(TestVariant {
         pos,
         ref_a: vec![b'A'; ref_len],
@@ -236,231 +692,6 @@ fn mk_eval(pos: usize, ref_len: usize, alt_len: usize, delta: f64) -> Eval<'stat
     eval.set_variant(v);
     eval.update(0.0, delta); // delta() = alt_score - incurred = delta - 0 = delta
     eval
-}
-
-#[test]
-fn maximize_delta_empty_returns_zero() {
-    let mut dvnt: FragEvalVec = smallvec![smallvec![]];
-    let mut dp = SmallVec::new();
-
-    assert_eq!(wis_max_rescue_delta(&mut dvnt, &mut dp), 0.0);
-}
-
-#[test]
-fn maximize_delta_ignores_negative_deltas() {
-    let mut dvnt: FragEvalVec =
-        smallvec![smallvec![mk_eval(10, 1, 1, -5.0), mk_eval(20, 1, 1, -10.0),]];
-
-    let mut dp = SmallVec::new();
-
-    assert_eq!(wis_max_rescue_delta(&mut dvnt, &mut dp), 0.0);
-}
-
-#[test]
-fn maximize_delta_single_variant() {
-    let mut dvnt: FragEvalVec = smallvec![smallvec![mk_eval(10, 1, 1, 7.5)]];
-
-    let mut dp = SmallVec::new();
-
-    assert!((wis_max_rescue_delta(&mut dvnt, &mut dp) - 7.5).abs() < 1e-9);
-}
-
-#[test]
-fn maximize_delta_sums_non_overlapping_variants() {
-    let mut dvnt: FragEvalVec = smallvec![smallvec![
-        mk_eval(10, 1, 1, 5.0),
-        mk_eval(20, 1, 1, 7.0),
-        mk_eval(30, 1, 1, 11.0),
-    ]];
-
-    let mut dp = SmallVec::new();
-
-    assert!((wis_max_rescue_delta(&mut dvnt, &mut dp) - 23.0).abs() < 1e-9);
-}
-
-#[test]
-fn maximize_delta_prefers_larger_overlapping_variant() {
-    let mut dvnt: FragEvalVec = smallvec![smallvec![
-        mk_eval(10, 10, 10, 5.0), // [10,20)
-        mk_eval(15, 10, 10, 8.0), // [15,25)
-    ]];
-
-    let mut dp = SmallVec::new();
-
-    assert!((wis_max_rescue_delta(&mut dvnt, &mut dp) - 8.0).abs() < 1e-9);
-}
-
-#[test]
-fn maximize_delta_finds_best_chain() {
-    let mut dvnt: FragEvalVec = smallvec![smallvec![
-        mk_eval(10, 10, 10, 5.0),   // [10,20)
-        mk_eval(15, 10, 10, 100.0), // [15,25)
-        mk_eval(30, 10, 10, 6.0),   // [30,40)
-    ]];
-
-    let mut dp = SmallVec::new();
-
-    assert!((wis_max_rescue_delta(&mut dvnt, &mut dp) - 106.0).abs() < 1e-9);
-}
-
-#[test]
-fn maximize_delta_handles_nested_variants() {
-    let mut dvnt: FragEvalVec = smallvec![smallvec![
-        mk_eval(10, 20, 20, 5.0), // [10,30)
-        mk_eval(15, 2, 2, 20.0),  // [15,17)
-        mk_eval(40, 1, 1, 3.0),   // [40,41)
-    ]];
-
-    let mut dp = SmallVec::new();
-
-    assert!((wis_max_rescue_delta(&mut dvnt, &mut dp) - 23.0).abs() < 1e-9);
-}
-
-#[test]
-fn maximize_delta_boundary_touching_is_non_overlapping() {
-    let mut dvnt: FragEvalVec = smallvec![smallvec![
-        mk_eval(10, 10, 10, 5.0), // [10,20)
-        mk_eval(20, 10, 10, 7.0), // [20,30)
-    ]];
-
-    let mut dp = SmallVec::new();
-
-    assert!((wis_max_rescue_delta(&mut dvnt, &mut dp) - 12.0).abs() < 1e-9);
-}
-
-#[test]
-fn maximize_delta_uses_max_ref_or_alt_end_for_insertions() {
-    let mut dvnt: FragEvalVec = smallvec![smallvec![
-        mk_eval(10, 1, 20, 10.0), // end = 30
-        mk_eval(25, 1, 1, 50.0),  // overlaps insertion span
-    ]];
-
-    let mut dp = SmallVec::new();
-
-    assert!((wis_max_rescue_delta(&mut dvnt, &mut dp) - 50.0).abs() < 1e-9);
-}
-
-#[test]
-fn snp_alt_support_gives_positive_delta() -> Result<(), Error> {
-    let rec = create_record(b"read1", "5M", b"AAGAA", &[30; 5], "5", false)?;
-    let flags = rec.flags();
-    let p = setup_penalties();
-    let mut frag = Fragment::new(
-        &p,
-        smallvec![&rec],
-        smallvec![MdCigFlags::try_from_record(&rec, &flags)?],
-    )?;
-
-    // p_variant must exceed 0.5 for the current formula to ever favor alt
-    // over the weighted-reference baseline (delta = (2p-1)*(lm-lmm)).
-    let v = TestVariant::new(3, 1, 1.0);
-
-    let mut dvnt = smallvec![smallvec![make_eval(&v)]];
-    let mut scratch = Scratch::new();
-    let score = frag.score(&mut scratch, &mut dvnt)?;
-
-    assert!(
-        score > 0.0,
-        "Expected positive score for read supporting alt allele, got {score}"
-    );
-    Ok(())
-}
-
-#[test]
-fn snp_ref_support_gives_no_bonus() -> Result<(), Error> {
-    let rec = create_record(b"read1", "5M", b"AAAAA", &[30; 5], "5", false)?;
-
-    let flags = rec.flags();
-
-    let p = setup_penalties();
-
-    let mut frag = Fragment::new(
-        &p,
-        smallvec![&rec],
-        smallvec![MdCigFlags::try_from_record(&rec, &flags)?],
-    )?;
-
-    let v = TestVariant::new(3, 1, 0.1);
-
-    let mut dvnt = smallvec![smallvec![make_eval(&v)]];
-    let mut scratch = Scratch::new();
-
-    let score = frag.score(&mut scratch, &mut dvnt)?;
-
-    assert!(score <= 0.0);
-
-    Ok(())
-}
-
-#[test]
-fn test_maximize_delta_no_variants_is_zero() -> Result<(), Error> {
-    let mut dvnt: FragEvalVec<'_> = smallvec![SmallVec::new()];
-    let mut dp = SmallVec::new();
-    assert_eq!(wis_max_rescue_delta(&mut dvnt, &mut dp), 0.0);
-    Ok(())
-}
-
-#[test]
-fn test_maximize_delta_ignores_non_positive_delta() -> Result<(), Error> {
-    let v = TestVariant::new(0, 1, 0.1);
-    let mut e = Eval::new();
-    e.set_variant(&v);
-    e.update(5.0, 5.0); // delta == 0, discarded out
-    let mut dvnt: FragEvalVec<'_> = smallvec![smallvec![e]];
-    let mut dp = SmallVec::new();
-    assert_eq!(wis_max_rescue_delta(&mut dvnt, &mut dp), 0.0);
-    Ok(())
-}
-
-#[test]
-fn test_maximize_delta_sums_non_overlapping_variants() -> Result<(), Error> {
-    let v1 = TestVariant::new(0, 1, 0.1); // end = 1
-    let v2 = TestVariant::new(10, 1, 0.1); // end = 11
-    let mut e1 = Eval::new();
-    e1.set_variant(&v1);
-    e1.update(0.0, 3.0); // delta 3
-    let mut e2 = Eval::new();
-    e2.set_variant(&v2);
-    e2.update(0.0, 2.0); // delta 2
-    let mut dvnt: FragEvalVec<'_> = smallvec![smallvec![e1, e2]];
-    let mut dp = SmallVec::new();
-    assert_eq!(wis_max_rescue_delta(&mut dvnt, &mut dp), 5.0);
-    Ok(())
-}
-
-#[test]
-fn test_maximize_delta_picks_best_not_sum_for_overlapping_variants() -> Result<(), Error> {
-    let v1 = TestVariant::new(0, 5, 0.1); // [0,5)
-    let v2 = TestVariant::new(2, 5, 0.1); // [2,7) overlaps v1
-    let mut e1 = Eval::new();
-    e1.set_variant(&v1);
-    e1.update(0.0, 10.0); // delta 10
-    let mut e2 = Eval::new();
-    e2.set_variant(&v2);
-    e2.update(0.0, 3.0); // delta 3
-    let mut dvnt: FragEvalVec<'_> = smallvec![smallvec![e1, e2]];
-    let mut dp = SmallVec::new();
-    assert_eq!(wis_max_rescue_delta(&mut dvnt, &mut dp), 10.0); // not 13.0
-    Ok(())
-}
-
-#[test]
-fn snp_no_alt_support_gives_nonpositive_delta() -> Result<(), Error> {
-    // Read has 'A' at the variant position (matches declared ref, not alt) — no rescue expected.
-    let rec = create_record(b"read1", "5M", b"AAAAA", &[30; 5], "5", false)?;
-    let flags = rec.flags();
-    let p = setup_penalties();
-    let mut frag = Fragment::new(
-        &p,
-        smallvec![&rec],
-        smallvec![MdCigFlags::try_from_record(&rec, &flags)?],
-    )?;
-    let v = TestVariant::new(3, 1, 0.1);
-    let mut dvnt = smallvec![smallvec![make_eval(&v)]];
-    let mut scratch = Scratch::new();
-    let score = frag.score(&mut scratch, &mut dvnt)?;
-    assert!(score <= 0.0);
-    Ok(())
 }
 
 #[test]
@@ -479,43 +710,4 @@ fn test_test_variant_p_variant_reflects_constructed_field() {
         p_variant: 0.25,
     };
     assert_eq!(v2.p_variant(), 0.25);
-}
-
-#[test]
-fn snp_alt_support_with_low_prior_is_not_rescued() -> Result<(), Error> {
-    let rec = create_record(b"read1", "5M", b"AAGAA", &[30; 5], "5", false)?;
-    let flags = rec.flags();
-    let p = setup_penalties();
-    let mut frag = Fragment::new(
-        &p,
-        smallvec![&rec],
-        smallvec![MdCigFlags::try_from_record(&rec, &flags)?],
-    )?;
-    let v = TestVariant::new(3, 1, 0.1);
-    let mut dvnt = smallvec![smallvec![make_eval(&v)]];
-    let mut scratch = Scratch::new();
-    let score = frag.score(&mut scratch, &mut dvnt)?;
-    assert!(
-        score <= 0.0,
-        "expected no rescue at p_variant <= 0.5, got {score}"
-    );
-    Ok(())
-}
-
-#[test]
-fn snp_alt_support_boundary_p_variant_half_gives_zero_delta() -> Result<(), Error> {
-    let rec = create_record(b"read1", "5M", b"AAGAA", &[30; 5], "5", false)?;
-    let flags = rec.flags();
-    let p = setup_penalties();
-    let mut frag = Fragment::new(
-        &p,
-        smallvec![&rec],
-        smallvec![MdCigFlags::try_from_record(&rec, &flags)?],
-    )?;
-    let v = TestVariant::new(3, 1, 0.5);
-    let mut dvnt = smallvec![smallvec![make_eval(&v)]];
-    let mut scratch = Scratch::new();
-    let score = frag.score(&mut scratch, &mut dvnt)?;
-    assert!(score.abs() < 1e-9);
-    Ok(())
 }

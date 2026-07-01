@@ -22,13 +22,13 @@ use filter_algorithm::{
     collated::CollatedMatcher, hash_lookup::HashLookup, line_by_line::LineByLine,
 };
 use noodles::bam::record::Record as BamRecord;
-use noodles::sam::Header;
 use noodles::sam::alignment::record_buf::RecordBuf;
+use noodles::sam::Header;
 use region::{AmbiguousRegions, DiagnosticVariants};
-use smallvec::{SmallVec, smallvec};
+use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
 use std::path::Path;
-use tracing_subscriber::{EnvFilter, fmt};
+use tracing_subscriber::{fmt, EnvFilter};
 
 fn get_log_level(verbose_count: u8) -> &'static str {
     match verbose_count {
@@ -236,6 +236,7 @@ fn load_diagnostic_variants(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    pub(crate) mod common;
     use super::*;
     pub(crate) use alignment::tests::*;
     pub(crate) use aln_stream::tests::*;

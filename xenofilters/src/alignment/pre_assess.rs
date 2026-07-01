@@ -282,109 +282,272 @@ pub(crate) fn pre_assess_scoring_records(
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{alignment::MdCigFlags, tests::create_record};
+    use smallvec::{smallvec, SmallVec};
+    use std::cmp::Ordering::{Equal, Greater, Less};
 
-    fn sig(primary_matches: usize, supp_count: usize) -> AlignSig {
-        AlignSig {
-            primary_match_bases: primary_matches,
-            supp_count,
+    fn mcfs_from(cigar: &str, md: &str) -> SmallVec<[MdCigFlags<'static>; READ_CT]> {
+        // Leak to get 'static lifetime for convenience in tests.
+        let rec: &'static _ = Box::leak(Box::new(
+            create_record(b"r", cigar, &[], &vec![30u8; 150], md, false).unwrap(),
+        ));
+        let flags: &'static _ = Box::leak(Box::new(rec.flags()));
+        let mcf = MdCigFlags::try_from_record(rec, flags).unwrap();
+        smallvec![mcf]
+    }
+
+    struct Row {
+        label: &'static str,
+        cigar_a: &'static str,
+        md_a: &'static str,
+        cigar_b: &'static str,
+        md_b: &'static str,
+        want: Option<Ordering>, // None → FullScoring
+    }
+
+    #[test]
+    fn pre_assess_table() {
+        // FIXME: missing supplementary reads and/or paired-end.
+        let cases: &[Row] = &[
+            // -- Aggregate subsumption (Tier 2.5a) ------------------------
+            Row {
+                label: "a perfect b imperfect → a wins",
+                cigar_a: "10M",
+                md_a: "10",
+                cigar_b: "10M",
+                md_b: "5A4",
+                want: Some(Greater),
+            },
+            Row {
+                label: "a imperfect b perfect → b wins",
+                cigar_a: "10M",
+                md_a: "5A4",
+                cigar_b: "10M",
+                md_b: "10",
+                want: Some(Less),
+            },
+            Row {
+                label: "both perfect → equal",
+                cigar_a: "10M",
+                md_a: "10",
+                cigar_b: "10M",
+                md_b: "10",
+                want: Some(Equal),
+            },
+            Row {
+                label: "a has soft clip b does not → b wins (more matches)",
+                cigar_a: "5S5M",
+                md_a: "5",
+                cigar_b: "10M",
+                md_b: "10",
+                want: Some(Less),
+            },
+            Row {
+                label: "a has 2 mismatch b has 1 → b wins",
+                cigar_a: "10M",
+                md_a: "3A3A2",
+                cigar_b: "10M",
+                md_b: "9A0",
+                want: Some(Less),
+            },
+            Row {
+                label: "incomparable: a wins on matches but b has more clips",
+                // a: 8M2S → 8 matches; b: 10M, MD 8A1 → 9 matches
+                // b wins (more matches)
+                cigar_a: "8M2S",
+                md_a: "8",
+                cigar_b: "10M",
+                md_b: "8A1",
+                want: Some(Less),
+            },
+            Row {
+                label: "a has deletion b does not → indels make a worse",
+                // 5M+1D+5M = 10 matches; 10M = 10 matches, same match count
+                // but deletion in a → supp_count same, match count same → falls to Tier 2.5b
+                cigar_a: "5M1D5M",
+                md_a: "5^A5",
+                cigar_b: "10M",
+                md_b: "10",
+                want: None,
+            },
+            Row {
+                label: "a has insertion b does not → fallthrough (read-space ambiguity)",
+                cigar_a: "5M2I5M",
+                md_a: "10",
+                cigar_b: "10M",
+                md_b: "10",
+                want: None,
+            },
+        ];
+        let mut misses = Vec::new();
+
+        for c in cases {
+            let mcfs_a = mcfs_from(c.cigar_a, c.md_a);
+            let mcfs_b = mcfs_from(c.cigar_b, c.md_b);
+            let result = pre_assess_alignments(&mcfs_a, &mcfs_b);
+            match (c.want, result) {
+                (Some(want_ord), PreAssessResult::EarlyDecision(got_ord)) => {
+                    assert_eq!(got_ord, want_ord, "[{}]", c.label);
+                }
+                (None, PreAssessResult::FullScoring) => {}
+                (want, got) => {
+                    let got = match got {
+                        PreAssessResult::EarlyDecision(o) => format!("Early({o:?})"),
+                        PreAssessResult::FullScoring => "FullScoring".into(),
+                    };
+                    misses.push(format!("[{}] want {:?} got {:?}", c.label, want, got));
+                }
+            }
+        }
+        if !misses.is_empty() {
+            panic!("{} test cases failed:\n{}", misses.len(), misses.join("\n"));
         }
     }
 
-    #[test]
-    fn more_primary_matches_dominates() {
-        assert_eq!(subsumes(&sig(90, 0), &sig(80, 0)), Some(Ordering::Greater));
-    }
+    // -- match_count_raw edge cases ------------------------------------------
 
     #[test]
-    fn fewer_primary_matches_loses() {
-        assert_eq!(subsumes(&sig(70, 0), &sig(80, 0)), Some(Ordering::Less));
-    }
-
-    #[test]
-    fn equal_matches_equal_supps_is_tie() {
-        assert_eq!(subsumes(&sig(80, 0), &sig(80, 0)), Some(Ordering::Equal));
-    }
-
-    #[test]
-    fn more_matches_but_more_supp_is_incomparable() {
-        // A has more matches but also more supplementaries (unknown penalty) → None
-        assert_eq!(subsumes(&sig(90, 2), &sig(80, 0)), None);
-    }
-
-    #[test]
-    fn fewer_supp_wins_on_equal_matches() {
-        // Same matches, A has no supplementaries → A wins (fewer penalty)
-        assert_eq!(subsumes(&sig(80, 0), &sig(80, 1)), Some(Ordering::Greater));
-    }
-
-    #[test]
-    fn more_matches_and_fewer_supp_dominates() {
-        assert_eq!(subsumes(&sig(90, 0), &sig(80, 1)), Some(Ordering::Greater));
-    }
-
-    // --- match_count_raw ---
-
-    fn cigar(ops: &[(u32, u32)]) -> Vec<u8> {
-        // ops: [(op_code, length), ...]  op codes: M=0,I=1,D=2,S=4
-        let mut v = Vec::new();
-        for &(op, len) in ops {
-            v.extend_from_slice(&((len << 4 | op).to_le_bytes()));
+    fn match_count_raw_table() {
+        fn cigar(ops: &[(u32, u32)]) -> Vec<u8> {
+            let mut v = Vec::new();
+            for &(op, len) in ops {
+                v.extend_from_slice(&((len << 4 | op).to_le_bytes()));
+            }
+            v
         }
-        v
+        struct Row {
+            label: &'static str,
+            ops: &'static [(u32, u32)],
+            md: &'static [u8],
+            want: usize,
+        }
+        let cases: &[Row] = &[
+            Row {
+                label: "perfect 10M",
+                ops: &[(0, 10)],
+                md: b"10",
+                want: 10,
+            },
+            Row {
+                label: "one mismatch",
+                ops: &[(0, 10)],
+                md: b"5A4",
+                want: 9,
+            },
+            Row {
+                label: "two mismatches",
+                ops: &[(0, 10)],
+                md: b"3A3C2",
+                want: 8,
+            },
+            Row {
+                label: "softclip excluded",
+                ops: &[(4, 3), (0, 7)],
+                md: b"7",
+                want: 7,
+            },
+            Row {
+                label: "deletion skipped",
+                ops: &[(0, 5), (2, 3), (0, 5)],
+                md: b"5^ATG5",
+                want: 10,
+            },
+            Row {
+                label: "insertion excluded",
+                ops: &[(0, 5), (1, 3), (0, 5)],
+                md: b"10",
+                want: 10,
+            },
+            Row {
+                label: "all mismatch",
+                ops: &[(0, 4)],
+                md: b"0A0C0G0T",
+                want: 0,
+            },
+            Row {
+                label: "empty cigar",
+                ops: &[],
+                md: b"",
+                want: 0,
+            },
+            Row {
+                label: "malformed md truncates gracefully",
+                ops: &[(0, 5)],
+                md: b"3Z",
+                want: 3,
+            },
+        ];
+        for c in cases {
+            let cig = cigar(c.ops);
+            assert_eq!(match_count_raw(&cig, c.md), c.want, "[{}]", c.label);
+        }
     }
 
-    #[test]
-    fn match_count_perfect_10m() {
-        assert_eq!(match_count_raw(&cigar(&[(0, 10)]), b"10"), 10);
-    }
+    // -- Subsumption with supp_count ----------------------------------------
 
     #[test]
-    fn match_count_one_mismatch_in_5m() {
-        // MD "2A2": 2 matches, mismatch, 2 matches → 4 matches
-        assert_eq!(match_count_raw(&cigar(&[(0, 5)]), b"2A2"), 4);
-    }
-
-    #[test]
-    fn match_count_soft_clip_not_counted() {
-        // 3S5M, MD "5" → 5 matches (clips do not contribute)
-        assert_eq!(match_count_raw(&cigar(&[(4, 3), (0, 5)]), b"5"), 5);
-    }
-
-    #[test]
-    fn match_count_deletion_skipped() {
-        // 5M3D5M, MD "5^ATG5" → 10 matches
-        assert_eq!(
-            match_count_raw(&cigar(&[(0, 5), (2, 3), (0, 5)]), b"5^ATG5"),
-            10
-        );
-    }
-
-    #[test]
-    fn match_count_insertion_not_counted() {
-        // 5M3I5M, MD "10" → 10 matches (3 insertion bases not in MD)
-        assert_eq!(
-            match_count_raw(&cigar(&[(0, 5), (1, 3), (0, 5)]), b"10"),
-            10
-        );
-    }
-
-    #[test]
-    fn match_count_two_mismatches() {
-        // 10M, MD "3A3C2" → 8 matches
-        assert_eq!(match_count_raw(&cigar(&[(0, 10)]), b"3A3C2"), 8);
-    }
-
-    #[test]
-    fn alignment_sig_raw_more_matches_wins() {
-        // Perfect 10M vs 8M2-mismatch: sig_a > sig_b
-        let a = sig(match_count_raw(&cigar(&[(0, 10)]), b"10"), 0);
-        let b = sig(match_count_raw(&cigar(&[(0, 10)]), b"8AC"), 0);
-        assert_eq!(a.primary_match_bases, 10);
-        assert_eq!(b.primary_match_bases, 8);
-        assert_eq!(subsumes(&a, &b), Some(Ordering::Greater));
+    fn subsumes_with_supp_count_table() {
+        struct Row {
+            label: &'static str,
+            a: AlignSig,
+            b: AlignSig,
+            want: Option<Ordering>,
+        }
+        let cases = &[
+            Row {
+                label: "equal matches, a no supp → a wins",
+                a: AlignSig {
+                    primary_match_bases: 80,
+                    supp_count: 0,
+                },
+                b: AlignSig {
+                    primary_match_bases: 80,
+                    supp_count: 1,
+                },
+                want: Some(Greater),
+            },
+            Row {
+                label: "a more matches but more supp → incomparable → NW",
+                a: AlignSig {
+                    primary_match_bases: 90,
+                    supp_count: 2,
+                },
+                b: AlignSig {
+                    primary_match_bases: 80,
+                    supp_count: 0,
+                },
+                want: None,
+            },
+            Row {
+                label: "a more matches and equal supp → a wins",
+                a: AlignSig {
+                    primary_match_bases: 90,
+                    supp_count: 0,
+                },
+                b: AlignSig {
+                    primary_match_bases: 80,
+                    supp_count: 0,
+                },
+                want: Some(Greater),
+            },
+            Row {
+                label: "identical → equal",
+                a: AlignSig {
+                    primary_match_bases: 80,
+                    supp_count: 0,
+                },
+                b: AlignSig {
+                    primary_match_bases: 80,
+                    supp_count: 0,
+                },
+                want: Some(Equal),
+            },
+        ];
+        for c in cases {
+            assert_eq!(subsumes(&c.a, &c.b), c.want, "[{}]", c.label);
+        }
     }
 }

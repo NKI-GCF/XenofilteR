@@ -1,12 +1,15 @@
-use crate::Error;
-use crate::aln_stream::tests::MockStream;
-use crate::config::{Config, StripReadSuffix};
-use crate::filter_algorithm::collated::CollatedMatcher;
-use crate::tests::create_record;
+use crate::{
+    aln_stream::tests::MockStream,
+    aln_stream::AlignmentStream,
+    config::{Config, StripReadSuffix},
+    filter_algorithm::collated::CollatedMatcher,
+    tests::create_record,
+    Error,
+};
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::smallvec;
 
-fn config() -> Config {
+fn cfg() -> Config {
     Config {
         gap_open: 6.0,
         gap_extend: 1.0,
@@ -16,104 +19,113 @@ fn config() -> Config {
     }
 }
 
-/// Build a CollatedMatcher from two lists of records.
-fn make_matcher(
-    stream0: Vec<RecordBuf>,
-    stream1: Vec<RecordBuf>,
-    cfg: Config,
-) -> Result<CollatedMatcher<RecordBuf>, Error> {
-    use crate::aln_stream::AlignmentStream;
-    let s0 = Box::new(MockStream::new(0, stream0)) as Box<dyn AlignmentStream<RecordBuf>>;
-    let s1 = Box::new(MockStream::new(1, stream1)) as Box<dyn AlignmentStream<RecordBuf>>;
-    CollatedMatcher::new(cfg, smallvec![s0, s1], [None, None], [None, None])
+fn make(s0: Vec<RecordBuf>, s1: Vec<RecordBuf>, cfg: Config) -> CollatedMatcher<RecordBuf> {
+    let a0 = Box::new(MockStream::new(0, s0)) as Box<dyn AlignmentStream<RecordBuf>>;
+    let a1 = Box::new(MockStream::new(1, s1)) as Box<dyn AlignmentStream<RecordBuf>>;
+    CollatedMatcher::new(cfg, smallvec![a0, a1], [None, None], [None, None]).unwrap()
+}
+
+fn r(name: &[u8], cigar: &str, md: &str) -> RecordBuf {
+    create_record(name, cigar, &[], &[30u8; 20], md, false).unwrap()
+}
+fn u(name: &[u8]) -> RecordBuf {
+    create_record(name, "", &vec![b'A'; 10], &[30u8; 10], "", false).unwrap()
+}
+
+struct Row {
+    label: &'static str,
+    s0: Vec<RecordBuf>,
+    s1: Vec<RecordBuf>,
+    rc: u64,
 }
 
 #[test]
-fn test_collated_perfect_vs_imperfect_stream0_wins() -> Result<(), Error> {
-    let s0 = vec![create_record(b"R1", "10M", &[], &[], "10", false)?];
-    let s1 = vec![create_record(b"R1", "5M5S", &[], &[], "5", false)?];
-    let mut m = make_matcher(s0, s1, config())?;
-    m.process()?;
-    assert_eq!(m.routing_counters[1], 1); // out:0
-    assert_eq!(m.routing_counters[4], 1); // discard:1
-    Ok(())
-}
-
-#[test]
-fn test_collated_perfect_vs_imperfect_stream1_wins() -> Result<(), Error> {
-    let s0 = vec![create_record(b"R1", "5M5S", &[], &[], "5", false)?];
-    let s1 = vec![create_record(b"R1", "10M", &[], &[], "10", false)?];
-    let mut m = make_matcher(s0, s1, config())?;
-    m.process()?;
-    assert_eq!(m.routing_counters[0], 1); // discard:0
-    assert_eq!(m.routing_counters[5], 1); // out:1
-    Ok(())
-}
-
-#[test]
-fn test_collated_tie_is_ambiguous() -> Result<(), Error> {
-    let s0 = vec![create_record(b"R1", "10M", &[], &[], "10", false)?];
-    let s1 = vec![create_record(b"R1", "10M", &[], &[], "10", false)?];
-    let mut m = make_matcher(s0, s1, config())?;
-    m.process()?;
-    assert_eq!(m.routing_counters[2], 1); // ambig:0
-    assert_eq!(m.routing_counters[6], 1); // ambig:1
-    Ok(())
-}
-
-#[test]
-fn test_collated_streams_in_different_order() -> Result<(), Error> {
-    // Stream 0: R1 then R2. Stream 1: R2 then R1.
-    let s0 = vec![
-        create_record(b"R1", "10M", &[], &[], "10", false)?,
-        create_record(b"R2", "5M5S", &[], &[], "5", false)?,
+fn collated_table() {
+    let cases: &[Row] = &[
+        // -- Tier 1: unmapped ----------------------------------------------
+        Row {
+            label: "both unmapped → ambiguous",
+            s0: vec![u(b"R1")],
+            s1: vec![u(b"R1")],
+            // counter per byte in order: [chimeric1, ambiguous1, out1, discarded1, chimeric0,
+            // ambiguous0, out0, discarded0]
+            rc: 0x01000100,
+        },
+        Row {
+            label: "s0 unmapped s1 mapped → s1 wins",
+            s0: vec![u(b"R1")],
+            s1: vec![r(b"R1", "10M", "10")],
+            rc: 0x00100001,
+        },
+        // -- Tier 2: perfect -----------------------------------------------
+        Row {
+            label: "s0 perfect s1 imperfect → s0 wins",
+            s0: vec![r(b"R1", "10M", "10")],
+            s1: vec![r(b"R1", "5M5S", "5")],
+            rc: 0x00010010,
+        },
+        Row {
+            label: "both perfect → ambiguous",
+            s0: vec![r(b"R1", "10M", "10")],
+            s1: vec![r(b"R1", "10M", "10")],
+            rc: 0x01000100,
+        },
+        // -- Tier 2.5: match-count domination -----------------------------
+        Row {
+            label: "s1 more matches (9 vs 7) → s1 wins via pre-assess",
+            s0: vec![r(b"R1", "10M", "7AAA")], // 7 matches
+            s1: vec![r(b"R1", "10M", "8A1")],  // 9 matches
+            rc: 0x00100001,
+        },
+        // -- Out-of-order fragments ----------------------------------------
+        Row {
+            label: "streams deliver R1/R2 in opposite order — collated handles",
+            s0: vec![r(b"R1", "10M", "10"), r(b"R2", "5M5S", "5")],
+            s1: vec![r(b"R2", "10M", "10"), r(b"R1", "5M5S", "5")],
+            rc: 0x00110011,
+        },
+        // -- Unmatched fragments (no counterpart in other stream) ----------
+        // XXX: this case should not happen in practice, but we should handle it gracefully.
+        Row {
+            label: "R2 missing in s1 — s0's R2 emitted as winner",
+            s0: vec![r(b"R1", "10M", "10"), r(b"R2", "10M", "10")],
+            s1: vec![r(b"R1", "5M5S", "5")],
+            rc: 0x00010020,
+        },
+        // -- Paired-end ----------------------------------------------------
+        Row {
+            label: "paired-end perfect both streams → ambiguous for both mates",
+            s0: vec![r(b"R1", "10M", "10"), r(b"R1", "10M", "10")],
+            s1: vec![r(b"R1", "10M", "10"), r(b"R1", "10M", "10")],
+            rc: 0x02000200,
+        },
     ];
-    let s1 = vec![
-        create_record(b"R2", "10M", &[], &[], "10", false)?,
-        create_record(b"R1", "5M5S", &[], &[], "5", false)?,
-    ];
-    let mut m = make_matcher(s0, s1, config())?;
-    m.process()?;
-    // R1: stream0 perfect wins
-    assert_eq!(m.routing_counters[1], 1); // out:0 (R1)
-    // R2: stream1 perfect wins
-    assert_eq!(m.routing_counters[5], 1); // out:1 (R2)
-    Ok(())
+    let mut misses = vec![];
+    let routing_names = ["chimeric", "ambiguous", "out", "discarded"];
+    for c in cases {
+        eprintln!("Running test case: {}", c.label);
+        let mut m = make(c.s0.clone(), c.s1.clone(), cfg());
+        m.process().unwrap();
+        let rc = &m.routing_counters;
+        for i in 0..8 {
+            let name = routing_names[i % 4];
+            let stream = i / 4;
+            let expected = c.rc >> (i * 4) & 0xf;
+            if rc[i] != expected {
+                misses.push(format!(
+                    "[{}] aln{stream}_{name}[{i}] expected {expected}, got {}",
+                    c.label, rc[i]
+                ));
+            }
+        }
+    }
+    if !misses.is_empty() {
+        panic!("{} test cases failed:\n{}", misses.len(), misses.join("\n"));
+    }
 }
 
 #[test]
-fn test_collated_paired_end_same_name_grouped() -> Result<(), Error> {
-    // Both reads of a pair share a name and appear consecutively.
-    let s0 = vec![
-        create_record(b"R1", "10M", &[], &[], "10", false)?,
-        create_record(b"R1", "10M", &[], &[], "10", true)?, // mate
-    ];
-    let s1 = vec![
-        create_record(b"R1", "5M5S", &[], &[], "5", false)?,
-        create_record(b"R1", "5M5S", &[], &[], "5", true)?,
-    ];
-    let mut m = make_matcher(s0, s1, config())?;
-    m.process()?;
-    // stream0 perfect on both reads vs imperfect stream1
-    assert_eq!(m.routing_counters[1], 2); // out:0 (both mates)
-    assert_eq!(m.routing_counters[4], 2); // discard:1 (both mates)
-    Ok(())
-}
-
-#[test]
-fn test_collated_unmapped_vs_mapped() -> Result<(), Error> {
-    let s0 = vec![create_record(b"R1", "", &[b'A'; 10], &[30; 10], "", false)?];
-    let s1 = vec![create_record(b"R1", "10M", &[], &[], "10", false)?];
-    let mut m = make_matcher(s0, s1, config())?;
-    m.process()?;
-    // unmapped < mapped: stream1 wins
-    assert_eq!(m.routing_counters[0], 1); // discard:0
-    assert_eq!(m.routing_counters[5], 1); // out:1
-    Ok(())
-}
-
-#[test]
-fn test_collated_suffix_stripping() -> Result<(), Error> {
+fn collated_suffix_stripping() {
     let cfg = Config {
         strip_read_suffix: StripReadSuffix::True,
         gap_open: 6.0,
@@ -121,33 +133,10 @@ fn test_collated_suffix_stripping() -> Result<(), Error> {
         mismatch_penalty: 4.0,
         ..Config::default()
     };
-    // /1 and /2 should be treated as the same fragment.
-    let s0 = vec![create_record(b"R1/1", "10M", &[], &[], "10", false)?];
-    let s1 = vec![create_record(b"R1/2", "5M5S", &[], &[], "5", false)?];
-    let mut m = make_matcher(s0, s1, cfg)?;
-    m.process()?;
-    assert_eq!(m.routing_counters[1], 1); // out:0
-    assert_eq!(m.routing_counters[4], 1); // discard:1
-    Ok(())
-}
-
-#[test]
-fn test_collated_unmatched_is_emitted_as_best() -> Result<(), Error> {
-    // R2 only in stream0; stream1 has nothing matching.
-    let s0 = vec![
-        create_record(b"R1", "10M", &[], &[], "10", false)?,
-        create_record(b"R2", "10M", &[], &[], "10", false)?,
-    ];
-    let s1 = vec![
-        create_record(b"R1", "5M5S", &[], &[], "5", false)?,
-        // R2 absent
-    ];
-    let mut m = make_matcher(s0, s1, config())?;
-    m.process()?;
-    // R1: stream0 wins normally
-    assert_eq!(m.routing_counters[1], 2); // out:0
-    assert_eq!(m.routing_counters[0], 0); // discard:0
-    assert_eq!(m.routing_counters[4], 1); // discard:1 R1
-    assert_eq!(m.routing_counters[5], 0); // discard:1 R1
-    Ok(())
+    let s0 = vec![create_record(b"R1/1", "10M", &[], &[30u8; 10], "10", false).unwrap()];
+    let s1 = vec![create_record(b"R1/2", "5M5S", &[], &[30u8; 10], "5", false).unwrap()];
+    let mut m = make(s0, s1, cfg);
+    m.process().unwrap();
+    assert_eq!(m.routing_counters[1], 1, "s0 should win");
+    assert_eq!(m.routing_counters[4], 1, "s1 discarded");
 }

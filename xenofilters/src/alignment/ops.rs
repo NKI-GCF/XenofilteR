@@ -1,5 +1,5 @@
-use crate::Error;
 use crate::alignment::MdCigFlags;
+use crate::Error;
 use noodles::sam::alignment::record::cigar::op::{Kind, Op};
 
 pub(crate) enum BaseOp {
@@ -111,19 +111,6 @@ impl<'a> ScoreOpIter<'a> {
         }
     }
 }
-
-/*#[cfg(test)]
-impl<'a> std::fmt::Debug for ScoreOpIter<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut cigar = self.cigar.as_ref().clone();
-        //let cig_str = cigar.iter().map(|c| format!("{}{:?}", c.len(), c.kind())).collect::<String>();
-
-        f.debug_struct("ScoreOpIter")
-            .field("cig_m_remain", &self.cig_m_remain)
-            .field("cigar", &cigar)
-            .finish()
-    }
-}*/
 
 #[cfg(test)]
 pub(crate) mod tests;
