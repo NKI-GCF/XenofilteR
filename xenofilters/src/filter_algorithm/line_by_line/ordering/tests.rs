@@ -475,7 +475,6 @@ fn test_branch_counters_and_skipping() -> Result<(), Error> {
     assert!(lbl.write_record(0, unmapped_fwd.clone(), None).is_ok());
     assert!(lbl.write_record(0, unmapped_rev.clone(), None).is_ok());
     assert!(lbl.write_record(0, unmapped_single, Some(false)).is_ok());
-    lbl.print_counters(0);
     assert_eq!(lbl.routing_counters[2], 2); // ambiguous:0: 2
     assert_eq!(lbl.routing_counters[0], 1); // discard:0:
                                             // ingest_record should skip secondary
@@ -488,7 +487,6 @@ fn test_branch_counters_and_skipping() -> Result<(), Error> {
     let mut lbl: LineByLine<RecordBuf> = LineByLine::new(config, setup_mock_streams())?;
     assert!(lbl.write_record(0, unmapped_fwd, None).is_ok());
     assert!(lbl.write_record(0, unmapped_rev, None).is_ok());
-    lbl.print_counters(0);
     assert_eq!(lbl.routing_counters[2], 2); // ambiguous:0: 2
 
     Ok(())

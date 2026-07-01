@@ -39,8 +39,8 @@
 
 use super::core::{FragmentBuffer, LineByLine, Scratch};
 use crate::alignment::{
-    fragment::score_state_nw, mate_slot, segment_id, BaseOp, FragmentState, MateClassifiable,
-    MateKind, MdCigFlags, ScoreOpIter, SimpleRec,
+    mate_slot, segment_id, BaseOp, FragmentState, MateClassifiable, MateKind, MdCigFlags,
+    ScoreOpIter, SimpleRec,
 };
 use crate::filter_algorithm::line_by_line::{
     detect_chimeric_event, ChimericDecision, MAX_STREAMS, READ_CT,
@@ -54,6 +54,37 @@ use smallvec::{smallvec, SmallVec};
 use std::f64::consts::LN_10;
 use std::sync::Arc;
 use std::thread;
+
+pub(crate) fn compute_cancel_slot<R: SimpleRec>(best: &FragmentBuffer<R>) -> [bool; 2] {
+    // -- Pass 0: per-mate classification (cheap, borrow-only) -----------
+    // Must precede scoring so cancel_slot is known before any NW call.
+    let mut mate_kinds_arr = [[None, None]; MAX_STREAMS];
+    for s in best.iter() {
+        mate_kinds_arr[s.get_nr()] = s.mate_kinds();
+    }
+    let mut cancel_kind: [Option<MateKind>; 2] = [None, None];
+    let mut cancel_ok = [true, true];
+    for s in best.iter() {
+        let mk = mate_kinds_arr[s.get_nr()];
+        for slot in 0..2 {
+            match (mk[slot], cancel_kind[slot]) {
+                (Some(MateKind::Other), _) | (_, _)
+                    if matches!(mk[slot], Some(MateKind::Other)) =>
+                {
+                    cancel_ok[slot] = false;
+                }
+                (Some(k), None) => cancel_kind[slot] = Some(k),
+                (Some(k), Some(prev)) if prev != k => cancel_ok[slot] = false,
+                _ => {}
+            }
+        }
+    }
+    [
+        cancel_ok[0] && cancel_kind[0].is_some(),
+        cancel_ok[1] && cancel_kind[1].is_some(),
+    ]
+}
+
 /// Per-stream metrics produced by a single CIGAR+MD scan.
 /// Indexed by `FragmentState::get_nr()`, not by position in `best`.
 struct TournamentMetrics {
@@ -331,14 +362,11 @@ fn score_bundle(
         return ctx.add_decision_tag.then_some(Decision::Ambiguous);
     }
 
-    let cancel_slot = compute_cancel_slot_owned(best);
+    let cancel_slot = compute_cancel_slot(best);
     let metrics = compute_metrics(best, cancel_slot, |nr, state, mcfs, cs| {
-        {
-            let store = stores.get(nr).and_then(|s| s.as_deref());
-            let score = score_candidate_owned(state, mcfs, store, ctx, scratch, cs).ok()?;
-            Some((score, scratch.last_variant_delta))
-        }
-        .wrap_err()
+        let store = stores.get(nr).and_then(|s| s.as_deref());
+        let score = score_candidate_owned(state, mcfs, store, ctx, scratch, cs)?;
+        Ok((score, scratch.last_variant_delta))
     })
     .ok()?; // wrap_err converts Option<T> closure to Result<T> inside compute_metrics
 
@@ -569,9 +597,20 @@ impl<R: SimpleRec> LineByLine<R> {
             return Ok(self.add_decision_tag.then_some(Decision::Ambiguous));
         }
 
-        let cancel_slot = self.compute_cancel_slot(best);
+        let cancel_slot = compute_cancel_slot(best);
         let metrics = compute_metrics(best, cancel_slot, |nr, state, mcfs, cs| {
-            let score = self.score_candidate(state, mcfs, nr, cs)?;
+            let store = self
+                .aln
+                .get(nr)
+                .ok_or(Error::NoAlignmentForIndex { aln_idx: nr })?
+                .variant_store();
+            let score = state.score_state_nw(
+                mcfs,
+                store.as_deref(),
+                &self.penalties,
+                &mut self.scratch,
+                cs,
+            )?;
             Ok((score, self.scratch.last_variant_delta))
         })?;
 

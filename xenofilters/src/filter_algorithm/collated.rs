@@ -17,19 +17,17 @@ pub(crate) mod reader;
 pub(crate) mod tests;
 
 use crate::{Error, print_routing_counters};
-use crate::alignment::{Fragment, FragmentState, MdCigFlags, SimpleRec, stringify_record,PreAssessResult, pre_assess_alignments, mate_slot, segment_id, score_state_nw, compute_cancel_slots};
+use crate::alignment::{FragmentState, SimpleRec, PreAssessResult, pre_assess_alignments, MateKind, mate_kind::MateClassifiable };
 use crate::aln_stream::AlignmentStream;
 use crate::config::{Config, StripReadSuffix};
-use crate::filter_algorithm::line_by_line::{READ_CT, Scratch, ordering::Decision};
+use crate::filter_algorithm::line_by_line::{Scratch, ordering::Decision};
 use crate::penalty::Penalty;
 use crate::region::tabix_query::{TabixBed, TabixVcf};
-use crate::variant::FragEvalVec;
 use noodles::sam::alignment::record::{cigar::Cigar, data::field::Tag};
 use noodles::sam::alignment::record_buf::{RecordBuf, data::field::Value};
 use reader::{CollatedReader, canonical_name};
 use smallvec::SmallVec;
 use std::collections::HashMap;
-use crate::alignment::{MateClassifiable, MateKind};
 
 pub(crate) struct CollatedMatcher<R: SimpleRec> {
     a: CollatedReader<R>,
@@ -238,11 +236,20 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         // 2-way mate cancellation: a mate slot cancels only when BOTH streams
         // agree on the same non-Other kind. Region overlap on either stream
         // forces full scoring of every mate (variant rescue must see it).
-        let cancel_slot = compute_cancel_slots(&a, &b);
+        let cancel_slot = if a_needs_scoring || b_needs_scoring {
+            [false, false]
+        } else {
+            let mk_a = a.mate_kinds();
+            let mk_b = b.mate_kinds();
+            [
+                matches!((mk_a[0], mk_b[0]), (Some(x), Some(y)) if x == y && x != MateKind::Other),
+                matches!((mk_a[1], mk_b[1]), (Some(x), Some(y)) if x == y && x != MateKind::Other),
+            ]
+        };
 
         // Tier 3: full NW scoring.
-        let s1 = score_state_nw(&a, mcfs1, self.a.variant_store().as_deref(), &self.penalties, &mut self.scratch, cancel_slot)?;
-        let s2 = score_state_nw(&b, mcfs2, self.b.variant_store().as_deref(), &self.penalties, &mut self.scratch, cancel_slot)?;
+        let s1 = a.score_state_nw(mcfs1, self.a.variant_store().as_deref(), &self.penalties, &mut self.scratch, cancel_slot)?;
+        let s2 = b.score_state_nw(mcfs2, self.b.variant_store().as_deref(), &self.penalties, &mut self.scratch, cancel_slot)?;
         let delta = s1 - s2;
 
         if delta > self.ambiguous_log_threshold {

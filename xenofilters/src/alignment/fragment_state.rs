@@ -1,4 +1,5 @@
 use crate::alignment::mate_kind::{mate_slot, segment_id, MateClassifiable, MateKind};
+use crate::alignment::Fragment;
 use crate::alignment::MdCigFlags;
 use crate::alignment::SimpleRec;
 use crate::filter_algorithm::line_by_line::{Scratch, READ_CT};
@@ -219,17 +220,6 @@ impl<R: SimpleRec> FragmentState<R> {
             .score(scratch, &mut dvnt)
             .map_err(|e| Error::NeedlemanWunschError(e.to_string()))?;
         Ok(base + supp_penalty)
-    }
-
-    fn compute_cancel_slots(&self, b: &FragmentState<R>) -> [bool; 2] {
-        if let (Some(mk_a), Some(mk_b)) = (self.mate_kinds(), b.mate_kinds()) {
-            [
-                matches!((mk_a[0], mk_b[0]), (Some(x), Some(y)) if x == y && x != MateKind::Other),
-                matches!((mk_a[1], mk_b[1]), (Some(x), Some(y)) if x == y && x != MateKind::Other),
-            ]
-        } else {
-            [false, false]
-        }
     }
 }
 
