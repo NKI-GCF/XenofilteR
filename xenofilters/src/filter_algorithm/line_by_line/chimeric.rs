@@ -364,7 +364,7 @@ pub(crate) fn detect_chimeric_event<R: SimpleRec>(
             .get_records()
             .iter()
             .chain(sb.get_records().iter())
-            .any(|r| r.flags().map_or(false, |f| f.is_segmented()));
+            .any(|r| r.flags().is_ok_and(|f| f.is_segmented()));
 
         if has_paired {
             let ids_a = mapped_segment_ids(sa);

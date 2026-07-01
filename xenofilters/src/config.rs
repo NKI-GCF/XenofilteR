@@ -324,14 +324,13 @@ impl Config {
                 }
             }
         }
-        if self.merged_output.is_some() {
-            if !self.output.is_empty()
+        if self.merged_output.is_some()
+            && (!self.output.is_empty()
                 || !self.discarded_output.is_empty()
-                || !self.ambiguous_output.is_empty()
+                || !self.ambiguous_output.is_empty())
             {
                 return Err(Error::MergedOutputConflict);
             }
-        }
         if self.ambiguous_regions.len() > 2 {
             return Err(Error::TooManyAmbiguousRegionsFiles {
                 count: self.ambiguous_regions.len(),
@@ -375,11 +374,10 @@ impl Config {
             stream_has_variants[idx] = true;
         }
 
-        if aln_count == 1 {
-            if !stream_has_variants[0] || !stream_has_variants[1] {
+        if aln_count == 1
+            && (!stream_has_variants[0] || !stream_has_variants[1]) {
                 return Err(Error::SingleStreamMissingVariantProfiles);
             }
-        }
 
         self.sample_variants = normalized_samples
             .into_iter()
