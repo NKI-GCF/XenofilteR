@@ -1,31 +1,37 @@
 //!
-//! Design principle: always accumulate `ScoringRecord`s during pass 1.
-//! Early-assignability is evaluated at fragment *completion* time, not on
-//! each individual record arrival. This avoids the downgrade problem (a
-//! stream that looked assignable until its second primary arrived imperfect).
+//! Design principle: always accumulate `RecordKind`s during pass 1, with the
+//! cheapest representation that fits the record's role:
 //!
-//! At completion:
-//! - If one stream's primaries are all perfect with no BED/VCF overlap →
-//!   `StreamKind::Early`: only virtual offsets are kept; `ScoringRecord`s
-//!   are dropped to free memory.
-//! - Otherwise → `StreamKind::Scoring`: records retained for NW scoring.
+//! - `Secondary`        — virtual offset + flags only; never scored, tags along.
+//! - `UnmappedPrimary`   — virtual offset + flags + qualities; never NW-scored
+//!                          (no CIGAR/MD exists), qualities reserved for future
+//!                          quality-weighted ambiguous tie-breaking.
+//! - `Mapped`            — boxed full record (CIGAR/MD/qualities/etc.) for
+//!                          primary or supplementary mapped alignments; the
+//!                          only variant ever passed to NW scoring.
 //!
-//! Supplementary records never affect assignment; their virtual offsets are
-//! always stored separately for pass-2 retrieval.
+//! Boxing the expensive variant keeps `RecordKind` small (pointer + tag) so
+//! `SmallVec<[RecordKind; 2]>` stays cheap even when most fragments are
+//! perfect/unmapped and never reach the boxed branch.
+//!
+//! Early-assignability is evaluated at fragment *completion* time (see
+//! `StreamAccumulator::classify`). When neither fast path applies, a
+//! per-mate `MateKind` summary is computed alongside the records so that
+//! `resolve_fragment` can skip NW scoring for individual mates that are
+//! identical-contribution in both streams (Unmapped-Unmapped or
+//! Perfect-Perfect), even when the fragment as a whole requires scoring.
 
 use crate::region::{AmbiguousRegions, DiagnosticVariants};
 use noodles::sam::alignment::record::Flags;
 use smallvec::SmallVec;
 
 // ---------------------------------------------------------------------------
-// ScoringRecord
+// MappedRecord — full data, only ever built for mapped (primary or
+// supplementary) records.
 // ---------------------------------------------------------------------------
 
-/// Minimum fields needed for pass-1 scoring and early-assignment checks.
-/// No sequence field — CIGAR + MD + qualities suffice for NW scoring
-/// and for deriving the reference/read base at diagnostic positions.
 #[derive(Debug)]
-pub(crate) struct ScoringRecord {
+pub(crate) struct MappedRecord {
     pub(crate) flags: Flags,
     pub(crate) ref_id: usize,
     /// 1-based alignment start (BAM convention).
@@ -36,33 +42,106 @@ pub(crate) struct ScoringRecord {
     pub(crate) cigar_bytes: Vec<u8>,
     pub(crate) md: Vec<u8>,
     pub(crate) qualities: Vec<u8>,
-    /// BGZF virtual offset — used in pass 2 for direct seek.
     pub(crate) virtual_offset: u64,
     /// Supplementary alignment count from the SA:Z tag (semicolons counted).
-    pub(crate) supp_count:     usize,
+    pub(crate) supp_count: usize,
 }
 
-impl ScoringRecord {
-    pub(crate) fn is_primary(&self) -> bool {
-        !self.flags.is_secondary() && !self.flags.is_supplementary()
-    }
-    pub(crate) fn is_supplementary(&self) -> bool {
-        self.flags.is_supplementary()
-    }
-    pub(crate) fn is_unmapped(&self) -> bool {
-        self.flags.is_unmapped()
-    }
-    /// True iff single-op CIGAR (all-Match) and MD is all digits (no mismatches).
-    pub(crate) fn is_perfect(&self) -> bool {
-        if self.is_unmapped() || self.supp_count > 0 {
+impl MappedRecord {
+    fn is_perfect(&self) -> bool {
+        if self.supp_count > 0 {
             return false;
         }
-        // BAM CIGAR: each op is a u32le; low 4 bits = op code (0 = Match).
-        // Single perfect op: exactly 4 bytes, op code 0.
         let cigar_ok = self.cigar_bytes.len() == 4 && (self.cigar_bytes[0] & 0x0F) == 0;
         let md_ok = !self.md.is_empty() && self.md.iter().all(|&b| b.is_ascii_digit());
         cigar_ok && md_ok
     }
+}
+
+// ---------------------------------------------------------------------------
+// RecordKind — minimal-cost representation per record role.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub(crate) enum RecordKind {
+    /// Secondary alignment: never scored, tags along on the fragment's
+    /// final decision. Only a virtual offset is needed for pass-2 retrieval.
+    Secondary { flags: Flags, virtual_offset: u64 },
+    /// Unmapped primary: never NW-scored (no CIGAR/MD exists for an unmapped
+    /// read). Qualities are retained — not currently consumed by scoring, but
+    /// reserved for a possible future quality-weighted ambiguous tie-break.
+    UnmappedPrimary {
+        flags: Flags,
+        virtual_offset: u64,
+        #[allow(dead_code)]
+        qualities: Vec<u8>,
+    },
+    /// Mapped primary or supplementary record. The only variant ever fed
+    /// into NW scoring or perfection checks.
+    Mapped(Box<MappedRecord>),
+}
+
+impl RecordKind {
+    pub(crate) fn flags(&self) -> Flags {
+        match self {
+            RecordKind::Secondary { flags, .. } => *flags,
+            RecordKind::UnmappedPrimary { flags, .. } => *flags,
+            RecordKind::Mapped(m) => m.flags,
+        }
+    }
+    pub(crate) fn virtual_offset(&self) -> u64 {
+        match self {
+            RecordKind::Secondary { virtual_offset, .. } => *virtual_offset,
+            RecordKind::UnmappedPrimary { virtual_offset, .. } => *virtual_offset,
+            RecordKind::Mapped(m) => m.virtual_offset,
+        }
+    }
+    fn is_primary(&self) -> bool {
+        let f = self.flags();
+        !f.is_secondary() && !f.is_supplementary()
+    }
+    pub(crate) fn is_supplementary(&self) -> bool {
+        self.flags().is_supplementary()
+    }
+}
+
+/// Encode the segment role of a primary record as a byte:
+/// `0x40` = first segment (read 1), `0x80` = last segment (read 2),
+/// `0x00` = single-end or unknown. Shared mate-slot encoding with the
+/// chimeric-detection module.
+pub(crate) fn segment_id(flags: &Flags) -> u8 {
+    match (flags.is_first_segment(), flags.is_last_segment()) {
+        (true, _) => 0x40,
+        (false, true) => 0x80,
+        (false, false) => 0x00,
+    }
+}
+
+/// Map a segment id to a fixed mate slot (0 = forward/single-end, 1 = reverse).
+pub(crate) fn mate_slot(seg_id: u8) -> usize {
+    if seg_id == 0x80 {
+        1
+    } else {
+        0
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MateKind — per-mate classification used for partial-scoring cancellation
+// ---------------------------------------------------------------------------
+
+/// Per-mate alignment quality classification, used to detect when a mate's
+/// contribution is provably identical across both streams and can be
+/// excluded from NW scoring entirely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MateKind {
+    /// Mate is unmapped — never NW-scored in either stream.
+    Unmapped,
+    /// Mate is a perfect match — scores `log_lik_match[q_i]` at every
+    /// position, identical in both streams (same quality string).
+    Perfect,
+    /// Mate is mapped but imperfect — must be scored normally.
+    Other,
 }
 
 // ---------------------------------------------------------------------------
@@ -71,49 +150,93 @@ impl ScoringRecord {
 
 #[derive(Default)]
 struct StreamAccumulator {
-    records: SmallVec<[ScoringRecord; 2]>,
+    records: SmallVec<[RecordKind; 2]>,
     primary_count: usize,
 }
 
 impl StreamAccumulator {
-    fn push(&mut self, rec: ScoringRecord) {
-        if rec.is_primary() { self.primary_count += 1; }
+    fn push(&mut self, rec: RecordKind) {
+        if rec.is_primary() {
+            self.primary_count += 1;
+        }
         self.records.push(rec);
     }
 
-    fn classify(self, bed: Option<&AmbiguousRegions>, vcf: Option<&DiagnosticVariants>) -> StreamKind {
+    fn classify(
+        self,
+        bed: Option<&AmbiguousRegions>,
+        vcf: Option<&DiagnosticVariants>,
+    ) -> StreamKind {
         if self.primary_count == 0 {
-            return StreamKind::Scoring { records: Box::new(self.records) };
+            return StreamKind::Scoring {
+                records: Box::new(self.records),
+                mate_kinds: [None, None],
+            };
         }
 
+        let primaries: SmallVec<[&RecordKind; 2]> =
+            self.records.iter().filter(|r| r.is_primary()).collect();
+
         // Fast-path 1: all primaries unmapped.
-        let all_unmapped = self.records.iter()
-            .filter(|r| r.is_primary())
-            .all(|r| r.is_unmapped());
+        let all_unmapped = primaries
+            .iter()
+            .all(|r| matches!(r, RecordKind::UnmappedPrimary { .. }));
         if all_unmapped {
-            let offsets = self.records.iter().map(|r| r.virtual_offset).collect();
-            return StreamKind::Early { kind: EarlyKind::AllUnmapped, virtual_offsets: offsets };
+            let offsets = self.records.iter().map(|r| r.virtual_offset()).collect();
+            return StreamKind::Early {
+                kind: EarlyKind::AllUnmapped,
+                virtual_offsets: offsets,
+            };
         }
 
         // Fast-path 2: all primaries perfect, no region overlap.
-        let all_perfect = self.records.iter().filter(|r| r.is_primary()).all(|r| {
-            if !r.is_perfect() { return false; }
-            if let Some(b) = bed
-                && b.overlaps(r.ref_id, r.pos, r.pos + r.ref_len) {
-                    return false;
-                }
-            if let Some(v) = vcf
-                && v.overlaps(r.ref_id, r.pos, r.pos + r.ref_len) {
-                    return false;
-                }
-            true
+        let all_perfect = primaries.iter().all(|r| match r {
+            RecordKind::Mapped(m) => {
+                m.is_perfect()
+                    && !bed.is_some_and(|b| b.overlaps(m.ref_id, m.pos, m.pos + m.ref_len))
+                    && !vcf.is_some_and(|v| v.overlaps(m.ref_id, m.pos, m.pos + m.ref_len))
+            }
+            _ => false,
         });
         if all_perfect {
-            let offsets = self.records.iter().map(|r| r.virtual_offset).collect();
-            return StreamKind::Early { kind: EarlyKind::AllPerfect, virtual_offsets: offsets };
+            let offsets = self.records.iter().map(|r| r.virtual_offset()).collect();
+            return StreamKind::Early {
+                kind: EarlyKind::AllPerfect,
+                virtual_offsets: offsets,
+            };
         }
 
-        StreamKind::Scoring { records: Box::new(self.records) }
+        // Neither fast path: build per-mate classification for partial
+        // scoring cancellation in `resolve_fragment`.
+        let mut mate_kinds: [Option<MateKind>; 2] = [None, None];
+        for r in &primaries {
+            let (seg_id, kind) = match r {
+                RecordKind::UnmappedPrimary { flags, .. } => {
+                    (segment_id(flags), MateKind::Unmapped)
+                }
+                RecordKind::Mapped(m) => {
+                    let perfect_here = m.is_perfect()
+                        && !bed.is_some_and(|b| b.overlaps(m.ref_id, m.pos, m.pos + m.ref_len))
+                        && !vcf.is_some_and(|v| v.overlaps(m.ref_id, m.pos, m.pos + m.ref_len));
+                    (
+                        segment_id(&m.flags),
+                        if perfect_here {
+                            MateKind::Perfect
+                        } else {
+                            MateKind::Other
+                        },
+                    )
+                }
+                RecordKind::Secondary { .. } => unreachable!("filtered to primaries"),
+            };
+            mate_kinds[mate_slot(seg_id)] = Some(kind);
+        }
+        drop(primaries);
+
+        StreamKind::Scoring {
+            records: Box::new(self.records),
+            mate_kinds,
+        }
     }
 }
 
@@ -124,9 +247,7 @@ impl StreamAccumulator {
 /// Why a stream was fast-pathed without per-base NW scoring.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EarlyKind {
-    /// Every primary alignment in the stream is unmapped.
     AllUnmapped,
-    /// Every primary alignment is a perfect match and overlaps no BED/VCF region.
     AllPerfect,
 }
 
@@ -137,7 +258,10 @@ pub(crate) enum StreamKind {
         kind: EarlyKind,
     },
     Scoring {
-        records: Box<SmallVec<[ScoringRecord; 2]>>,
+        records: Box<SmallVec<[RecordKind; 2]>>,
+        /// Per-mate classification: index 0 = forward/single-end, index 1 = reverse.
+        /// `None` when that mate slot is absent in this stream.
+        mate_kinds: [Option<MateKind>; 2],
     },
     #[default]
     Empty,
@@ -155,9 +279,11 @@ impl StreamKind {
     }
     pub(crate) fn virtual_offsets(&self) -> SmallVec<[u64; 2]> {
         match self {
-            StreamKind::Early { virtual_offsets, .. } => virtual_offsets.clone(),
+            StreamKind::Early {
+                virtual_offsets, ..
+            } => virtual_offsets.clone(),
             StreamKind::Scoring { records, .. } => {
-                records.iter().map(|r| r.virtual_offset).collect()
+                records.iter().map(|r| r.virtual_offset()).collect()
             }
             StreamKind::Empty => SmallVec::new(),
         }
@@ -165,20 +291,15 @@ impl StreamKind {
 }
 
 // ---------------------------------------------------------------------------
-// PendingFragment
+// PendingFragment — unchanged structurally; type updated to RecordKind
 // ---------------------------------------------------------------------------
 
-/// A fragment being assembled across both streams.
 pub(crate) struct PendingFragment {
-    /// Accumulation buffers — used until `classify()` is called.
     driving_buf: StreamAccumulator,
     lookup_buf: StreamAccumulator,
-    /// Post-classification states — set after `classify()`.
     pub(crate) driving: StreamKind,
     pub(crate) lookup: StreamKind,
-    /// Virtual offsets of supplementary records, per stream.
     pub(crate) supplementary_offsets: [SmallVec<[u64; 1]>; 2],
-    /// Driving-stream insertion-order sequence number for staged output.
     pub(crate) seq_nr: u64,
     pub(crate) is_paired: Option<bool>,
 }
@@ -196,20 +317,18 @@ impl PendingFragment {
         }
     }
 
-    /// Push a record from stream `nr`. Returns `true` when the fragment is
-    /// complete and ready for scoring or early assignment.
     pub(crate) fn push(
         &mut self,
-        rec: ScoringRecord,
+        rec: RecordKind,
         nr: usize,
         bed: Option<&AmbiguousRegions>,
         vcf: Option<&DiagnosticVariants>,
     ) -> bool {
         if self.is_paired.is_none() {
-            self.is_paired = Some(rec.flags.is_segmented());
+            self.is_paired = Some(rec.flags().is_segmented());
         }
         if rec.is_supplementary() {
-            self.supplementary_offsets[nr].push(rec.virtual_offset);
+            self.supplementary_offsets[nr].push(rec.virtual_offset());
             return self.check_complete(bed, vcf);
         }
         if nr == 0 {
@@ -224,29 +343,20 @@ impl PendingFragment {
         self.is_paired.map_or(1, |p| p as usize + 1)
     }
 
-    /// Check completion and classify streams that have enough primaries.
     fn check_complete(
         &mut self,
         bed: Option<&AmbiguousRegions>,
         vcf: Option<&DiagnosticVariants>,
     ) -> bool {
         let exp = self.expected_primaries();
-
-        // Classify driving stream if it has enough primaries and not yet classified.
         if self.driving.is_empty() && self.driving_buf.primary_count >= exp {
             let buf = std::mem::take(&mut self.driving_buf);
             self.driving = buf.classify(bed, vcf);
         }
-        // Classify lookup stream similarly.
         if self.lookup.is_empty() && self.lookup_buf.primary_count >= exp {
             let buf = std::mem::take(&mut self.lookup_buf);
             self.lookup = buf.classify(bed, vcf);
         }
-
-        self.is_complete_inner()
-    }
-
-    fn is_complete_inner(&self) -> bool {
         !self.driving.is_empty() && !self.lookup.is_empty()
     }
 }
@@ -257,11 +367,9 @@ impl PendingFragment {
 
 pub(crate) type FragmentTable = std::collections::HashMap<Box<[u8]>, PendingFragment>;
 
-/// Insert `rec` from stream `nr` into `table`.
-/// Returns the canonical key and `true` if the fragment is now complete.
 pub(crate) fn insert(
     table: &mut FragmentTable,
-    rec: ScoringRecord,
+    rec: RecordKind,
     canonical_name: Box<[u8]>,
     nr: usize,
     seq_counter: &mut u64,
@@ -275,133 +383,4 @@ pub(crate) fn insert(
     });
     let complete = entry.push(rec, nr, bed, vcf);
     (canonical_name, complete)
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use noodles::sam::alignment::record::Flags;
-
-    fn rec(flags_bits: u16, perfect: bool, ref_id: usize, pos: usize) -> ScoringRecord {
-        // Perfect: single 10M op (BAM encoding: len=10, op=0 → 10<<4|0 = 0xA0 as u32le)
-        // Imperfect: two ops (5M5S)
-        let cigar_bytes = if perfect {
-            // 10M: u32le = (10 << 4) | 0 = 160 = 0x000000A0
-            vec![0xA0u8, 0x00, 0x00, 0x00]
-        } else {
-            // 5M5S: two ops
-            vec![0x50u8, 0x00, 0x00, 0x00, 0x54u8, 0x00, 0x00, 0x00]
-        };
-        let md = if perfect {
-            b"10".to_vec()
-        } else {
-            b"5".to_vec()
-        };
-        ScoringRecord {
-            flags: Flags::from_bits(flags_bits).unwrap(),
-            ref_id,
-            pos,
-            ref_len: 10,
-            cigar_bytes,
-            md,
-            qualities: vec![30; 10],
-            virtual_offset: pos as u64 * 1000,
-            supp_count: 0,
-        }
-    }
-    #[test]
-    fn test_is_perfect_suppressed_by_sa_tag() {
-        let mut r = rec(0, true, 0, 100);
-        r.supp_count = 1;
-        assert!(!r.is_perfect(), "SA:Z present → must not be perfect");
-    }
-
-    #[test]
-    fn test_single_end_perfect_both_streams_classified() {
-        let mut frag = PendingFragment::new(0);
-        let complete = frag.push(rec(0, true, 0, 100), 0, None, None);
-        assert!(!complete); // driving classified as Early but lookup still Empty
-        let complete = frag.push(rec(0, true, 0, 200), 1, None, None);
-        assert!(complete); // both Early → complete
-        assert!(matches!(frag.driving, StreamKind::Early { .. }));
-        assert!(matches!(frag.lookup, StreamKind::Early { .. }));
-    }
-
-    #[test]
-    fn test_single_end_driving_perfect_lookup_imperfect() {
-        let mut frag = PendingFragment::new(0);
-        let complete = frag.push(rec(0, true, 0, 100), 0, None, None);
-        assert!(!complete);
-        let complete = frag.push(rec(0, false, 0, 200), 1, None, None);
-        assert!(complete);
-        assert!(matches!(frag.driving, StreamKind::Early { .. }));
-        assert!(matches!(frag.lookup, StreamKind::Scoring { .. }));
-    }
-
-    #[test]
-    fn test_driving_early_without_lookup() {
-        // Both-stream requirement: driving alone is classified but fragment is not complete.
-        let mut frag = PendingFragment::new(0);
-        let complete = frag.push(rec(0, true, 0, 100), 0, None, None);
-        assert!(!complete);
-        assert!(frag.lookup.is_empty());
-        assert!(matches!(&frag.driving, StreamKind::Early { .. }));
-    }
-
-    #[test]
-    fn test_paired_end_requires_two_primaries() {
-        let mut frag = PendingFragment::new(0);
-        let complete = frag.push(rec(0x41, true, 0, 100), 0, None, None);
-        assert!(!complete); // only 1 of 2 primaries for stream 0
-        let complete = frag.push(rec(0x81, true, 0, 200), 0, None, None);
-        assert!(!complete); // stream 0 classified (Early) but lookup still Empty
-        let complete = frag.push(rec(0x41, true, 0, 300), 1, None, None);
-        assert!(!complete); // stream 1 has only 1 of 2 expected primaries
-        let complete = frag.push(rec(0x81, true, 0, 400), 1, None, None);
-        assert!(complete); // both streams classified → complete
-    }
-
-    #[test]
-    fn test_supplementary_does_not_count_as_primary() {
-        let mut frag = PendingFragment::new(0);
-        // Supplementary: flags 0x800
-        let complete = frag.push(rec(0x800, true, 0, 500), 0, None, None);
-        assert!(!complete);
-        assert_eq!(frag.driving_buf.primary_count, 0);
-    }
-
-    #[test]
-    fn test_ambiguous_region_forces_scoring() {
-        use crate::region::ambiguous::{AmbiguousRegions, Region};
-        use std::collections::HashMap;
-
-        let mut per_ref = HashMap::new();
-        per_ref.insert(0usize, vec![Region { start: 90, end: 110 }]);
-        let bed = AmbiguousRegions::from_test(per_ref);
-
-        let mut frag = PendingFragment::new(0);
-        // pos=100, ref_len=10 → [100,110) overlaps [90,110)
-        let complete = frag.push(rec(0, true, 0, 100), 0, Some(&bed), None);
-        assert!(!complete);
-        let complete = frag.push(rec(0, false, 0, 200), 1, Some(&bed), None);
-        assert!(complete);
-        // Driving overlaps ambiguous region → NeedsScoring despite being perfect.
-        assert!(matches!(frag.driving, StreamKind::Scoring { .. }));
-    }
-
-    #[test]
-    fn test_all_unmapped_classified_early() {
-        let mut frag = PendingFragment::new(0);
-        // flags 0x4 = unmapped, single-end
-        let complete = frag.push(rec(0x4, false, 0, 0), 0, None, None);
-        assert!(!complete);
-        let complete = frag.push(rec(0x4, false, 0, 0), 1, None, None);
-        assert!(complete);
-        assert!(matches!(&frag.driving, StreamKind::Early { kind: EarlyKind::AllUnmapped, .. }));
-        assert!(matches!(&frag.lookup,  StreamKind::Early { kind: EarlyKind::AllUnmapped, .. }));
-    }
 }

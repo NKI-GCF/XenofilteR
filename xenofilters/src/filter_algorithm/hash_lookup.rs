@@ -1,11 +1,11 @@
 //! [`HashLookup`] — two-pass fragment-matching for position-sorted BAMs.
 //!
-//! **Pass 1** (sequential scan, lightweight `ScoringRecord`s):
+//! **Pass 1** (sequential scan, lightweight `MappedRecord`s):
 //! Reads name, flags, ref_id, pos, CIGAR, MD, qualities, virtual_offset.
 //! No sequence. Inserts into a `FragmentTable`. At fragment completion, classifies
 //! each stream as Early (all primaries perfect, no BED/VCF overlap) or
 //! NeedsScoring. Early fragments retain only virtual offsets; Scoring
-//! fragments retain `ScoringRecord`s for NW scoring.
+//! fragments retain `MappedRecord`s for NW scoring.
 //!
 //! **Pass 2** (selective seek):
 //! For each completed fragment, seeks to stored virtual offsets and reads
@@ -28,18 +28,21 @@ use crate::filter_algorithm::line_by_line::{ordering::Decision, Scratch, READ_CT
 use crate::penalty::Penalty;
 use crate::region::{AmbiguousRegions, DiagnosticVariants};
 use crate::variant::FragEvalVec;
-use assemble::{insert, EarlyKind, FragmentTable, PendingFragment, ScoringRecord, StreamKind};
-use noodles::sam::alignment::record::Cigar as CigarTrait;
+use crate::Error;
+use assemble::{
+    insert, mate_slot, segment_id, EarlyKind, FragmentTable, MappedRecord, MateKind,
+    PendingFragment, RecordKind, StreamKind,
+};
+use noodles::core::Position;
 use noodles::sam::alignment::record::cigar::op::{Kind, Op};
 use noodles::sam::alignment::record::data::field::{Tag, Value};
-use noodles::core::Position;
+use noodles::sam::alignment::record::Cigar as CigarTrait;
 use noodles::sam::alignment::record_buf::{
     data::field::Value as BufValue, Cigar, Data, QualityScores, RecordBuf, Sequence,
 };
 use smallvec::SmallVec;
 use stage::StagedOutput;
 use std::cmp::Ordering;
-use crate::Error;
 
 // ---------------------------------------------------------------------------
 // ScoredFragment
@@ -154,8 +157,7 @@ impl<R: SimpleRec> HashLookup<R> {
         Ok(())
     }
 
-    fn next_scoring_record(&mut self, nr: usize) -> Result<Option<(Box<[u8]>, ScoringRecord)>, Error> {
-
+    fn next_scoring_record(&mut self, nr: usize) -> Result<Option<(Box<[u8]>, RecordKind)>, Error> {
         let rec = match self.aln[nr].next_rec()? {
             Some(r) => r,
             None => return Ok(None),
@@ -164,13 +166,45 @@ impl<R: SimpleRec> HashLookup<R> {
         let raw_name: Vec<u8> = rec
             .name()
             .map(|n| {
-                let b: &[u8] = n.as_ref();
-                b.to_vec()
+                let bytes: &[u8] = n.as_ref();
+                bytes.to_vec()
             })
             .unwrap_or_default();
         let key = canonical_name(&raw_name, self.strip);
 
         let flags = rec.flags()?;
+        let virtual_offset = self.record_counters[nr];
+        self.record_counters[nr] += 1;
+
+        // Secondary: virtual offset only — no CIGAR/MD parsing needed.
+        if flags.is_secondary() {
+            return Ok(Some((
+                key,
+                RecordKind::Secondary {
+                    flags,
+                    virtual_offset,
+                },
+            )));
+        }
+
+        // Unmapped primary: never NW-scored — skip CIGAR/MD/ref_len, keep qualities.
+        if flags.is_unmapped() {
+            let qualities: Vec<u8> = rec
+                .quality_scores()
+                .as_ref()
+                .iter()
+                .collect::<Result<Vec<u8>, std::io::Error>>()?;
+            return Ok(Some((
+                key,
+                RecordKind::UnmappedPrimary {
+                    flags,
+                    virtual_offset,
+                    qualities,
+                },
+            )));
+        }
+
+        // Mapped (primary or supplementary): full parse, as before.
         let ref_id = rec.ref_seq_id().transpose()?.unwrap_or(usize::MAX);
         let pos = rec
             .alignment_start()
@@ -207,37 +241,27 @@ impl<R: SimpleRec> HashLookup<R> {
 
         let md = match rec.data().get(&Tag::MISMATCHED_POSITIONS).transpose()? {
             Some(Value::String(s)) => {
-                let b: &[u8] = s.as_ref();
-                b.to_vec()
+                let bytes: &[u8] = s.as_ref();
+                bytes.to_vec()
             }
             _ => Vec::new(),
         };
-
-        // Quality scores: noodles quality scores iterate as Result<u8, Error>.
         let qualities: Vec<u8> = rec
             .quality_scores()
             .as_ref()
             .iter()
             .collect::<Result<Vec<u8>, std::io::Error>>()?;
-
-        // SA:Z: pending supplementary alignments for this read.
-        // Each supplementary entry ends with ';', so semicolon count == count.
         let supp_count = match rec.data().get(&Tag::OTHER_ALIGNMENTS).transpose()? {
             Some(Value::String(s)) => {
-                let b: &[u8] = s.as_ref();
-                b.iter().filter(|&&c| c == b';').count()
+                let bytes: &[u8] = s.as_ref();
+                bytes.iter().filter(|&&c| c == b';').count()
             }
             _ => 0,
         };
 
-        // Use a per-stream counter so fetch_by_virtual_offset(offset) correctly
-        // indexes into stream[nr].original_reads[offset] for both real and mock streams.
-        let virtual_offset = self.record_counters[nr];
-        self.record_counters[nr] += 1;
-
         Ok(Some((
             key,
-            ScoringRecord {
+            RecordKind::Mapped(Box::new(MappedRecord {
                 flags,
                 ref_id,
                 pos,
@@ -247,11 +271,11 @@ impl<R: SimpleRec> HashLookup<R> {
                 qualities,
                 virtual_offset,
                 supp_count,
-            },
+            })),
         )))
     }
 
-    fn ingest(&mut self, key: Box<[u8]>, rec: ScoringRecord, nr: usize) -> Result<(), Error> {
+    fn ingest(&mut self, key: Box<[u8]>, rec: RecordKind, nr: usize) -> Result<(), Error> {
         let bed = self.bed[nr].as_ref().filter(|b| !b.is_empty());
         let vcf = self.vcf[nr].as_ref().filter(|v| !v.is_empty());
         let (key, complete) = insert(
@@ -271,23 +295,36 @@ impl<R: SimpleRec> HashLookup<R> {
         }
         Ok(())
     }
-
     fn resolve_fragment(&mut self, pending: PendingFragment) -> Result<ScoredFragment, Error> {
         let supp_offsets = pending.supplementary_offsets;
         let driving_offsets = pending.driving.virtual_offsets();
         let lookup_offsets = pending.lookup.virtual_offsets();
-
         let dk = pending.driving.early_kind();
         let lk = pending.lookup.early_kind();
 
         if dk.is_none() && lk.is_none() {
-            let StreamKind::Scoring { records: recs_a } = pending.driving else {
-                return Err(Error::MissingDrivingRecords);
+            let (
+                StreamKind::Scoring {
+                    records: recs_a,
+                    mate_kinds: mk_a,
+                },
+                StreamKind::Scoring {
+                    records: recs_b,
+                    mate_kinds: mk_b,
+                },
+            ) = (pending.driving, pending.lookup)
+            else {
+                return Err(Error::BugExpectedScoringOnBothSides);
             };
-            let StreamKind::Scoring { records: recs_b } = pending.lookup else {
-                return Err(Error::MissingLookupRecords);
-            };
-            return self.evaluate_scoring_pair(*recs_a, *recs_b, driving_offsets, lookup_offsets, supp_offsets);
+            return self.evaluate_scoring_pair(
+                *recs_a,
+                *recs_b,
+                mk_a,
+                mk_b,
+                driving_offsets,
+                lookup_offsets,
+                supp_offsets,
+            );
         }
 
         use EarlyKind::*;
@@ -318,45 +355,86 @@ impl<R: SimpleRec> HashLookup<R> {
             is_ambiguous,
         })
     }
-
-    /// Run Tier 2.5 pre-assessment then, if necessary, full NW scoring for a
-    /// pair of `ScoringRecord` sets, and return a fully resolved `ScoredFragment`.
-    ///
-    /// Decision path:
-    ///   1. `pre_assess_scoring_records` → `EarlyDecision` → return immediately.
-    ///   2. Otherwise: `nw_score_records` on both sets → compare delta → route.
+    /// Run mate-level cancellation, then Tier 2.5 pre-assessment, then (if
+    /// necessary) full NW scoring excluding any mates that cancelled.
     fn evaluate_scoring_pair(
         &mut self,
-        recs_a: SmallVec<[ScoringRecord; 2]>,
-        recs_b: SmallVec<[ScoringRecord; 2]>,
+        recs_a: SmallVec<[RecordKind; 2]>,
+        recs_b: SmallVec<[RecordKind; 2]>,
+        mk_a: [Option<MateKind>; 2],
+        mk_b: [Option<MateKind>; 2],
         offsets_a: SmallVec<[u64; 2]>,
         offsets_b: SmallVec<[u64; 2]>,
         supp_offsets: [SmallVec<[u64; 1]>; 2],
     ) -> Result<ScoredFragment, Error> {
+        // ── Mate cancellation ──────────────────────────────────────────────
+        // A mate slot cancels when both streams classify it identically as
+        // Unmapped or Perfect: its per-base contribution is provably equal in
+        // both streams (same read, same quality string), so it can be excluded
+        // from NW scoring entirely without affecting the delta.
+        let mut cancel_slot = [false, false];
+        let mut all_present_cancel = true;
+        let mut any_present = false;
+        for i in 0..2 {
+            match (mk_a[i], mk_b[i]) {
+                (Some(a), Some(b)) if a == b && a != MateKind::Other => {
+                    cancel_slot[i] = true;
+                    any_present = true;
+                }
+                (None, None) => {}
+                _ => {
+                    all_present_cancel = false;
+                    any_present = any_present || mk_a[i].is_some() || mk_b[i].is_some();
+                }
+            }
+        }
+
+        // Every present mate cancelled → guaranteed tie, no NW needed at all.
+        if all_present_cancel && any_present {
+            let mut both: SmallVec<[(usize, u64); 2]> = offsets_a.iter().map(|&o| (0, o)).collect();
+            both.extend(offsets_b.iter().map(|&o| (1, o)));
+            return Ok(ScoredFragment {
+                winner_offsets: both,
+                loser_offsets: SmallVec::new(),
+                supp_offsets,
+                decision: self.add_decision_tag.then_some(Decision::Ambiguous),
+                winner_nr: 0,
+                is_ambiguous: true,
+            });
+        }
 
         let off_a: SmallVec<[(usize, u64); 2]> = offsets_a.iter().map(|&o| (0, o)).collect();
         let off_b: SmallVec<[(usize, u64); 2]> = offsets_b.iter().map(|&o| (1, o)).collect();
 
-        // Reduce logic down to its core outcome variables: (winner_nr, decision, is_ambiguous)
-        let (winner_nr, decision, is_ambiguous) = match pre_assess_scoring_records(&recs_a, &recs_b) {
+        let (winner_nr, decision, is_ambiguous) = match pre_assess_scoring_records(&recs_a, &recs_b)
+        {
             PreAssessResult::EarlyDecision(ord) => match ord {
                 Ordering::Greater => (0, self.add_decision_tag.then_some(Decision::First), false),
                 Ordering::Less => (1, self.add_decision_tag.then_some(Decision::Last), false),
-                Ordering::Equal => (0, self.add_decision_tag.then_some(Decision::Ambiguous), true),
+                Ordering::Equal => (
+                    0,
+                    self.add_decision_tag.then_some(Decision::Ambiguous),
+                    true,
+                ),
             },
             PreAssessResult::FullScoring => {
-                let delta = self.nw_score_records(&recs_a, 0)? - self.nw_score_records(&recs_b, 1)?;
+                // Score only the mates that did NOT cancel, on both streams.
+                let delta = self.nw_score_records(&recs_a, 0, cancel_slot)?
+                    - self.nw_score_records(&recs_b, 1, cancel_slot)?;
                 if delta > self.ambiguous_log_threshold {
                     (0, self.phred_delta(delta), false)
                 } else if delta < -self.ambiguous_log_threshold {
                     (1, self.phred_delta(-delta), false)
                 } else {
-                    (0, self.add_decision_tag.then_some(Decision::Ambiguous), true)
+                    (
+                        0,
+                        self.add_decision_tag.then_some(Decision::Ambiguous),
+                        true,
+                    )
                 }
             }
         };
 
-        //  Routinely distribute vectors based on outcome metadata
         let (winner_offsets, loser_offsets) = if is_ambiguous {
             let mut both = off_a;
             both.extend(off_b);
@@ -386,30 +464,39 @@ impl<R: SimpleRec> HashLookup<R> {
 
     fn nw_score_records(
         &mut self,
-        records: &SmallVec<[ScoringRecord; 2]>,
+        records: &SmallVec<[RecordKind; 2]>,
         aln_idx: usize,
+        cancel_slot: [bool; 2],
     ) -> Result<f64, Error> {
-
         let mut penalty = 0.0;
-
         let mut bufs: SmallVec<[RecordBuf; 2]> = SmallVec::new();
-        for sr in records.iter() {
-            if sr.flags.is_secondary() {
+
+        for rk in records.iter() {
+            let flags = rk.flags();
+            if flags.is_secondary() {
                 continue;
             }
-            if sr.is_supplementary() {
+
+            let slot = mate_slot(segment_id(&flags));
+            if cancel_slot[slot] {
+                continue;
+            } // identical contribution in both streams — skip
+
+            let RecordKind::Mapped(m) = rk else { continue }; // Unmapped never scored
+
+            if m.flags.is_supplementary() {
                 penalty += self.penalties.chimeric_junction_penalty;
             }
+
             let mut buf = RecordBuf::default();
-            *buf.flags_mut() = sr.flags;
-            *buf.reference_sequence_id_mut() = Some(sr.ref_id);
-            if sr.pos > 0 {
-                *buf.alignment_start_mut() = Some(
-                    Position::new(sr.pos).ok_or(Error::InvalidPosition(sr.pos))?,
-                );
+            *buf.flags_mut() = m.flags;
+            *buf.reference_sequence_id_mut() = Some(m.ref_id);
+            if m.pos > 0 {
+                *buf.alignment_start_mut() =
+                    Some(Position::new(m.pos).ok_or(Error::InvalidPosition(m.pos))?);
             }
             let mut cigar_ops = Vec::new();
-            for chunk in sr.cigar_bytes.chunks_exact(4) {
+            for chunk in m.cigar_bytes.chunks_exact(4) {
                 let encoded = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
                 let len = (encoded >> 4) as usize;
                 let kind = match encoded & 0xF {
@@ -427,16 +514,16 @@ impl<R: SimpleRec> HashLookup<R> {
                 cigar_ops.push(Op::new(kind, len));
             }
             *buf.cigar_mut() = Cigar::from(cigar_ops);
-            *buf.quality_scores_mut() = QualityScores::from_iter(sr.qualities.iter().cloned());
-            let seq_len = sr.qualities.len();
-            *buf.sequence_mut() = Sequence::from(vec![b'N'; seq_len]);
-            let md_str = String::from_utf8(sr.md.clone())?;
+            *buf.quality_scores_mut() = QualityScores::from_iter(m.qualities.iter().cloned());
+            *buf.sequence_mut() = Sequence::from(vec![b'N'; m.qualities.len()]);
+            let md_str = String::from_utf8(m.md.clone())?;
             let data: Data = [(Tag::MISMATCHED_POSITIONS, BufValue::from(md_str))]
                 .into_iter()
                 .collect();
             *buf.data_mut() = data;
             bufs.push(buf);
         }
+
         let flags_vec: SmallVec<[_; 2]> = bufs.iter().map(|b| b.flags()).collect();
         let mut mcfs: SmallVec<[MdCigFlags; READ_CT]> = SmallVec::new();
 
@@ -454,13 +541,8 @@ impl<R: SimpleRec> HashLookup<R> {
             if buf.flags().is_unmapped() {
                 dvnt.push(SmallVec::new());
             } else {
-                let tid = buf
-                    .reference_sequence_id()
-                    .ok_or(Error::NoRefSeqId)?;
-                let start = buf
-                    .alignment_start()
-                    .ok_or(Error::NoAlignmentStart)?
-                    .get();
+                let tid = buf.reference_sequence_id().ok_or(Error::NoRefSeqId)?;
+                let start = buf.alignment_start().ok_or(Error::NoAlignmentStart)?.get();
                 let end = start + buf.cigar().len();
 
                 // Borrow from the `store` we fetched outside the loop

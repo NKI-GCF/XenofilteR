@@ -25,7 +25,6 @@ use super::read_profile::{
     build_read_profile, compare_fragment_profiles, FragmentProfile, ReadOp, ReadSpaceDecision,
 };
 use crate::alignment::MdCigFlags;
-use crate::filter_algorithm::hash_lookup::assemble::ScoringRecord;
 use crate::filter_algorithm::line_by_line::READ_CT;
 use smallvec::SmallVec;
 use std::cmp::Ordering;
@@ -82,7 +81,7 @@ fn subsumes(a: &AlignSig, b: &AlignSig) -> Option<Ordering> {
 }
 
 // ---------------------------------------------------------------------------
-// Raw-bytes match counting for HashLookup (operates on ScoringRecord)
+// Raw-bytes match counting for HashLookup (operates on MappedRecord)
 // ---------------------------------------------------------------------------
 
 /// Count exact-match bases from raw BAM-encoded CIGAR bytes and a raw MD string.
@@ -230,21 +229,33 @@ pub(crate) fn pre_assess_alignments(
 
 /// Tier 2.5 pre-assessment for `HashLookup`.
 ///
-/// Operates on raw BAM-encoded CIGAR bytes + MD byte slices from `ScoringRecord`,
+/// Operates on raw BAM-encoded CIGAR bytes + MD byte slices from `MappedRecord`,
 /// avoiding `RecordBuf` construction until full NW is necessary. Uses
 /// `match_count_raw` (same match-count semantics as Tier 2.5a above) and
 /// respects `supp_count` from the SA:Z tag parsed in `next_scoring_record`.
 pub(crate) fn pre_assess_scoring_records(
-    recs_a: &[ScoringRecord],
-    recs_b: &[ScoringRecord],
+    recs_a: &[crate::filter_algorithm::hash_lookup::assemble::RecordKind],
+    recs_b: &[crate::filter_algorithm::hash_lookup::assemble::RecordKind],
 ) -> PreAssessResult {
+    use crate::filter_algorithm::hash_lookup::assemble::RecordKind;
+
     let primaries_a: SmallVec<[_; 2]> = recs_a
         .iter()
-        .filter(|r| r.is_primary() && !r.is_unmapped())
+        .filter_map(|r| match r {
+            RecordKind::Mapped(m) if !m.flags.is_secondary() && !m.flags.is_supplementary() => {
+                Some(m)
+            }
+            _ => None,
+        })
         .collect();
     let primaries_b: SmallVec<[_; 2]> = recs_b
         .iter()
-        .filter(|r| r.is_primary() && !r.is_unmapped())
+        .filter_map(|r| match r {
+            RecordKind::Mapped(m) if !m.flags.is_secondary() && !m.flags.is_supplementary() => {
+                Some(m)
+            }
+            _ => None,
+        })
         .collect();
 
     if primaries_a.is_empty() || primaries_a.len() != primaries_b.len() {
@@ -252,14 +263,14 @@ pub(crate) fn pre_assess_scoring_records(
     }
 
     let mut sig_a = AlignSig::default();
-    for r in &primaries_a {
-        sig_a.primary_match_bases += match_count_raw(&r.cigar_bytes, &r.md);
-        sig_a.supp_count += r.supp_count;
+    for m in &primaries_a {
+        sig_a.primary_match_bases += match_count_raw(&m.cigar_bytes, &m.md);
+        sig_a.supp_count += m.supp_count;
     }
     let mut sig_b = AlignSig::default();
-    for r in &primaries_b {
-        sig_b.primary_match_bases += match_count_raw(&r.cigar_bytes, &r.md);
-        sig_b.supp_count += r.supp_count;
+    for m in &primaries_b {
+        sig_b.primary_match_bases += match_count_raw(&m.cigar_bytes, &m.md);
+        sig_b.supp_count += m.supp_count;
     }
 
     match subsumes(&sig_a, &sig_b) {

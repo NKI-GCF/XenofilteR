@@ -339,6 +339,9 @@ pub(crate) enum Error {
     )]
     InsufficientAlignmentStreams { count: usize },
 
+    #[error("BUG: expected Scoring on both sides")]
+    BugExpectedScoringOnBothSides,
+
     #[error(
         "More than 2 alignment streams requires --matching-algorithm namesorted \
         (hashlookup and collated are limited to 2 streams by design)"
