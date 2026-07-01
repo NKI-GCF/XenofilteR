@@ -18,6 +18,7 @@ use aln_stream::{AlignmentStream, AlnStream};
 use clap::Parser;
 use config::{Config, MatchingAlgorithm};
 pub(crate) use error::Error;
+pub(crate) use filter_algorithm::line_by_line::print_routing_counters;
 use filter_algorithm::{
     collated::CollatedMatcher, hash_lookup::HashLookup, line_by_line::LineByLine,
 };

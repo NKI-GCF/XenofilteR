@@ -28,7 +28,7 @@ use crate::filter_algorithm::line_by_line::{ordering::Decision, Scratch, READ_CT
 use crate::penalty::Penalty;
 use crate::region::{AmbiguousRegions, DiagnosticVariants};
 use crate::variant::FragEvalVec;
-use crate::Error;
+use crate::{print_routing_counters, Error};
 use assemble::{
     insert, EarlyKind, FragmentTable, MappedRecord, PendingFragment, RecordKind, StreamKind,
 };
@@ -89,14 +89,14 @@ impl<R: SimpleRec> HashLookup<R> {
         bed: [Option<AmbiguousRegions>; 2],
         vcf: [Option<DiagnosticVariants>; 2],
     ) -> Result<Self, Error> {
-        if aln.len() != 2 {
+        let aln_len = aln.len();
+        if aln_len != 2 {
             return Err(Error::AlgoRequiresTwoStreams);
         }
         let ambiguous_log_threshold = match config.ambiguous_threshold {
             0 => 0.0,
             t => (t as f64) * std::f64::consts::LN_10 / 10.0,
         };
-        let aln_len = aln.len();
         for (i, a) in aln.iter_mut().enumerate() {
             a.init_writers(&config, i)?;
         }
@@ -152,7 +152,7 @@ impl<R: SimpleRec> HashLookup<R> {
             &mut self.routing_counters,
             self.add_decision_tag,
         )?;
-        self.print_counters();
+        print_routing_counters(&self.routing_counters, "hash_lookup");
         Ok(())
     }
 
@@ -586,16 +586,5 @@ impl<R: SimpleRec> HashLookup<R> {
             },
         );
         Ok(())
-    }
-    pub(crate) fn print_counters(&self) {
-        let len = self.routing_counters.len();
-        for nr in 0..(len / 4) {
-            for (i, set) in ["discard", "out", "ambig"].iter().enumerate() {
-                eprintln!(
-                    "collated[{set}:{i}]: {}",
-                    self.routing_counters[i + (nr * 4)]
-                );
-            }
-        }
     }
 }

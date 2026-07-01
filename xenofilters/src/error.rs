@@ -279,6 +279,9 @@ pub(crate) enum Error {
     #[error("All scorer workers exited unexpectedly")]
     AllScorerWorkersExited,
 
+    #[error("NW error: {0}")]
+    NeedlemanWunschError(String),
+
     #[error("Scorer workers exited unexpectedly")]
     ScorerWorkersExited,
 

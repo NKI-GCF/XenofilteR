@@ -1,11 +1,27 @@
 use super::chimeric::ChimericDecision;
 use super::core::FragmentBuffer;
-use super::core::LineByLine;
-use crate::Error;
+use super::core::{LineByLine, COUNTER_STRIDE};
 use crate::alignment::SimpleRec;
+use crate::Error;
 use noodles::sam::alignment::record::data::field::Tag;
-use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::alignment::record_buf::data::field::Value;
+use noodles::sam::alignment::record_buf::RecordBuf;
+
+pub(crate) fn print_routing_counters(counters: &[u64], tag: &str) {
+    let stream_count = counters.len() / COUNTER_STRIDE;
+    for nr in 0..stream_count {
+        let b = nr * COUNTER_STRIDE;
+        tracing::info!(
+            stream = nr,
+            backend = tag,
+            discard = counters[b],
+            out = counters[b + 1],
+            ambiguous = counters[b + 2],
+            chimeric = counters[b + 3],
+            "Stream summary"
+        );
+    }
+}
 
 impl<R: SimpleRec> LineByLine<R> {
     /// Insert a single-byte aux tag into `rec`.
@@ -21,22 +37,24 @@ impl<R: SimpleRec> LineByLine<R> {
         Ok(())
     }
 
-    /// Write `rec` through stream `i`.
+    /// Write `rec` through stream `i`. Counter layout per stream — stride 4:
     ///
     /// `best_state`:
-    /// - `Some(true)`  → winning alignment (→ `--output`)
-    /// - `Some(false)` → losing alignment  (→ `--discarded-output`)
-    /// - `None`        → ambiguous         (→ `--ambiguous-output`)
+    /// - `Some(false)` → nr*4+0 → discard    (includes unmapped-discarded when --discard-unmapped)
+    /// - `Some(true)`  → nr*4+1 → out/winner
+    /// - `None`        → nr*4+2 → ambiguous  (includes unmapped-ambiguous when configured)
+    ///   <elsewhere>     nr*4+3 → chimeric   (XC:Z: tagged, both streams count)
     pub(super) fn write_record(
         &mut self,
         i: usize,
         rec: RecordBuf,
         best_state: Option<bool>,
     ) -> Result<(), Error> {
-        match (i, best_state) {
-            (i, Some(false)) => self.routing_counters[i * 4] += 1,
-            (i, Some(true)) => self.routing_counters[1 + (i * 4)] += 1,
-            (i, None) => self.routing_counters[2 + (i * 4)] += 1,
+        let base = i * COUNTER_STRIDE;
+        match best_state {
+            Some(false) => self.routing_counters[base] += 1,
+            Some(true) => self.routing_counters[base + 1] += 1,
+            None => self.routing_counters[base + 2] += 1,
         }
         if let Some(aln) = self.aln.get_mut(i) {
             aln.write_record(rec, best_state)
@@ -45,25 +63,6 @@ impl<R: SimpleRec> LineByLine<R> {
         }
     }
 
-    /// Emit per-stream counters to the tracing backend (INFO level).
-    ///
-    /// Counter layout (index → meaning):
-    /// ```text
-    /// i*2+0  : discarded from alignment i
-    /// i*2+1  : assigned to alignment i
-    /// 16+i   : ambiguous for alignment i
-    /// 24+i   : unmapped-discarded for alignment i
-    /// ```
-    pub(super) fn print_counters(&self, i: usize) {
-        tracing::info!(
-            stream = i,
-            discarded = self.routing_counters[i * 4],
-            assigned = self.routing_counters[1 + (i * 4)],
-            ambiguous = self.routing_counters[2 + (i * 4)],
-            chimeric = self.routing_counters[3 + (i * 4)],
-            "Stream summary"
-        );
-    }
     /// Write all records from a chimeric fragment.
     ///
     /// For streams in the chimeric pair: records go to assigned output with

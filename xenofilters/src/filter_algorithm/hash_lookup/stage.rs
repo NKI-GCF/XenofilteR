@@ -2,14 +2,14 @@
 //! sequence number. Pass-2 seeks are performed here by calling
 //! `fetch_by_virtual_offset` on the appropriate `AlignmentStream`.
 
-use crate::Error;
 use crate::alignment::SimpleRec;
 use crate::aln_stream::AlignmentStream;
 use crate::filter_algorithm::hash_lookup::ScoredFragment;
 use crate::filter_algorithm::line_by_line::ordering::Decision;
+use crate::Error;
 use noodles::sam::alignment::record::data::field::Tag;
-use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::alignment::record_buf::data::field::Value;
+use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::SmallVec;
 use std::collections::BTreeMap;
 
@@ -90,7 +90,7 @@ fn emit_scored<R: SimpleRec>(
     if sf.is_ambiguous {
         for (nr, voffset) in sf.winner_offsets.iter().chain(sf.loser_offsets.iter()) {
             let rec = fetch(aln, *nr, *voffset)?;
-            routing_counters[2 + (nr * 4)] += 1;
+            routing_counters[(nr * 4) + 2] += 1;
             aln[*nr].write_record(rec, None)?;
         }
     } else {
@@ -99,7 +99,7 @@ fn emit_scored<R: SimpleRec>(
             if add_decision_tag {
                 apply_tag(&mut rec, sf.decision.as_ref());
             }
-            routing_counters[1 + (nr * 4)] += 1;
+            routing_counters[(nr * 4) + 1] += 1;
             aln[*nr].write_record(rec, Some(true))?;
         }
         for (nr, voffset) in &sf.loser_offsets {
@@ -112,6 +112,7 @@ fn emit_scored<R: SimpleRec>(
     // Supplementaries follow winner stream's decision.
     let winner_nr = sf.winner_nr;
     for (stream_nr, offsets) in sf.supp_offsets.iter().enumerate() {
+        let base = stream_nr * 4;
         let is_winner_stream = stream_nr == winner_nr || sf.is_ambiguous;
         let best_state = if sf.is_ambiguous {
             None
@@ -124,11 +125,11 @@ fn emit_scored<R: SimpleRec>(
                 apply_tag(&mut rec, sf.decision.as_ref());
             }
             if sf.is_ambiguous {
-                routing_counters[2 + (stream_nr * 4)] += 1;
+                routing_counters[base + 2] += 1;
             } else if is_winner_stream {
-                routing_counters[1 + (stream_nr * 4)] += 1;
+                routing_counters[base + 1] += 1;
             } else {
-                routing_counters[stream_nr * 4] += 1;
+                routing_counters[base] += 1;
             }
             aln[stream_nr].write_record(rec, best_state)?;
         }

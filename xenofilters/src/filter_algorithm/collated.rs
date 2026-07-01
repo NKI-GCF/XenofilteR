@@ -16,19 +16,16 @@ pub(crate) mod reader;
 #[cfg(test)]
 pub(crate) mod tests;
 
-use crate::Error;
-use crate::alignment::{Fragment, FragmentState, MdCigFlags, SimpleRec, stringify_record};
-use crate::alignment::{PreAssessResult, pre_assess_alignments, mate_slot, segment_id};
+use crate::{Error, print_routing_counters};
+use crate::alignment::{Fragment, FragmentState, MdCigFlags, SimpleRec, stringify_record,PreAssessResult, pre_assess_alignments, mate_slot, segment_id, score_state_nw, compute_cancel_slots};
 use crate::aln_stream::AlignmentStream;
 use crate::config::{Config, StripReadSuffix};
 use crate::filter_algorithm::line_by_line::{READ_CT, Scratch, ordering::Decision};
 use crate::penalty::Penalty;
 use crate::region::tabix_query::{TabixBed, TabixVcf};
 use crate::variant::FragEvalVec;
-use noodles::sam::alignment::record::cigar::Cigar;
-use noodles::sam::alignment::record::data::field::Tag;
-use noodles::sam::alignment::record_buf::RecordBuf;
-use noodles::sam::alignment::record_buf::data::field::Value;
+use noodles::sam::alignment::record::{cigar::Cigar, data::field::Tag};
+use noodles::sam::alignment::record_buf::{RecordBuf, data::field::Value};
 use reader::{CollatedReader, canonical_name};
 use smallvec::SmallVec;
 use std::collections::HashMap;
@@ -128,7 +125,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         for frag in drain_b {
             self.write_fragment(frag, None, Some(true))?;
         }
-        self.print_counters();
+        print_routing_counters(&self.routing_counters, "collated");
         Ok(())
     }
 
@@ -241,20 +238,11 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         // 2-way mate cancellation: a mate slot cancels only when BOTH streams
         // agree on the same non-Other kind. Region overlap on either stream
         // forces full scoring of every mate (variant rescue must see it).
-        let cancel_slot = if a_needs_scoring || b_needs_scoring {
-            [false, false]
-        } else {
-            let mk_a = a.mate_kinds();
-            let mk_b = b.mate_kinds();
-            [
-                matches!((mk_a[0], mk_b[0]), (Some(x), Some(y)) if x == y && x != MateKind::Other),
-                matches!((mk_a[1], mk_b[1]), (Some(x), Some(y)) if x == y && x != MateKind::Other),
-            ]
-        };
+        let cancel_slot = compute_cancel_slots(&a, &b);
 
         // Tier 3: full NW scoring.
-        let s1 = self.nw_score_fragment(&a, mcfs1, 0, cancel_slot)?;
-        let s2 = self.nw_score_fragment(&b, mcfs2, 1, cancel_slot)?;
+        let s1 = score_state_nw(&a, mcfs1, self.a.variant_store().as_deref(), &self.penalties, &mut self.scratch, cancel_slot)?;
+        let s2 = score_state_nw(&b, mcfs2, self.b.variant_store().as_deref(), &self.penalties, &mut self.scratch, cancel_slot)?;
         let delta = s1 - s2;
 
         if delta > self.ambiguous_log_threshold {
@@ -307,104 +295,13 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         })
     }
 
-    fn nw_score_fragment(
-        &mut self,
-        state: &FragmentState<R>,
-        mcfs: SmallVec<[MdCigFlags<'_>; READ_CT]>,
-        aln_idx: usize,
-        cancel_slot: [bool; 2],
-    ) -> Result<f64, Error> {
-        let mut segment: SmallVec<[&R; READ_CT]> = SmallVec::new();
-        let mut seg_mcfs: SmallVec<[MdCigFlags; READ_CT]> = SmallVec::new();
-        let mut mcfs_opt: SmallVec<[Option<MdCigFlags>; READ_CT]> =
-            mcfs.into_iter().map(Some).collect();
-
-        // Get the variant store Arc before the loop to avoid repeated borrow.
-        let store = if aln_idx == 0 {
-            self.a.variant_store()
-        } else {
-            self.b.variant_store()
-        };
-        let mut dvnt: FragEvalVec<'_> = SmallVec::new();
-        let mut supplementary_penalty = 0.0;
-
-        for idx in state.order_mates() {
-            let flags = state.flags(idx).ok_or(Error::NoFlagsForRecord { idx })?;
-
-            // Skip every record (primary or supplementary) belonging to a
-            // unanimously-cancelled mate slot: its contribution is provably
-            // identical across all competing streams, so it is excluded from
-            // the NW segment entirely rather than scored and subtracted out.
-            let slot = mate_slot(segment_id(flags));
-            if cancel_slot[slot] {
-                mcfs_opt[idx] = None; // release the borrow; never consumed
-                continue;
-            }
-
-            // FIXME: I think this should be supplementary, not secondary.
-            if flags.is_secondary() {
-                // secondary alignments are not scored, but may be included in the output
-                // after ordering, secondary alignments are always after the primary
-                if flags.is_last_segment() {
-                    break;
-                }
-                continue;
-            }
-            let rec = &state.get_records()[idx];
-
-            if flags.is_unmapped() {
-                dvnt.push(SmallVec::new());
-            } else {
-                if flags.is_supplementary() {
-                    supplementary_penalty += self.penalties.chimeric_junction_penalty;
-                }
-                let tid = rec.ref_seq_id().transpose()?.ok_or(Error::NoRefSeqId)?;
-                let start = rec
-                    .alignment_start()
-                    .transpose()?
-                    .ok_or(Error::NoAlignmentStart)?
-                    .get();
-                let cig_len = mcfs_opt[idx]
-                    .as_ref()
-                    .ok_or(Error::MdCigFlagsMissing { idx })?
-                    .get_cigar()
-                    .len();
-                let end = start + cig_len;
-                let delta_vars = match &store {
-                    Some(s) => s.overlapping_multi(tid, start, end),
-                    None => SmallVec::new(),
-                };
-                dvnt.push(delta_vars);
-            }
-            segment.push(rec);
-            seg_mcfs.push(
-                mcfs_opt[idx]
-                    .take()
-                    .ok_or(Error::MdCigFlagsConsumed { idx })?,
-            );
-        }
-
-        let base_score = Fragment::new(&self.penalties, segment, seg_mcfs)?
-            .score(&mut self.scratch, &mut dvnt)
-            .map_err(|e| Error::FragmentScoringError {
-                aln_idx,
-                message: e.to_string(),
-                state: state
-                    .get_records()
-                    .iter()
-                    .map(stringify_record)
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            })?;
-        Ok(base_score + supplementary_penalty)
-    }
-
     fn emit_discarded(&mut self, mut frag: FragmentState<R>) -> Result<(), Error> {
         let nr = frag.get_nr();
+        let base = nr * 4;
         for r in frag.drain_records() {
             let stream = if nr == 0 { &mut self.a } else { &mut self.b };
             let rec = r.as_record_buf(stream.header())?;
-            self.routing_counters[nr * 4] += 1;
+            self.routing_counters[base] += 1;
             stream.write_record(rec, Some(false))?;
         }
         Ok(())
@@ -417,6 +314,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         best_state: Option<bool>,
     ) -> Result<(), Error> {
         let nr = frag.get_nr();
+        let base = nr * 4;
         let is_ambiguous = best_state.is_none();
         for r in frag.drain_records() {
             let stream = if nr == 0 { &mut self.a } else { &mut self.b };
@@ -431,24 +329,12 @@ impl<R: SimpleRec> CollatedMatcher<R> {
                     }
                     _ => {}
                 }
-                self.routing_counters[1 + (nr * 4)] += 1;
+                self.routing_counters[base + 1] += 1;
             } else {
-                self.routing_counters[2 + (nr * 4)] += 1;
+                self.routing_counters[base + 2] += 1;
             }
             stream.write_record(rec, best_state)?;
         }
         Ok(())
-    }
-
-    pub(crate) fn print_counters(&self) {
-        let len = self.routing_counters.len();
-        for nr in 0..(len / 4) {
-            for (i, set) in ["discard", "out", "ambig"].iter().enumerate() {
-                eprintln!(
-                    "collated[{set}:{i}]: {}",
-                    self.routing_counters[i + (nr * 4)]
-                );
-            }
-        }
     }
 }

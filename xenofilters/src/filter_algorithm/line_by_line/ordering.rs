@@ -38,12 +38,14 @@
 //! candidate rather than one per read segment.
 
 use super::core::{FragmentBuffer, LineByLine, Scratch};
-use crate::alignment::{mate_slot, segment_id, MateClassifiable, MateKind};
-use crate::alignment::{BaseOp, ScoreOpIter};
-use crate::alignment::{FragmentState, MdCigFlags, SimpleRec};
+use crate::alignment::{
+    fragment::score_state_nw, mate_slot, segment_id, BaseOp, FragmentState, MateClassifiable,
+    MateKind, MdCigFlags, ScoreOpIter, SimpleRec,
+};
 use crate::filter_algorithm::line_by_line::{
     detect_chimeric_event, ChimericDecision, MAX_STREAMS, READ_CT,
 };
+use crate::print_routing_counters;
 use crate::variant::StoreTrait;
 use crate::Error;
 use crossbeam_channel::{bounded, Receiver, Sender};
@@ -52,6 +54,183 @@ use smallvec::{smallvec, SmallVec};
 use std::f64::consts::LN_10;
 use std::sync::Arc;
 use std::thread;
+/// Per-stream metrics produced by a single CIGAR+MD scan.
+/// Indexed by `FragmentState::get_nr()`, not by position in `best`.
+struct TournamentMetrics {
+    is_perfect: [bool; MAX_STREAMS],
+    match_bases: [usize; MAX_STREAMS],
+    supp_counts: [usize; MAX_STREAMS],
+    nw_scores: [f64; MAX_STREAMS],
+    vdeltas: [f64; MAX_STREAMS],
+    any_perfect: bool,
+    any_imperfect: bool,
+}
+
+/// Build `TournamentMetrics` with one CIGAR+MD walk per stream.
+///
+/// `score_fn(nr, state, mcfs, cancel_slot) -> Result<(nw_score, variant_delta)>`
+/// is called only for imperfect streams; for perfect ones it is not invoked.
+fn compute_metrics<R: SimpleRec, F>(
+    best: &FragmentBuffer<R>,
+    cancel_slot: [bool; 2],
+    mut score_fn: F,
+) -> Result<TournamentMetrics, Error>
+where
+    F: FnMut(
+        usize,
+        &FragmentState<R>,
+        SmallVec<[MdCigFlags<'_>; READ_CT]>,
+        [bool; 2],
+    ) -> Result<(f64, f64), Error>,
+{
+    let mut m = TournamentMetrics {
+        is_perfect: [false; MAX_STREAMS],
+        match_bases: [0; MAX_STREAMS],
+        supp_counts: [0; MAX_STREAMS],
+        nw_scores: [f64::NEG_INFINITY; MAX_STREAMS],
+        vdeltas: [0.0; MAX_STREAMS],
+        any_perfect: false,
+        any_imperfect: false,
+    };
+
+    for i in 0..best.len() {
+        let nr = best[i].get_nr();
+        let mcfs = best[i].build_mcfs()?;
+
+        let perf = mcfs
+            .iter()
+            .filter(|m| !m.is_supplementary())
+            .all(|m| m.is_perfect());
+        m.is_perfect[nr] = perf;
+        if perf {
+            m.any_perfect = true;
+        } else {
+            m.any_imperfect = true;
+        }
+
+        for mcf in &mcfs {
+            if mcf.is_supplementary() {
+                continue;
+            }
+            for op in ScoreOpIter::new(mcf) {
+                if matches!(op, Ok(BaseOp::Match)) {
+                    m.match_bases[nr] += 1;
+                }
+            }
+            m.supp_counts[nr] += mcf.supp_count();
+        }
+
+        if !perf {
+            let (nw, vd) = score_fn(nr, &best[i], mcfs, cancel_slot)?;
+            m.nw_scores[nr] = nw;
+            m.vdeltas[nr] = vd;
+        }
+    }
+    Ok(m)
+}
+
+/// Apply tier 2 / 2.5 / 3 elimination sweeps.
+///
+/// `discard` is called for each loser index (backward sweep order guaranteed).
+/// Returns early `Some(Decision)` when resolved; `None` means the discard fn
+/// handled all elimination and callers should emit whatever remains in `best`.
+fn apply_tiers<R: SimpleRec, D>(
+    best: &mut FragmentBuffer<R>,
+    m: &TournamentMetrics,
+    threshold: f64,
+    add_tag: bool,
+    mut discard: D,
+) -> Result<Option<Decision>, Error>
+where
+    D: FnMut(&mut FragmentBuffer<R>, usize) -> Result<(), Error>,
+{
+    // Tier 2
+    if m.any_perfect && m.any_imperfect {
+        for i in (0..best.len()).rev() {
+            if !m.is_perfect[best[i].get_nr()] {
+                discard(best, i)?;
+            }
+        }
+        return Ok(add_tag.then_some(if best.len() == 1 {
+            Decision::First
+        } else {
+            Decision::Ambiguous
+        }));
+    }
+    if !m.any_imperfect {
+        return Ok(add_tag.then_some(Decision::Ambiguous));
+    }
+
+    // Tier 2.5
+    let max_mb = best
+        .iter()
+        .map(|s| m.match_bases[s.get_nr()])
+        .max()
+        .unwrap_or(0);
+    let min_sc = best
+        .iter()
+        .filter(|s| m.match_bases[s.get_nr()] == max_mb)
+        .map(|s| m.supp_counts[s.get_nr()])
+        .min()
+        .unwrap_or(0);
+    if best.iter().any(|s| {
+        let nr = s.get_nr();
+        m.match_bases[nr] < max_mb || m.supp_counts[nr] > min_sc
+    }) {
+        for i in (0..best.len()).rev() {
+            let nr = best[i].get_nr();
+            if m.match_bases[nr] < max_mb || m.supp_counts[nr] > min_sc {
+                discard(best, i)?;
+            }
+        }
+        if best.len() == 1 {
+            return Ok(add_tag.then_some(Decision::First));
+        }
+    }
+
+    // Tier 3
+    let max_nw = best
+        .iter()
+        .map(|s| m.nw_scores[s.get_nr()])
+        .fold(f64::NEG_INFINITY, f64::max);
+    for i in (0..best.len()).rev() {
+        if m.nw_scores[best[i].get_nr()] < max_nw - threshold {
+            discard(best, i)?;
+        }
+    }
+
+    if !add_tag {
+        return Ok(None);
+    }
+    if best.len() != 1 {
+        return Ok(Some(Decision::Ambiguous));
+    }
+
+    let winner_nr = best[0].get_nr();
+    let second = m
+        .nw_scores
+        .iter()
+        .enumerate()
+        .filter(|&(nr, &s)| nr != winner_nr && s > f64::NEG_INFINITY)
+        .map(|(_, &s)| s)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let margin = if second.is_finite() {
+        max_nw - second
+    } else {
+        f64::MAX
+    };
+
+    Ok(Some(if margin > threshold {
+        let phred = ((10.0 * margin / LN_10) as u32).min(255) as u8;
+        if m.vdeltas[winner_nr] > 0.0 {
+            Decision::VariantRescued(phred)
+        } else {
+            Decision::PhredConfidence(phred)
+        }
+    } else {
+        Decision::Ambiguous
+    }))
+}
 
 // -- Public decision type ------------------------------------------------------
 
@@ -136,189 +315,44 @@ fn score_bundle(
         return None;
     }
 
-    // -- Tier 1 ------------------------------------------------------------
-    {
-        let has_mapped = best.iter().any(|s| !s.is_all_unmapped());
-        if has_mapped {
-            for i in (0..best.len()).rev() {
-                if best[i].is_all_unmapped() {
-                    best.remove(i);
-                }
-            }
-        }
-        if best.len() == 1 {
-            return None;
-        }
-        if !has_mapped {
-            return ctx.add_decision_tag.then_some(Decision::Ambiguous);
-        }
-    }
-    // ── Pass 0: per-mate classification (cheap, borrow-only) ───────────
-    // Must precede scoring so cancel_slot is known before any NW call.
-    let mut mate_kinds_arr = [[None, None]; MAX_STREAMS];
-    for s in best.iter() {
-        mate_kinds_arr[s.get_nr()] = s.mate_kinds();
-    }
-
-    // Unanimous cancellation: a mate slot cancels only when EVERY stream
-    // still in `best` agrees on the same non-Other kind for that slot.
-    // One disagreeing or absent-but-relevant stream blocks cancellation.
-    let mut cancel_kind: [Option<MateKind>; 2] = [None, None];
-    let mut cancel_ok = [true, true];
-    for s in best.iter() {
-        let mk = mate_kinds_arr[s.get_nr()];
-        for slot in 0..2 {
-            match (mk[slot], cancel_kind[slot]) {
-                (Some(MateKind::Other), _) | (_, _)
-                    if matches!(mk[slot], Some(MateKind::Other)) =>
-                {
-                    cancel_ok[slot] = false;
-                }
-                (Some(k), None) => cancel_kind[slot] = Some(k),
-                (Some(k), Some(prev)) if prev != k => cancel_ok[slot] = false,
-                _ => {}
-            }
-        }
-    }
-    let cancel_slot = [
-        cancel_ok[0] && cancel_kind[0].is_some(),
-        cancel_ok[1] && cancel_kind[1].is_some(),
-    ];
-    // -- Single scan pass (mirrors run_tournament) -------------------------
-    let mut is_perfect = [false; MAX_STREAMS];
-    let mut match_bases = [0usize; MAX_STREAMS];
-    let mut supp_count_arr = [0usize; MAX_STREAMS];
-    let mut nw_scores = [f64::NEG_INFINITY; MAX_STREAMS];
-    let mut vdeltas = [0.0f64; MAX_STREAMS];
-    let mut any_perfect = false;
-    let mut any_imperfect = false;
-
-    for i in 0..best.len() {
-        let nr = best[i].get_nr();
-        let mcfs = best[i].build_mcfs().ok()?;
-
-        let perf = mcfs
-            .iter()
-            .filter(|m| !m.is_supplementary())
-            .all(|m| m.is_perfect());
-        is_perfect[nr] = perf;
-        if perf {
-            any_perfect = true;
-        } else {
-            any_imperfect = true;
-        }
-
-        let mut pmb = 0usize;
-        let mut sc = 0usize;
-        for mcf in &mcfs {
-            if mcf.is_supplementary() {
-                continue;
-            }
-            for op in ScoreOpIter::new(mcf) {
-                if matches!(op, Ok(BaseOp::Match)) {
-                    pmb += 1;
-                }
-            }
-            sc += mcf.supp_count();
-        }
-        match_bases[nr] = pmb;
-        supp_count_arr[nr] = sc;
-
-        if !perf {
-            let store = stores.get(nr).and_then(|s| s.as_deref());
-            nw_scores[nr] =
-                score_candidate_owned(&best[i], mcfs, store, ctx, scratch, cancel_slot).ok()?;
-            vdeltas[nr] = scratch.last_variant_delta;
-        }
-    }
-
-    // -- Tier 2 ------------------------------------------------------------
-    if any_perfect && any_imperfect {
+    // Tier 1
+    let has_mapped = best.iter().any(|s| !s.is_all_unmapped());
+    if has_mapped {
         for i in (0..best.len()).rev() {
-            if !is_perfect[best[i].get_nr()] {
+            if best[i].is_all_unmapped() {
                 best.remove(i);
             }
         }
-        return if best.len() == 1 {
-            ctx.add_decision_tag.then_some(Decision::First)
-        } else {
-            ctx.add_decision_tag.then_some(Decision::Ambiguous)
-        };
     }
-    if !any_imperfect {
-        return ctx.add_decision_tag.then_some(Decision::Ambiguous);
-    }
-
-    // -- Tier 2.5 ----------------------------------------------------------
-    {
-        let max_m = best.iter().map(|s| match_bases[s.get_nr()]).max()?;
-        let min_s = best
-            .iter()
-            .filter(|s| match_bases[s.get_nr()] == max_m)
-            .map(|s| supp_count_arr[s.get_nr()])
-            .min()?;
-        if best.iter().any(|s| {
-            let nr = s.get_nr();
-            match_bases[nr] < max_m || supp_count_arr[nr] > min_s
-        }) {
-            for i in (0..best.len()).rev() {
-                let nr = best[i].get_nr();
-                if match_bases[nr] < max_m || supp_count_arr[nr] > min_s {
-                    best.remove(i);
-                }
-            }
-            if best.len() == 1 {
-                return ctx.add_decision_tag.then_some(Decision::First);
-            }
-        }
-    }
-
-    // -- Tier 3 ------------------------------------------------------------
-    let max_score = best
-        .iter()
-        .map(|s| nw_scores[s.get_nr()])
-        .fold(f64::NEG_INFINITY, f64::max);
-
-    for i in (0..best.len()).rev() {
-        if nw_scores[best[i].get_nr()] < max_score - ctx.ambiguous_log_threshold {
-            best.remove(i);
-        }
-    }
-
-    if best.len() != 1 {
-        return ctx.add_decision_tag.then_some(Decision::Ambiguous);
-    }
-    if !ctx.add_decision_tag {
+    if best.len() == 1 {
         return None;
     }
-
-    let winner_nr = best[0].get_nr();
-    let second_best = nw_scores
-        .iter()
-        .enumerate()
-        .filter(|&(nr, &s)| nr != winner_nr && s > f64::NEG_INFINITY)
-        .map(|(_, &s)| s)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let margin = if second_best.is_finite() {
-        max_score - second_best
-    } else {
-        f64::MAX
-    };
-
-    if margin > ctx.ambiguous_log_threshold {
-        let phred = if margin.is_finite() {
-            ((10.0 * margin / LN_10) as u32).min(255) as u8
-        } else {
-            255
-        };
-        Some(if vdeltas[winner_nr] > 0.0 {
-            Decision::VariantRescued(phred)
-        } else {
-            Decision::PhredConfidence(phred)
-        })
-    } else {
-        Some(Decision::Ambiguous)
+    if !has_mapped {
+        return ctx.add_decision_tag.then_some(Decision::Ambiguous);
     }
+
+    let cancel_slot = compute_cancel_slot_owned(best);
+    let metrics = compute_metrics(best, cancel_slot, |nr, state, mcfs, cs| {
+        {
+            let store = stores.get(nr).and_then(|s| s.as_deref());
+            let score = score_candidate_owned(state, mcfs, store, ctx, scratch, cs).ok()?;
+            Some((score, scratch.last_variant_delta))
+        }
+        .wrap_err()
+    })
+    .ok()?; // wrap_err converts Option<T> closure to Result<T> inside compute_metrics
+
+    apply_tiers(
+        best,
+        &metrics,
+        ctx.ambiguous_log_threshold,
+        ctx.add_decision_tag,
+        |b, i| {
+            b.remove(i);
+            Ok(())
+        },
+    )
+    .ok()?
 }
 
 /// Score one candidate using its owned [`RecordBuf`]s.
@@ -439,8 +473,9 @@ impl<R: SimpleRec> LineByLine<R> {
     pub(crate) fn process_sequential(&mut self) -> Result<(), Error> {
         let mut best: FragmentBuffer<R> = smallvec![];
         let mut i = 0;
+        let aln_len = self.aln.len();
 
-        while i != self.aln.len() {
+        while i != aln_len {
             while let Some(rec) = self.aln[i].next_rec()? {
                 if self.ingest_record(i, rec, &mut best)? {
                     break;
@@ -448,7 +483,7 @@ impl<R: SimpleRec> LineByLine<R> {
             }
             let mut decision = None;
             i += 1;
-            if i == self.aln.len() {
+            if i == aln_len {
                 if best.is_empty() {
                     break;
                 }
@@ -487,9 +522,8 @@ impl<R: SimpleRec> LineByLine<R> {
                 i = 0;
             }
         }
-        while i > 0 {
-            i -= 1;
-            self.print_counters(i);
+        print_routing_counters(&self.routing_counters, "namesorted");
+        for i in 0..aln_len {
             if self.aln[i].next_rec()?.is_some() {
                 return Err(Error::AlignmentStillHasReads { i });
             }
@@ -519,237 +553,35 @@ impl<R: SimpleRec> LineByLine<R> {
             return Ok(None);
         }
 
-        // -- Tier 1: unmapped fast-path ------------------------------------
-        // Scan once to check whether ANY stream is mapped.
-        // If so, unmapped streams are discarded (backward sweep preserves indices).
-        {
-            let has_mapped = best.iter().any(|s| !s.is_all_unmapped());
-            if has_mapped {
-                for i in (0..best.len()).rev() {
-                    if best[i].is_all_unmapped() {
-                        self.discard_at(best, i)?;
-                    }
-                }
-            }
-            // Reached by both "all unmapped" (no discard) and "some unmapped" (discarded).
-            if best.len() == 1 {
-                return Ok(self.add_decision_tag.then_some(Decision::First));
-            }
-            if !has_mapped {
-                // Entire fragment is unmapped in every stream.
-                return Ok(self.add_decision_tag.then_some(Decision::Ambiguous));
-            }
-        }
-
-        // ── Pass 0: per-mate classification (cheap, borrow-only) ───────────
-        // Must precede scoring so cancel_slot is known before any NW call.
-        let mut mate_kinds_arr = [[None, None]; MAX_STREAMS];
-        for s in best.iter() {
-            mate_kinds_arr[s.get_nr()] = s.mate_kinds();
-        }
-
-        // Unanimous cancellation: a mate slot cancels only when EVERY stream
-        // still in `best` agrees on the same non-Other kind for that slot.
-        // One disagreeing or absent-but-relevant stream blocks cancellation.
-        let mut cancel_kind: [Option<MateKind>; 2] = [None, None];
-        let mut cancel_ok = [true, true];
-        for s in best.iter() {
-            let mk = mate_kinds_arr[s.get_nr()];
-            for slot in 0..2 {
-                match (mk[slot], cancel_kind[slot]) {
-                    (Some(MateKind::Other), _) | (_, _)
-                        if matches!(mk[slot], Some(MateKind::Other)) =>
-                    {
-                        cancel_ok[slot] = false;
-                    }
-                    (Some(k), None) => cancel_kind[slot] = Some(k),
-                    (Some(k), Some(prev)) if prev != k => cancel_ok[slot] = false,
-                    _ => {}
-                }
-            }
-        }
-        let cancel_slot = [
-            cancel_ok[0] && cancel_kind[0].is_some(),
-            cancel_ok[1] && cancel_kind[1].is_some(),
-        ];
-
-        // -- Scan pass: MCF build + all tier metrics ----------------------
-        //
-        // Per-stream results are stored indexed by `get_nr()` (the alignment stream
-        // number, 0..MAX_STREAMS).  This survives the backward-discard sweeps that
-        // follow: after removing elements from `best`, surviving fragments are
-        // looked up by `best[i].get_nr()`, not by their position in `best`.
-        //
-        // Stack arrays: N ≤ 32, total ≤ ~800 bytes.
-        let mut is_perfect = [false; MAX_STREAMS];
-        let mut match_bases = [0usize; MAX_STREAMS];
-        let mut supp_count_arr = [0usize; MAX_STREAMS];
-        let mut nw_scores = [f64::NEG_INFINITY; MAX_STREAMS];
-        let mut vdeltas = [0.0f64; MAX_STREAMS];
-        let mut any_perfect = false;
-        let mut any_imperfect = false;
-        for i in 0..best.len() {
-            let nr = best[i].get_nr();
-            let mcfs = best[i].build_mcfs()?;
-
-            // -- Tier 2: perfection check ---------------------------------
-            let perf = mcfs
-                .iter()
-                .filter(|m| !m.is_supplementary())
-                .all(|m| m.is_perfect());
-            is_perfect[nr] = perf;
-            if perf {
-                any_perfect = true;
-            } else {
-                any_imperfect = true;
-            }
-
-            // -- Tier 2.5a: primary exact-match count ---------------------
-            // Walk each primary's ScoreOpIter once.  Supplementary records
-            // list their siblings via SA:Z on the primary; skip them here to
-            // avoid double-counting.
-            let mut pmb = 0usize; // primary_match_bases
-            let mut sc = 0usize; // SA:Z-derived pending supplementary count
-            for mcf in &mcfs {
-                if mcf.is_supplementary() {
-                    continue;
-                }
-                for op in ScoreOpIter::new(mcf) {
-                    if matches!(op, Ok(BaseOp::Match)) {
-                        pmb += 1;
-                    }
-                }
-                sc += mcf.supp_count();
-            }
-            match_bases[nr] = pmb;
-            supp_count_arr[nr] = sc;
-
-            // -- Tier 3: NW score ------------------------------------------
-            // Computed only for imperfect streams; for perfect streams the
-            // MCFs drop here at zero extra cost (the ScoreOpIter walks above
-            // were needed for the match-count check anyway).
-            if !perf {
-                // `mcfs` is moved into `score_candidate`.  The SmallVec and
-                // the MdCigFlags inside it (which borrow `best[i]`) are alive
-                // for the duration of the call, then dropped.
-                nw_scores[nr] = self.score_candidate(&best[i], mcfs, nr, cancel_slot)?;
-                vdeltas[nr] = self.scratch.last_variant_delta;
-            }
-        }
-        // -- End scan pass.  All borrows from elements of `best` have dropped.
-        //    Backward-discard sweeps below may now mutably access `best`. --
-
-        // -- Tier 2: apply perfect / imperfect partition --------------------
-        if any_perfect && any_imperfect {
-            // Discard all imperfect streams; keep only perfect ones.
+        // Tier 1
+        let has_mapped = best.iter().any(|s| !s.is_all_unmapped());
+        if has_mapped {
             for i in (0..best.len()).rev() {
-                if !is_perfect[best[i].get_nr()] {
+                if best[i].is_all_unmapped() {
                     self.discard_at(best, i)?;
                 }
             }
-            // All remaining streams are perfect → indistinguishable here.
-            return Ok(if best.len() == 1 {
-                self.add_decision_tag.then_some(Decision::First)
-            } else {
-                self.add_decision_tag.then_some(Decision::Ambiguous)
-            });
         }
-        if !any_imperfect {
-            // Every stream is perfect: genuinely ambiguous.
+        if best.len() == 1 {
+            return Ok(self.add_decision_tag.then_some(Decision::First));
+        }
+        if !has_mapped {
             return Ok(self.add_decision_tag.then_some(Decision::Ambiguous));
         }
 
-        // -- Tier 2.5: match-count domination ------------------------------
-        // N-way generalisation of pairwise AlignSig::subsumes:
-        //   dominant set = { nr : match_bases[nr] == max  AND
-        //                         supp_count[nr]  == min_among_max }
-        // Any stream NOT in the dominant set is discarded.
-        // If the dominant set is a strict subset of the competing streams,
-        // dominated streams are eliminated here (saves one NW evaluation each).
-        {
-            let max_m = best
-                .iter()
-                .map(|s| match_bases[s.get_nr()])
-                .max()
-                .unwrap_or(0);
-            let min_s = best
-                .iter()
-                .filter(|s| match_bases[s.get_nr()] == max_m)
-                .map(|s| supp_count_arr[s.get_nr()])
-                .min()
-                .unwrap_or(0);
+        let cancel_slot = self.compute_cancel_slot(best);
+        let metrics = compute_metrics(best, cancel_slot, |nr, state, mcfs, cs| {
+            let score = self.score_candidate(state, mcfs, nr, cs)?;
+            Ok((score, self.scratch.last_variant_delta))
+        })?;
 
-            let any_dominated = best.iter().any(|s| {
-                let nr = s.get_nr();
-                match_bases[nr] < max_m || supp_count_arr[nr] > min_s
-            });
-
-            if any_dominated {
-                for i in (0..best.len()).rev() {
-                    let nr = best[i].get_nr();
-                    if match_bases[nr] < max_m || supp_count_arr[nr] > min_s {
-                        self.discard_at(best, i)?;
-                    }
-                }
-                if best.len() == 1 {
-                    return Ok(self.add_decision_tag.then_some(Decision::First));
-                }
-                // Multiple dominant streams: continue to NW for tiebreaking.
-            }
-        }
-
-        // -- Tier 3: NW argmax ----------------------------------------------
-        // All remaining streams are imperfect; NW scores computed in scan pass.
-        // Find the highest score; discard every stream below max − threshold.
-        let max_score = best
-            .iter()
-            .map(|s| nw_scores[s.get_nr()])
-            .fold(f64::NEG_INFINITY, f64::max);
-
-        for i in (0..best.len()).rev() {
-            if nw_scores[best[i].get_nr()] < max_score - self.ambiguous_log_threshold {
-                self.discard_at(best, i)?;
-            }
-        }
-
-        // -- Decision tag ---------------------------------------------------
-        if !self.add_decision_tag {
-            return Ok(None);
-        }
-        if best.len() != 1 {
-            return Ok(Some(Decision::Ambiguous));
-        }
-        let winner_nr = best[0].get_nr();
-
-        // Margin = winner's score minus the next-best NW score seen in this
-        // tournament round (including eliminated streams).
-        let second_best = nw_scores
-            .iter()
-            .enumerate()
-            .filter(|&(nr, &s)| nr != winner_nr && s > f64::NEG_INFINITY)
-            .map(|(_, &s)| s)
-            .fold(f64::NEG_INFINITY, f64::max);
-
-        let margin = if second_best.is_finite() {
-            max_score - second_best
-        } else {
-            f64::MAX // winner was the only imperfect stream
-        };
-
-        Ok(if margin > self.ambiguous_log_threshold {
-            let phred = if margin.is_finite() {
-                ((10.0 * margin / std::f64::consts::LN_10) as u32).min(255) as u8
-            } else {
-                255
-            };
-            Some(if vdeltas[winner_nr] > 0.0 {
-                Decision::VariantRescued(phred)
-            } else {
-                Decision::PhredConfidence(phred)
-            })
-        } else {
-            Some(Decision::Ambiguous)
-        })
+        apply_tiers(
+            best,
+            &metrics,
+            self.ambiguous_log_threshold,
+            self.add_decision_tag,
+            |b, i| self.discard_at(b, i),
+        )
     }
 
     /// Emit stream at position `idx` in `best` as filtered output and remove it.
@@ -905,8 +737,9 @@ impl LineByLine<RecordBuf> {
     ) -> Result<(), Error> {
         let mut best: FragmentBuffer<RecordBuf> = smallvec![];
         let mut i = 0;
+        let aln_len = self.aln.len();
 
-        while i != self.aln.len() {
+        while i != aln_len {
             while let Some(rec) = self.aln[i].next_rec()? {
                 if self.ingest_record(i, rec, &mut best)? {
                     break;
@@ -914,7 +747,7 @@ impl LineByLine<RecordBuf> {
             }
 
             i += 1;
-            if i == self.aln.len() {
+            if i == aln_len {
                 if best.is_empty() {
                     break;
                 }
@@ -984,12 +817,10 @@ impl LineByLine<RecordBuf> {
             self.write_scored(sf)?;
         }
 
-        let mut j = self.aln.len();
-        while j > 0 {
-            j -= 1;
-            self.print_counters(j);
-            if self.aln[j].next_rec()?.is_some() {
-                return Err(Error::AlignmentStillHasReadsAfterParallelProcessing { j });
+        print_routing_counters(&self.routing_counters, "collated_parallel");
+        for i in 0..aln_len {
+            if self.aln[i].next_rec()?.is_some() {
+                return Err(Error::AlignmentStillHasReadsAfterParallelProcessing { j: i });
             }
         }
         Ok(())

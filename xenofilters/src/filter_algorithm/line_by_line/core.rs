@@ -4,10 +4,10 @@
 //   - LineByLine::new() reads score_threads from config
 //   - process() dispatcher added (sequential vs parallel)
 
-use crate::Error;
 use crate::alignment::FragmentState;
 use crate::alignment::SimpleRec;
 use crate::aln_stream::AlignmentStream;
+use crate::Error;
 use crate::{
     config::{Config, StripReadSuffix},
     penalty::Penalty,
@@ -19,6 +19,14 @@ pub(crate) const READ_CT: usize = 8;
 pub(crate) const VNT_LEN: usize = 16;
 
 pub(crate) const MAX_STREAMS: usize = 32;
+
+/// Counter layout per stream — stride 4:
+///   nr*4+0  discard   (includes unmapped-discarded when --discard-unmapped)
+///   nr*4+1  out/winner
+///   nr*4+2  ambiguous (includes unmapped-ambiguous when configured)
+///   nr*4+3  chimeric  (XC:Z: tagged, both streams count)
+pub(crate) const COUNTER_STRIDE: usize = 4;
+pub(crate) const COUNTER_LEN: usize = MAX_STREAMS * COUNTER_STRIDE;
 
 pub(crate) type RecordEvalFn = fn(&dyn Record) -> Result<bool, Error>;
 pub(crate) type FragmentBuffer<R> = SmallVec<[FragmentState<R>; 2]>;

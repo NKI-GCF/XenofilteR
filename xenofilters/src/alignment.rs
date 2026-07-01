@@ -1,4 +1,4 @@
-mod fragment;
+pub(crate) mod fragment;
 mod fragment_state;
 pub(crate) mod mate_kind;
 mod md_cig_flags;

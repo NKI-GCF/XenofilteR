@@ -1,7 +1,9 @@
 use crate::alignment::mate_kind::{mate_slot, segment_id, MateClassifiable, MateKind};
 use crate::alignment::MdCigFlags;
 use crate::alignment::SimpleRec;
-use crate::filter_algorithm::line_by_line::READ_CT;
+use crate::filter_algorithm::line_by_line::{Scratch, READ_CT};
+use crate::penalty::Penalty;
+use crate::variant::{FragEvalVec, StoreTrait};
 use crate::Error;
 use noodles::sam::alignment::record::Cigar;
 use noodles::sam::alignment::record::Flags;
@@ -130,6 +132,104 @@ impl<R: SimpleRec> FragmentState<R> {
             (false, false) => None,
         };
         Ok((mcfs1, mcfs2))
+    }
+    /// Single-stream NW scoring loop, shared by LineByLine, Collated, and HashLookup.
+    ///
+    /// Parameters match the calling convention previously duplicated in
+    /// `score_candidate`, `score_candidate_owned`, and `nw_score_fragment`.
+    ///
+    /// Preconditions:
+    /// - `mcfs` ordered identically to `self.order_mates()` output for
+    ///   primary/supplementary records; unmapped records must be absent from
+    ///   `mcfs` (MdCigFlags::try_from_record rejects them).
+    /// - `cancel_slot[i]` true iff mate slot i's NW contribution is provably
+    ///   equal across all competing streams (same read, same quality string).
+    pub(crate) fn score_state_nw(
+        &self,
+        mcfs: SmallVec<[MdCigFlags<'_>; READ_CT]>,
+        store: Option<&dyn StoreTrait>,
+        penalties: &Penalty,
+        scratch: &mut Scratch,
+        cancel_slot: [bool; 2],
+    ) -> Result<f64, Error> {
+        let mut segment: SmallVec<[&R; READ_CT]> = SmallVec::new();
+        let mut seg_mcfs: SmallVec<[MdCigFlags<'_>; READ_CT]> = SmallVec::new();
+        let mut mcfs_opt: SmallVec<[Option<MdCigFlags<'_>>; READ_CT]> =
+            mcfs.into_iter().map(Some).collect();
+        let mut dvnt: FragEvalVec<'_> = SmallVec::new();
+        let mut supp_penalty = 0.0f64;
+        let has_variants = store.is_some();
+
+        for idx in self.order_mates() {
+            let flags = self.flags(idx).ok_or(Error::NoFlagsForRecord { idx })?;
+            if flags.is_secondary() {
+                mcfs_opt[idx] = None;
+                continue;
+            }
+            let slot = mate_slot(segment_id(flags));
+            if cancel_slot[slot] {
+                mcfs_opt[idx] = None;
+                continue;
+            }
+            if flags.is_supplementary() {
+                supp_penalty += penalties.chimeric_junction_penalty;
+            }
+            let rec = &self.get_records()[idx];
+            if flags.is_unmapped() {
+                dvnt.push(SmallVec::new());
+                // Unmapped records have no MdCigFlags; skip NW but preserve dvnt alignment.
+                mcfs_opt[idx] = None;
+                continue;
+            }
+            if has_variants {
+                let tid = rec
+                    .ref_seq_id()
+                    .transpose()?
+                    .ok_or(Error::MappedRecordNoReferenceSequenceId)?;
+                let start = rec
+                    .alignment_start()
+                    .transpose()?
+                    .ok_or(Error::MappedRecordNoAlignmentStart)?
+                    .get();
+                let cig_len = mcfs_opt[idx]
+                    .as_ref()
+                    .ok_or(Error::MdCigFlagsConsumed { idx })?
+                    .get_cigar()
+                    .len();
+                dvnt.push(
+                    store
+                        .unwrap()
+                        .overlapping_multi(tid, start, start + cig_len),
+                );
+            } else {
+                dvnt.push(SmallVec::new());
+            }
+            segment.push(rec);
+            seg_mcfs.push(
+                mcfs_opt[idx]
+                    .take()
+                    .ok_or(Error::MdCigFlagsAlreadyConsumed { idx })?,
+            );
+        }
+
+        if segment.is_empty() {
+            return Ok(supp_penalty);
+        }
+        let base = Fragment::new(penalties, segment, seg_mcfs)?
+            .score(scratch, &mut dvnt)
+            .map_err(|e| Error::NeedlemanWunschError(e.to_string()))?;
+        Ok(base + supp_penalty)
+    }
+
+    fn compute_cancel_slots(&self, b: &FragmentState<R>) -> [bool; 2] {
+        if let (Some(mk_a), Some(mk_b)) = (self.mate_kinds(), b.mate_kinds()) {
+            [
+                matches!((mk_a[0], mk_b[0]), (Some(x), Some(y)) if x == y && x != MateKind::Other),
+                matches!((mk_a[1], mk_b[1]), (Some(x), Some(y)) if x == y && x != MateKind::Other),
+            ]
+        } else {
+            [false, false]
+        }
     }
 }
 
