@@ -3,7 +3,7 @@ mod io;
 mod merged_output;
 
 use crate::Error;
-pub(crate) use format::BamFormat;
+pub(crate) use format::AlnFormat;
 pub(crate) use io::{BamOutput, MergedOutput, out_from_file, path_unicode_ok};
 pub(crate) use merged_output::{SUFFIX_AMBIGUOUS, SUFFIX_FILTERED, expand_header, rewrite_rg};
 use noodles::sam::Header;

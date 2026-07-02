@@ -1,7 +1,7 @@
 use crate::Error;
 use crate::filter_algorithm::line_by_line::MAX_STREAMS;
 use crate::{
-    bam::BamFormat,
+    bam::AlnFormat,
     penalty::{MAX_Q, Penalty},
 };
 use clap::{Parser, ValueEnum};
@@ -71,9 +71,25 @@ pub(crate) struct Config {
     #[arg(short, long, num_args = 0..ARG_MAX)]
     pub(crate) ambiguous_output: Vec<PathBuf>,
 
+    /// Input format. Must match actual file content.
+    #[arg(long, default_value = "bam")]
+    pub(crate) input_format: AlnFormat,
+
     /// Output format of stdout
     #[arg(short = 'O', long, default_value = "sam")]
-    pub(crate) stdout_format: BamFormat,
+    pub(crate) stdout_format: AlnFormat,
+
+    /// Reference FASTA for CRAM decoding (required when --input-format cram).
+    #[arg(long)]
+    pub(crate) reference: Option<PathBuf>,
+
+    /// Suppress per-fragment progress output to stderr.
+    #[arg(long)]
+    pub(crate) quiet: bool,
+
+    /// Write JSON summary statistics to this path (MultiQC-compatible).
+    #[arg(long)]
+    pub(crate) stats_output: Option<PathBuf>,
 
     /// Number of bgzf (de)compression threads per reader/writer.
     #[arg(short = 't', long, default_value = "4")]
@@ -271,6 +287,24 @@ impl Config {
                 pairs = ?self.parsed_chimeric_pairs,
                 "Chimeric pair detection enabled"
             );
+        }
+
+        if self.input_format == AlnFormat::Cram && self.reference.is_none() {
+            return Err(Error::CramRequiresReference);
+        }
+        if self.input_format == AlnFormat::Cram
+            && self.matching_algorithm != MatchingAlgorithm::Namesorted
+        {
+            return Err(Error::CramNamesortedOnly);
+        }
+        // Stdin: path "-" implies SAM unless explicitly overridden.
+        if self.alignment.iter().any(|p| p == "-") {
+            if self.alignment.iter().filter(|p| p.as_str() == "-").count() > 1 {
+                return Err(Error::MultipleStdinStreams);
+            }
+            if self.matching_algorithm != MatchingAlgorithm::Namesorted {
+                return Err(Error::StdinRequiresNamesorted);
+            }
         }
 
         // Reject multi-threaded modes for non-namesorted algorithms.

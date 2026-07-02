@@ -14,6 +14,7 @@ use crate::{
 };
 use noodles::sam::alignment::Record;
 use smallvec::SmallVec;
+use crate::progress::ProgressReporter;
 
 pub(crate) const READ_CT: usize = 8;
 pub(crate) const VNT_LEN: usize = 16;
@@ -104,7 +105,7 @@ impl Scratch {
 
 pub(crate) struct LineByLine<R> {
     pub(super) aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
-    pub(super) routing_counters: SmallVec<[u64; 8]>,
+    pub(crate) routing_counters: SmallVec<[u64; 8]>,
     pub(super) is_secondary_skipped: RecordEvalFn,
     pub(super) is_unmapped_skipped: RecordEvalFn,
     pub(super) is_new_qname: fn(&FragmentBuffer<R>, &[u8]) -> Option<bool>,
@@ -123,6 +124,7 @@ pub(crate) struct LineByLine<R> {
     /// Per-stream labels used for the `XC:Z:` SAM tag.
     /// `chimeric_label(i)` returns `stream_labels[i]` or `"stream_N"`.
     pub(super) stream_labels: Vec<String>,
+    pub(super) progress: Option<ProgressReporter>,
 }
 
 impl<R: SimpleRec> LineByLine<R> {
@@ -186,6 +188,10 @@ impl<R: SimpleRec> LineByLine<R> {
                  Output order is nondeterministic."
             );
         }
+        let progress = match config.quiet {
+            true => None,
+            false => Some(ProgressReporter::new()),
+        };
 
         Ok(LineByLine {
             aln,
@@ -200,6 +206,7 @@ impl<R: SimpleRec> LineByLine<R> {
             chimeric_pairs: config.parsed_chimeric_pairs.clone(),
             stream_labels: config.stream_labels.clone(),
             score_threads,
+            progress,
         })
     }
     pub(super) fn chimeric_label(&self, stream: usize) -> String {

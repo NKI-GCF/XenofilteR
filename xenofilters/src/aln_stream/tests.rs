@@ -1,6 +1,6 @@
 use crate::Error;
 use crate::aln_stream::BamStreamReader;
-use crate::bam::{BamFormat, OutputMode};
+use crate::bam::{AlnFormat, OutputMode};
 use crate::config::{Config, StripReadSuffix};
 use crate::tests::create_record;
 use crate::variant::StoreTrait;
@@ -298,7 +298,7 @@ fn test_aln_stream_fetch_by_virtual_offset() -> Result<(), Error> {
 fn test_aln_stream_new_mismatch_strip_suffix_true_instead_of_false() {
     let mut config = Config {
         alignment: vec!["tests/data/test_input_1_a.bam".to_string()],
-        stdout_format: BamFormat::Sam,
+        stdout_format: AlnFormat::Sam,
         strip_read_suffix: StripReadSuffix::True,
         ..Default::default()
     };

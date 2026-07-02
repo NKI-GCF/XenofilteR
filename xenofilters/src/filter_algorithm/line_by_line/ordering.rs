@@ -547,6 +547,7 @@ impl<R: SimpleRec> LineByLine<R> {
                 }
                 assert!(!best.is_empty());
                 self.emit_winners(&mut best, decision)?;
+                if let Some(ref mut p) = self.progress { p.tick(); }
                 i = 0;
             }
         }
@@ -556,6 +557,7 @@ impl<R: SimpleRec> LineByLine<R> {
                 return Err(Error::AlignmentStillHasReads { i });
             }
         }
+        self.progress.as_ref().map(|p| p.finish());
         Ok(())
     }
 
@@ -854,6 +856,7 @@ impl LineByLine<RecordBuf> {
         drop(work_tx);
         for sf in &result_rx {
             self.write_scored(sf)?;
+            if let Some(ref mut p) = self.progress { p.tick(); }
         }
 
         print_routing_counters(&self.routing_counters, "collated_parallel");
@@ -862,6 +865,7 @@ impl LineByLine<RecordBuf> {
                 return Err(Error::AlignmentStillHasReadsAfterParallelProcessing { j: i });
             }
         }
+        self.progress.as_ref().map(|p| p.finish());
         Ok(())
     }
 

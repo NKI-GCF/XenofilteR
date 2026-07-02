@@ -1,3 +1,6 @@
+mod cram;
+mod sam_stdin;
+
 use crate::Error;
 use crate::alignment::SimpleRec;
 use crate::bam::{OutputMode, out_from_file, path_unicode_ok};
@@ -11,11 +14,15 @@ use noodles::bgzf::VirtualPosition;
 use noodles::bgzf::io::Reader as BgzfReader;
 use noodles::sam::Header;
 use noodles::sam::alignment::record_buf::RecordBuf;
+use noodles::bgzf::io::MultithreadedReader;
+use std::num::NonZeroUsize;
 use std::fs::File;
 use std::io::{Read as ioRead, Seek as ioSeek};
-use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+pub(crate) use cram::CramStream;
+pub(crate) use sam_stdin::SamStdinStream;
 
 pub(crate) trait AlignmentStream<R: SimpleRec> {
     fn next_qname(&self) -> &[u8];
@@ -71,10 +78,35 @@ where
     R: SimpleRec + FromBamRecord,
 {
     pub(crate) fn new(opt: &mut Config, i: usize) -> Result<Self, Error> {
-        let bam_str = opt.alignment[i].as_str();
-        let file = File::open(bam_str)?;
+        let path = opt.alignment[i].as_str();
+        let file = File::open(path)?;
+        /* FIXME: Multithreaded reading is not yet working. Errors:
+         * expected struct `noodles::noodles_bam::io::Reader<noodles::noodles_bgzf::io::Reader<File>>`
+         * found struct `noodles::noodles_bam::io::Reader<noodles::noodles_bgzf::io::Reader<MultithreadedReader<File>>>
+         *
+         * If I wripe File in B in MultithreadedReader, I get a different error about trait bounds
+         * not being satisfied these on noodles structs:
+         * pub struct Reader<R> doesn't satisfy `_: BamStreamReader`
+         * pub struct MultithreadedReader<R> doesn't satisfy `MultithreadedReader<File>: std::io::Seek`
+         * seek is required for the hash lookup algorithm only.
+
+        let threads = NonZeroUsize::new(opt.threads).unwrap_or(NonZeroUsize::MIN);
+
+        // -- BGZF reader with configurable worker count --------------------
+        // NEEDS VERIFICATION: bgzf::io::reader::Builder::set_worker_count
+        // availability in noodles 0.111.0. Falls back to single-threaded if absent.
+        let bgzf = MultithreadedReader::with_worker_count(threads,
+            if path == "-" {
+                // Stdin: boxed to unify types.
+                // SAM stdin is handled in the AlnFormat::Sam branch below.
+                return Err(Error::StdinRequiresSamFormat);
+            } else {
+                std::fs::File::open(path)?
+            });
+        let mut bam = BamReader::new(bgzf);
+        */
         let mut bam = BamReader::new(file);
-        let header = bam.read_header()?;
+        let header  = bam.read_header()?;
 
         let mut header_reader = bam.header_reader();
         header_reader.read_magic_number()?;
@@ -103,7 +135,7 @@ where
             Some(Err(e)) => return Err(e.into()),
             None => {
                 return Err(Error::BamHasNoRecords {
-                    bam_str: bam_str.to_string(),
+                    bam_str: path.to_string(),
                 });
             }
         };

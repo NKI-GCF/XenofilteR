@@ -17,6 +17,9 @@ pub(crate) enum Error {
     #[error(transparent)]
     Anyhow(#[from] anyhow::Error),
 
+    #[error(transparent)]
+    SerdeJson(#[from] serde_json::Error),
+
     // --- BAM & Stream Records Management ---
     #[error("{bam_str} has no records")]
     BamHasNoRecords { bam_str: String },
@@ -45,6 +48,9 @@ pub(crate) enum Error {
     #[error("No BAM reader available for seek")]
     NoBamReaderForSeek,
 
+    #[error("Missing reference sequence for file {0}")]
+    MissingReference(String),
+
     #[error("No record at virtual offset {virtual_offset}")]
     NoRecordAtVirtualOffset { virtual_offset: u64 },
 
@@ -57,6 +63,18 @@ pub(crate) enum Error {
 
     #[error("BAM read error: {0}")]
     BamReadError(String),
+
+    #[error("CRAM input requires --reference <fasta>")]
+    CramRequiresReference,
+
+    #[error("CRAM input is only supported with --matching-algorithm namesorted")]
+    CramNamesortedOnly,
+
+    #[error("stdin requires --input-format sam")]
+    StdinRequiresSamFormat,
+
+    #[error("SAM file input (non-stdin) not yet implemented; use BAM or CRAM")]
+    SamFileNotYetSupported,
 
     #[error("RecordBuf conversion: {0}")]
     RecordBufConversion(String),
@@ -331,6 +349,12 @@ pub(crate) enum Error {
 
     #[error("--single-alignment-mode is only supported with --matching-algorithm namesorted.")]
     SingleStreamRequiresNamesorted,
+
+    #[error("at most one stream may be read from stdin")]
+    MultipleStdinStreams,
+
+    #[error("stdin is only supported with --matching-algorithm namesorted")]
+    StdinRequiresNamesorted,
 
     #[error(
         "--single-alignment-mode can only be used with exactly 1 alignment stream (got {count})."

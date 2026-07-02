@@ -13,6 +13,8 @@ mod filter_algorithm;
 mod penalty;
 mod region;
 mod variant;
+mod progress;
+mod stats;
 
 use aln_stream::{AlignmentStream, AlnStream};
 use clap::Parser;
@@ -22,6 +24,7 @@ pub(crate) use filter_algorithm::line_by_line::print_routing_counters;
 use filter_algorithm::{
     collated::CollatedMatcher, hash_lookup::HashLookup, line_by_line::LineByLine,
 };
+use crate::bam::AlnFormat;
 use noodles::bam::record::Record as BamRecord;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::Header;
@@ -30,6 +33,7 @@ use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
 use std::path::Path;
 use tracing_subscriber::{fmt, EnvFilter};
+use crate::aln_stream::{CramStream, SamStdinStream};
 
 fn get_log_level(verbose_count: u8) -> &'static str {
     match verbose_count {
@@ -68,41 +72,47 @@ fn main() -> Result<(), Error> {
 // ---------------------------------------------------------------------------
 // Name-sorted — streaming merge, sequential or parallel
 // ---------------------------------------------------------------------------
-
 fn run_namesorted(mut config: Config) -> Result<(), Error> {
+    let stats_path  = config.stats_output.clone();
+    let stream_labels = config.stream_labels.clone();
     let score_threads = config.score_threads;
-    let logical_loops = if config.alignment.len() == 1 {
-        2
-    } else {
-        config.alignment.len()
-    };
 
+    // Stream construction: dispatch on input_format and path "-"
+    let logical_loops = if config.alignment.len() == 1 { 2 } else { config.alignment.len() };
+
+    let mut aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> = smallvec![];
+    for i in 0..logical_loops {
+        let idx  = if config.alignment.len() == 1 { 0 } else { i };
+        let path = config.alignment[idx].as_str();
+        let stream: Box<dyn AlignmentStream<RecordBuf> + Unpin> = match config.input_format {
+            AlnFormat::Cram => Box::new(CramStream::new(
+                Path::new(path),
+                config.reference.as_deref().ok_or(Error::MissingReference(path.to_string()))?
+            )?),
+            AlnFormat::Sam if path == "-" => {
+                Box::new(SamStdinStream::new(&mut config, i)?)
+            }
+            AlnFormat::Sam => {
+                // File-based SAM: wrap in AlnStream with SAM reader.
+                // TODO: add SamFileStream; for now error.
+                return Err(Error::SamFileNotYetSupported);
+            }
+            AlnFormat::Bam => Box::new(AlnStream::<RecordBuf>::new(&mut config, idx)?),
+        };
+        tracing::debug!(stream = i, path = %config.alignment[idx], "Opening stream");
+        aln.push(stream);
+        if aln[i].next_qname() != aln[0].next_qname() {
+            return Err(Error::InputAlignmentsMustHaveSameReadOrder);
+        }
+    }
     if score_threads > 1 {
-        let mut aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> = smallvec![];
-        for i in 0..logical_loops {
-            let idx = if config.alignment.len() == 1 { 0 } else { i };
-            tracing::debug!(stream = i, path = %config.alignment[idx], "Opening stream");
-            aln.push(Box::new(AlnStream::<RecordBuf>::new(&mut config, idx)?));
-            if aln[i].next_qname() != aln[0].next_qname() {
-                return Err(Error::InputAlignmentsMustHaveSameReadOrder);
-            }
+        let mut lbl = LineByLine::new(config, aln)?;
+        let result = lbl.process_parallel();
+        if let Some(p) = stats_path {
+            stats::write_stats(&p, &lbl.routing_counters, logical_loops, &stream_labels, "sample")?;
         }
-        tracing::info!(
-            streams = logical_loops,
-            score_threads,
-            "Starting parallel pipeline"
-        );
-        LineByLine::new(config, aln)?.process_parallel()
+        result
     } else {
-        let mut aln: SmallVec<[Box<dyn AlignmentStream<BamRecord>>; 2]> = smallvec![];
-        for i in 0..logical_loops {
-            let idx = if config.alignment.len() == 1 { 0 } else { i };
-            tracing::debug!(stream = i, path = %config.alignment[idx], "Opening stream");
-            aln.push(Box::new(AlnStream::<BamRecord>::new(&mut config, idx)?));
-            if aln[i].next_qname() != aln[0].next_qname() {
-                return Err(Error::InputAlignmentsMustHaveSameReadOrder);
-            }
-        }
         tracing::info!(streams = logical_loops, "Starting sequential pipeline");
         LineByLine::new(config, aln)?.process_sequential()
     }
