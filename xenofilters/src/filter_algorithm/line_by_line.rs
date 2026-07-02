@@ -1,6 +1,7 @@
 pub(super) mod chimeric;
 pub(super) mod core;
 pub(super) mod io;
+pub(super) mod parallel;
 
 #[cfg(not(test))]
 pub(super) mod ordering;

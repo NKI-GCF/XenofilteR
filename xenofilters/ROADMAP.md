@@ -81,6 +81,84 @@ Items marked ✓ are complete; ○ are planned; ◑ are in progress.
 
 ---
 
+## v0.5 — Internal Architecture
+
+### ScoreCtx: shared scoring context struct
+
+**Goal:** Eliminate `penalties`, `scratch`, `add_decision_tag`, and
+`ambiguous_log_threshold` being independently defined in `CollatedMatcher`,
+`HashLookup`, and `LineByLine`.
+
+**Prerequisite:** Benchmark all three backends on a representative PDX dataset
+before and after, using `criterion` or wall-clock on ≥10 M fragment inputs.
+The layout change moves `Scratch` (containing `SmallVec` NW buffers) behind
+a struct boundary, which may affect cache line alignment and compiler inlining.
+
+**Implementation steps:**
+
+1. Define in `src/filter_algorithm/shared.rs`:
+```rust
+   pub(crate) struct ScoreCtx {
+       pub(crate) penalties:               Penalty,
+       pub(crate) scratch:                 Scratch,
+       pub(crate) add_decision_tag:        bool,
+       pub(crate) ambiguous_log_threshold: f64,
+   }
+```
+2. Replace fields in all three backends with `ctx: ScoreCtx`.
+3. Update all call sites (`score_candidate`, `nw_score_fragment`, etc.)
+   to pass `&mut self.ctx`.
+4. Validate: `cargo test --all` must pass; benchmark must show < 2% regression.
+
+**Deferred because:** Field access through an extra struct indirection (`self.ctx.scratch`)
+may inhibit `#[inline]` propagation across module boundaries in debug builds and
+could affect LTO decisions in release. Must measure before committing.
+
+---
+
+### SimpleRec → correctly designed record abstraction
+
+**Goal:** Consolidate the ad-hoc `quality_at` / `ref_seq_id` / `as_record_buf`
+implementations across `bam::Record` and `RecordBuf`.
+
+**Current blocker:** The proposed `as_record_buf(&self) -> &[u8]` in the review
+notes is incorrect. The correct signature requires a `&Header` parameter and
+returns `Result<RecordBuf, io::Error>`. The existing `SimpleRec` trait already
+captures this correctly; what is missing is a home file, not a redesign.
+
+**Implementation steps:**
+
+1. Move `SimpleRec` trait + two `impl` blocks to `src/alignment/fragment/record.rs`
+   (already done in this PR as a simple refactor).
+2. Evaluate whether `CramStream` records require a third `impl` once CRAM support
+   lands. If so, extend then; do not pre-abstract.
+
+**Deferred because:** CRAM support is in-flight; premature abstraction before the
+third implementor exists risks designing the wrong interface.
+
+---
+
+### Error hierarchy
+
+**Goal:** Categorize the 40+ flat error variants for navigability.
+
+**Rejected approach:** Sub-enums with `From` conversions — adds per-`?` overhead
+in tight loops.
+
+**Accepted approach (deferred):** Use `#[non_exhaustive]` category marker enums
+that are NOT used as wrapping variants, only for `match` grouping in error
+display logic. Implement a `Display` on the flat `Error` that prefixes the
+category: `"[bam] {msg}"`. Zero runtime cost; improves `--verbose` output
+readability.
+
+**Implementation steps:**
+1. Add `fn category(&self) -> &'static str` to `Error` via a match arm per
+   variant.
+2. Update `Display` / `Debug` formatting to include the category prefix.
+3. No `From` conversions; no new enum variants.
+
+---
+
 ## v1.0 — Production
 
 - ○ **Publish to crates.io** — once variant rescue and the test suite are complete.

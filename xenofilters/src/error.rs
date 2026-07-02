@@ -7,10 +7,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Error)]
 pub(crate) enum Error {
-    // --- Existing Core Errors ---
-    #[error("Op inconsistency: cigar: ({0:?}) and md: ({1:?})")]
-    MdCigMis(Option<Op>, Option<u8>),
-
     #[error(transparent)]
     MdError(#[from] std::io::Error),
 
@@ -20,7 +16,9 @@ pub(crate) enum Error {
     #[error(transparent)]
     SerdeJson(#[from] serde_json::Error),
 
-    // --- BAM & Stream Records Management ---
+// ---------------------------------------------------------------------------
+// BAM / SAM / BGZF I/O
+// ---------------------------------------------------------------------------
     #[error("{bam_str} has no records")]
     BamHasNoRecords { bam_str: String },
 
@@ -64,15 +62,6 @@ pub(crate) enum Error {
     #[error("BAM read error: {0}")]
     BamReadError(String),
 
-    #[error("CRAM input requires --reference <fasta>")]
-    CramRequiresReference,
-
-    #[error("CRAM input is only supported with --matching-algorithm namesorted")]
-    CramNamesortedOnly,
-
-    #[error("stdin requires --input-format sam")]
-    StdinRequiresSamFormat,
-
     #[error("SAM file input (non-stdin) not yet implemented; use BAM or CRAM")]
     SamFileNotYetSupported,
 
@@ -91,12 +80,23 @@ pub(crate) enum Error {
     #[error("No stream {nr}")]
     NoStream { nr: usize },
 
-    // --- CLI & Configuration Argument Handling ---
+// ---------------------------------------------------------------------------
+// CLI / Configuration
+// ---------------------------------------------------------------------------
     #[error("--chimeric-pairs: '{index}' is not a valid stream index")]
     InvalidChimericPairsIndex { index: String },
 
     #[error("--chimeric-pairs: expected format 'A:B' (e.g. '0:1'), got '{raw}'")]
     InvalidChimericPairsFormat { raw: String },
+
+    #[error("CRAM input requires --reference <fasta>")]
+    CramRequiresReference,
+
+    #[error("CRAM input is only supported with --matching-algorithm namesorted")]
+    CramNamesortedOnly,
+
+    #[error("stdin requires --input-format sam")]
+    StdinRequiresSamFormat,
 
     #[error("Gap open/mismatch penalties must be positive")]
     InvalidPenalties,
@@ -150,7 +150,10 @@ pub(crate) enum Error {
         source: std::io::Error,
     },
 
-    // --- Format Parsing & Genomics Metadata Validation ---
+
+// ---------------------------------------------------------------------------
+// Region / BED / Tabix
+// ---------------------------------------------------------------------------
     #[error("Invalid region {0}")]
     InvalidRegion(String),
 
@@ -163,6 +166,9 @@ pub(crate) enum Error {
     #[error("VCF header read error: {0}")]
     VcfHeaderReadError(String),
 
+// ---------------------------------------------------------------------------
+// Variant / VCF / BCF
+// ---------------------------------------------------------------------------
     #[error("Multiple ALT alleles not supported for population variants")]
     MultipleAltAllelesNotSupported,
 
@@ -207,6 +213,12 @@ pub(crate) enum Error {
 
     #[error("Invalid position {0}")]
     InvalidPosition(usize),
+
+// ---------------------------------------------------------------------------
+// CIGAR / MD alignment parsing
+// ---------------------------------------------------------------------------
+    #[error("Op inconsistency: cigar: ({0:?}) and md: ({1:?})")]
+    MdCigMis(Option<Op>, Option<u8>),
 
     #[error("Unknown CIGAR op {0}")]
     UnknownCigarOp(u32),
@@ -275,7 +287,9 @@ pub(crate) enum Error {
     #[error("alignment {i} still has reads")]
     AlignmentStillHasReads { i: usize },
 
-    // --- Scoring Workers & Concurrency ---
+// ---------------------------------------------------------------------------
+// Concurrency / Worker channels
+// ---------------------------------------------------------------------------
     #[error("Missing driving records for full scoring")]
     MissingDrivingRecords,
 

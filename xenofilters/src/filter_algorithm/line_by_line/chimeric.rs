@@ -61,7 +61,9 @@ use noodles::sam::alignment::record::{
     data::field::{Tag, Value},
 };
 use smallvec::SmallVec;
-
+use crate::Error;
+use super::core::{LineByLine, COUNTER_STRIDE};
+use noodles::sam::alignment::record_buf::data::field::Value as RecordBufValue;
 // ---------------------------------------------------------------------------
 // ChimericKind
 // ---------------------------------------------------------------------------
@@ -394,4 +396,72 @@ pub(crate) fn detect_chimeric_event<R: SimpleRec>(
         }
     }
     ChimericDecision::Normal
+}
+
+impl<R: SimpleRec> LineByLine<R> {
+    pub(super) fn chimeric_label(&self, stream: usize) -> String {
+        self.stream_labels
+            .get(stream)
+            .cloned()
+            .unwrap_or_else(|| format!("stream_{stream}"))
+    }
+
+    /// Write all records from a chimeric fragment.
+    ///
+    /// For streams in the chimeric pair: records go to assigned output with
+    /// `XC:Z:<other_stream_label>` tag.  For every other stream present in
+    /// `best`: records go to filtered (discarded) output.
+    ///
+    /// The `XC:Z:` tag value is the human-readable label of the *other* stream
+    /// (configured via `--stream-labels`), making it easy to filter chimeric
+    /// reads with `samtools view -d XC:hpv`.
+    pub(super) fn emit_chimeric(
+        &mut self,
+        best:     &mut super::core::FragmentBuffer<R>,
+        decision: ChimericDecision,
+    ) -> Result<(), Error> {
+        let (chimeric_a, chimeric_b, kind) = match decision {
+            ChimericDecision::Chimeric { stream_a, stream_b, kind } => (stream_a, stream_b, kind),
+            ChimericDecision::Normal => unreachable!("emit_chimeric on non-chimeric"),
+        };
+        let label_a = self.chimeric_label(chimeric_a);
+        let label_b = self.chimeric_label(chimeric_b);
+        let tag_xc  = Tag::new(b'X', b'C');
+
+        tracing::debug!(kind = ?kind, stream_a = chimeric_a, stream_b = chimeric_b, "Emitting chimeric fragment");
+
+        best.drain(..).try_for_each(|mut state| -> Result<(), Error> {
+            let nr = state.get_nr();
+            let is_chimeric = nr == chimeric_a || nr == chimeric_b;
+            if is_chimeric {
+                let other_label = if nr == chimeric_a { &label_b } else { &label_a };
+                let xc_value    = RecordBufValue::String(other_label.as_bytes().into());
+
+                    // For ReadSplit chimerism, stream A may contain a supplementary
+                    // alignment that is a false-positive mapping of the split read's
+                    // complementary portion to the wrong reference.  It is written
+                    // here with the XC:Z tag so that its provenance is clear;
+                    // downstream tools can identify it via the supplementary flag
+                    // (SAM 0x800 / `samtools view -F 2048`).
+                    //
+                    // A future `--chimeric-suppress-supplementary` option could
+                    // silently drop these records.
+                state.drain_records().try_for_each(|r| -> Result<(), Error> {
+                    let header = self.aln[nr].header();
+                    let mut rb = r.as_record_buf(header)?;
+                    rb.data_mut().insert(tag_xc, xc_value.clone());
+                    self.routing_counters[nr * COUNTER_STRIDE + 3] += 1;
+                    self.aln[nr].write_record(rb, Some(true))
+                })
+            } else {
+                // Streams outside the chimeric pair are discarded normally.
+                state.drain_records().try_for_each(|r| {
+                    let header = self.aln[nr].header();
+                    let rb = r.as_record_buf(header)?;
+                    self.routing_counters[nr * COUNTER_STRIDE] += 1;
+                    self.aln[nr].write_record(rb, Some(false))
+                })
+            }
+        })
+    }
 }

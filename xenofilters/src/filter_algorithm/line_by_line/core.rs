@@ -209,12 +209,6 @@ impl<R: SimpleRec> LineByLine<R> {
             progress,
         })
     }
-    pub(super) fn chimeric_label(&self, stream: usize) -> String {
-        self.stream_labels
-            .get(stream)
-            .cloned()
-            .unwrap_or_else(|| format!("stream_{stream}"))
-    }
 }
 
 #[cfg(test)]

@@ -1,3 +1,6 @@
+mod context;
+mod record;
+
 use crate::alignment::{
     align_alt_to_read, weighted_ref_score, BaseOp, MdCigFlags, ScoreOpIter, VariantWindow,
 };
@@ -5,9 +8,11 @@ use crate::filter_algorithm::line_by_line::{Scratch, READ_CT};
 use crate::penalty::{Penalty, MAX_Q};
 use crate::variant::{Eval, FragEvalVec, VNT_CT};
 use crate::Error;
-use noodles::sam::alignment::{Record, RecordBuf};
-use noodles::sam::Header;
+use noodles::sam::alignment::{Record};
 use smallvec::SmallVec;
+
+pub(crate) use record::SimpleRec;
+use context::{VariantCtx, WindowCtx};
 
 pub(crate) struct Fragment<'r, R> {
     pen: &'r Penalty,
@@ -17,45 +22,6 @@ pub(crate) struct Fragment<'r, R> {
     seg_i: usize,
     refpos: usize,
     nt_i: usize,
-}
-
-/// Identifies a scoring window within a segment.
-struct WindowCtx {
-    dvnt_i: usize,
-    seg_i: usize,
-    ref_start: usize,
-    ref_end: usize,
-    ref_score: f64,
-}
-
-impl WindowCtx {
-    fn new(dvnt_i: usize, seg_i: usize, ref_start: usize, ref_end: usize, ref_score: f64) -> Self {
-        Self {
-            dvnt_i,
-            seg_i,
-            ref_start,
-            ref_end,
-            ref_score,
-        }
-    }
-    fn to_variant_ctx(&self, dvnt_j: usize) -> VariantCtx {
-        VariantCtx {
-            dvnt_i: self.dvnt_i,
-            dvnt_j,
-            seg_i: self.seg_i,
-            ref_start: self.ref_start,
-            ref_end: self.ref_end,
-        }
-    }
-}
-
-/// Identifies a specific variant within a scoring window.
-struct VariantCtx {
-    dvnt_i: usize,
-    dvnt_j: usize,
-    seg_i: usize,
-    ref_start: usize,
-    ref_end: usize,
 }
 
 /// Weighted Interval Scheduling over variant `Eval` entries with positive delta.
@@ -352,36 +318,6 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         );
 
         Ok(Some((weighted_ref, alt_score)))
-    }
-}
-
-pub(crate) trait SimpleRec: Record + PartialEq {
-    fn quality_at(&self, i: usize) -> Option<u8>;
-    fn ref_seq_id(&self) -> Option<Result<usize, std::io::Error>>;
-    fn as_record_buf(&self, header: &Header) -> Result<RecordBuf, std::io::Error>;
-}
-
-impl SimpleRec for noodles::bam::Record {
-    fn quality_at(&self, i: usize) -> Option<u8> {
-        self.quality_scores().as_ref().get(i).copied()
-    }
-    fn ref_seq_id(&self) -> Option<Result<usize, std::io::Error>> {
-        self.reference_sequence_id()
-    }
-    fn as_record_buf(&self, header: &Header) -> Result<RecordBuf, std::io::Error> {
-        RecordBuf::try_from_alignment_record(header, self)
-    }
-}
-
-impl SimpleRec for noodles::sam::alignment::RecordBuf {
-    fn quality_at(&self, i: usize) -> Option<u8> {
-        self.quality_scores().as_ref().get(i).copied()
-    }
-    fn ref_seq_id(&self) -> Option<Result<usize, std::io::Error>> {
-        self.reference_sequence_id().map(Ok)
-    }
-    fn as_record_buf(&self, _header: &Header) -> Result<RecordBuf, std::io::Error> {
-        Ok(self.clone())
     }
 }
 
