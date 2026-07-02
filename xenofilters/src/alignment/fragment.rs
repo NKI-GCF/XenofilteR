@@ -8,11 +8,11 @@ use crate::filter_algorithm::line_by_line::{Scratch, READ_CT};
 use crate::penalty::{Penalty, MAX_Q};
 use crate::variant::{Eval, FragEvalVec, VNT_CT};
 use crate::Error;
-use noodles::sam::alignment::{Record};
+use noodles::sam::alignment::Record;
 use smallvec::SmallVec;
 
-pub(crate) use record::SimpleRec;
 use context::{VariantCtx, WindowCtx};
+pub(crate) use record::SimpleRec;
 
 pub(crate) struct Fragment<'r, R> {
     pen: &'r Penalty,
@@ -80,7 +80,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             .map(|r| {
                 r.alignment_start()
                     .transpose()
-                    .map(|o| o.map(|p| p.get()).unwrap_or(0))
+                    .map(|o| o.map(|p| p.get().saturating_sub(1)).unwrap_or(0))
             })
             .collect::<Result<_, _>>()?;
         let refpos = seg_start[0];
@@ -242,7 +242,33 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
                     continue;
                 }
             } else {
-                dvnt[ctx.dvnt_i][i].update(ctx.ref_score, 0.0);
+                // If a full scoring was not possible via score_variant_against_segment
+                // (score_variant_against_segment returned None), add the expected
+                // p-weighted reference contribution for the overlap portion (if any).
+                // Do not use raw ctx.ref_score here because that is an unweighted
+                // per-window score and would mix semantics.
+                let v_eval = &dvnt[ctx.dvnt_i][i];
+                let vnt = v_eval.vnt();
+
+                // Keep the existing deferral rule for multi-base deletions: if the
+                // variant ref span is longer than 1 and the ref_end is not yet within
+                // this window, skip (defer) so we don't score partial deletions here.
+                if vnt.ref_allele().len() > 1 && v_eval.ref_end() > ctx.ref_end {
+                    // Defer to a later window that covers the full deletion: no update.
+                } else if let Some(window) = VariantWindow::compute(
+                    ctx.ref_start,
+                    ctx.ref_end,
+                    v_eval.start(),
+                    v_eval.ref_end(),
+                ) {
+                    let seg_ref_start = self.seg_start[ctx.seg_i];
+                    let p_variant = vnt.p_variant();
+                    let wref =
+                        weighted_ref_score(window, seg_ref_start, p_variant, self.pen, |nt_i| {
+                            self.q(ctx.seg_i, nt_i)
+                        })?;
+                    dvnt[ctx.dvnt_i][i].update(wref, 0.0);
+                }
             }
             i += 1;
         }
