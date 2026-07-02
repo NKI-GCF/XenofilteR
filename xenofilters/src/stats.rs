@@ -63,7 +63,7 @@ pub(crate) fn write_stats(
     labels:       &[String],
     sample_name:  &str,
 ) -> Result<(), Error> {
-    let mut data: HashMap<String, StreamStats> = HashMap::new();
+    let _data: HashMap<String, StreamStats> = HashMap::new();
     for nr in 0..stream_count {
         let label = labels.get(nr).map(|s| s.as_str())
             .unwrap_or("unknown");
@@ -79,14 +79,14 @@ pub(crate) fn write_stats(
             (key, StreamStats::from_counters(counters, nr))
         })
         .collect();
-    let map: HashMap<&str, &StreamStats> =
+    let _map: HashMap<&str, &StreamStats> =
         owned.iter().map(|(k, v)| (k.as_str(), v)).collect();
 
-    let doc = MultiQcData {
+    let _doc = MultiQcData {
         id:        "xenofilters",
         plot_type: "generalstats",
         pconfig:   PConfig { namespace: "xenofilters" },
-        data:      owned.iter().map(|(k, v)| {
+        data:      owned.iter().map(|(k, _v)| {
             (k.as_str(), StreamStats::from_counters(counters, 0)) // placeholder
         }).collect(),
     };

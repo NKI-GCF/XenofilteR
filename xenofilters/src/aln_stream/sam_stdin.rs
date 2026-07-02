@@ -4,11 +4,9 @@
 //! - namesorted only (stdin is not seekable; HashLookup pass-2 cannot seek)
 //! - single stream from stdin per invocation
 
-use crate::{Error, alignment::SimpleRec, aln_stream::AlignmentStream, config::Config, variant::StoreTrait};
+use crate::{Error, aln_stream::AlignmentStream, config::Config};
 use noodles::sam::{self, Header, alignment::record_buf::RecordBuf};
-use noodles::sam::alignment::io::Read as SamAlignmentRead;
 use std::io::BufReader;
-use std::sync::Arc;
 
 pub(crate) struct SamStdinStream {
     header: Header,
@@ -18,12 +16,12 @@ pub(crate) struct SamStdinStream {
 }
 
 impl SamStdinStream {
-    pub(crate) fn new(opt: &mut Config, i: usize) -> Result<Self, Error> {
+    pub(crate) fn new(_opt: &mut Config, _i: usize) -> Result<Self, Error> {
         let mut reader = sam::io::Reader::new(BufReader::new(std::io::stdin()));
         let header = reader.read_header()?;
         // Validate SO tag for namesorted — same check as AlnStream::new.
         // (strip_read_suffix auto-detection omitted for brevity; add same logic)
-        let mut s = Self {
+        let s = Self {
             header,
             inner: reader,
             peeked: None,
@@ -57,12 +55,5 @@ impl AlignmentStream<RecordBuf> for SamStdinStream {
         self.output.write(rec, is_best, &self.header)
     }
 
-    fn init_writers(&mut self, opt: &Config, i: usize) -> Result<(), Error> {
-        // Identical to AlnStream::init_writers — factor out in a follow-up.
-        Ok(())
-    }
-
-    fn variant_store(&self) -> Option<Arc<dyn StoreTrait>> { None }
     fn header(&self) -> &Header { &self.header }
-    // fetch_by_virtual_offset: default impl returns Err (stdin not seekable)
 }

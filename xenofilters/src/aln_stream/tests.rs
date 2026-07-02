@@ -27,12 +27,6 @@ impl AlignmentStream<RecordBuf> for DefaultStream {
     fn write_record(&mut self, _rec: RecordBuf, _is_best: Option<bool>) -> Result<(), Error> {
         Ok(())
     }
-    fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<(), Error> {
-        Ok(())
-    }
-    fn variant_store(&self) -> Option<Arc<dyn StoreTrait>> {
-        None
-    }
     fn header(&self) -> &Header {
         unimplemented!()
     }

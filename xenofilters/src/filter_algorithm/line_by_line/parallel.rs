@@ -53,7 +53,7 @@ fn worker_loop(rx: Receiver<FragmentBundle>, tx: Sender<ScoredFragment>) {
             mut best,
             stores,
             ctx,
-            chimeric_pairs,
+            chimeric_pairs: _,
         } = bundle;
         let decision = score_bundle(&mut best, &stores, &ctx, &mut scratch);
         // Ignore send errors: the IO thread may have exited after an error.

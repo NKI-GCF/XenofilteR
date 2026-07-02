@@ -14,7 +14,6 @@ use noodles::bgzf::VirtualPosition;
 use noodles::bgzf::io::Reader as BgzfReader;
 use noodles::sam::Header;
 use noodles::sam::alignment::record_buf::RecordBuf;
-use noodles::bgzf::io::MultithreadedReader;
 use std::num::NonZeroUsize;
 use std::fs::File;
 use std::io::{Read as ioRead, Seek as ioSeek};
@@ -29,8 +28,12 @@ pub(crate) trait AlignmentStream<R: SimpleRec> {
     fn un_next(&mut self, rec: R) -> Result<(), Error>;
     fn next_rec(&mut self) -> Result<Option<R>, Error>;
     fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<(), Error>;
-    fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<(), Error>;
-    fn variant_store(&self) -> Option<Arc<dyn StoreTrait>>;
+    fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<(), Error> {
+        Ok(())
+    }
+    fn variant_store(&self) -> Option<Arc<dyn StoreTrait>> {
+        None
+    }
     fn header(&self) -> &Header;
     /// Seek to a BGZF virtual offset and read one full record for pass-2 output.
     /// Returns `Err` for stream types that do not support seeking (e.g. mock streams).

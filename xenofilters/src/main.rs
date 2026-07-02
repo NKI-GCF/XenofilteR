@@ -25,7 +25,6 @@ use filter_algorithm::{
     collated::CollatedMatcher, hash_lookup::HashLookup, line_by_line::LineByLine,
 };
 use crate::bam::AlnFormat;
-use noodles::bam::record::Record as BamRecord;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::Header;
 use region::{AmbiguousRegions, DiagnosticVariants};
