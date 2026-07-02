@@ -99,6 +99,13 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         scratch: &mut Scratch,
         dvnt: &mut FragEvalVec<'v>,
     ) -> Result<f64, Error> {
+        // Ensure per-score mutable scanning state is reset so a Fragment
+        // instance can be reused for multiple score() calls without leaking
+        // seg_i/refpos/nt_i from previous runs (exposed by unit tests).
+        self.seg_i = 0;
+        self.refpos = self.seg_start[0];
+        self.nt_i = 0;
+
         // Variants fully covered mid-scan get moved here (see
         // evaluate_variants_in_window) so they aren't re-processed/double-counted
         // by later windows in the same segment, but still reach wis_max_rescue_delta.
@@ -358,7 +365,7 @@ impl<'r, R> Fragment<'r, R>
 where
     R: Record + SimpleRec,
 {
-    fn q(&self, seg_i: usize, nt_i: usize) -> Result<usize, Error> {
+    pub(crate) fn q(&self, seg_i: usize, nt_i: usize) -> Result<usize, Error> {
         self.seg[seg_i]
             .quality_at(nt_i)
             .map(|q| (q as usize).min(MAX_Q - 1))
