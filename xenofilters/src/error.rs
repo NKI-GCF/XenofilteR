@@ -169,9 +169,6 @@ pub(crate) enum Error {
 // ---------------------------------------------------------------------------
 // Variant / VCF / BCF
 // ---------------------------------------------------------------------------
-    #[error("Multiple ALT alleles not supported for population variants")]
-    MultipleAltAllelesNotSupported,
-
     #[error("Missing AF tag or AF tag is not a float")]
     MissingOrInvalidAfTag,
 

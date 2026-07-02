@@ -64,6 +64,55 @@ use smallvec::SmallVec;
 use crate::Error;
 use super::core::{LineByLine, COUNTER_STRIDE};
 use noodles::sam::alignment::record_buf::data::field::Value as RecordBufValue;
+
+/// Fast flag-only check for paired-end chimeric complement.
+///
+/// Returns `Some((stream_a, stream_b))` when, for a configured chimeric pair,
+/// one stream has mate0=unmapped + mate1=mapped and the other has the inverse.
+/// Runs before `detect_chimeric_event` (which also scans CIGAR/MD for read-splits);
+/// this path uses only flag checks.
+pub(crate) fn detect_chimeric_mate_complement<R: SimpleRec>(
+    best:           &FragmentBuffer<R>,
+    chimeric_pairs: &[[usize; 2]],
+) -> Option<(usize, usize)> {
+    use crate::alignment::mate_kind::{mate_slot, segment_id};
+
+    /// Per-slot mapping: Some(true)=mapped-primary-present, Some(false)=unmapped-primary-present.
+    fn flag_mate_map<R: SimpleRec>(state: &FragmentState<R>) -> [Option<bool>; 2] {
+        let mut m = [None::<bool>; 2];
+        for r in state.get_records() {
+            let Ok(f) = r.flags() else { continue };
+            if f.is_secondary() || f.is_supplementary() { continue; }
+            let slot = mate_slot(segment_id(&f));
+            // Later records for the same slot overwrite; last primary wins.
+            m[slot] = Some(!f.is_unmapped());
+        }
+        m
+    }
+
+    for &[a, b] in chimeric_pairs {
+        let sa = best.iter().find(|s| s.get_nr() == a)?;
+        let sb = best.iter().find(|s| s.get_nr() == b)?;
+
+        // Both streams must have paired-end records.
+        let paired = sa.get_records().iter().chain(sb.get_records().iter())
+            .any(|r| r.flags().map_or(false, |f| f.is_segmented()));
+        if !paired { continue; }
+
+        let mk_a = flag_mate_map(sa);
+        let mk_b = flag_mate_map(sb);
+
+        // Complement: [unmapped, mapped] ↔ [mapped, unmapped]
+        let complement = |x: [Option<bool>; 2], y: [Option<bool>; 2]| {
+            x == [Some(false), Some(true)] && y == [Some(true), Some(false)]
+        };
+        if complement(mk_a, mk_b) || complement(mk_b, mk_a) {
+            return Some((a, b));
+        }
+    }
+    None
+}
+
 // ---------------------------------------------------------------------------
 // ChimericKind
 // ---------------------------------------------------------------------------

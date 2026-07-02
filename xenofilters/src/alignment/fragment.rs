@@ -234,8 +234,8 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
                 self.score_variant_against_segment(scratch, dvnt, ctx.to_variant_ctx(i))?
             {
                 dvnt[ctx.dvnt_i][i].update(weighted_ref_score, alt_score);
-                let fully_processed = dvnt[ctx.dvnt_i][i].ref_end() <= ctx.ref_end
-                    && dvnt[ctx.dvnt_i][i].alt_end() <= ctx.ref_end;
+                // only the ref span needs to be within the window.
+                let fully_processed = dvnt[ctx.dvnt_i][i].ref_end() <= ctx.ref_end;
                 if fully_processed {
                     let done = dvnt[ctx.dvnt_i].remove(i);
                     finished[ctx.dvnt_i].push(done);
@@ -267,6 +267,14 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         ctx: VariantCtx,
     ) -> Result<Option<(f64, f64)>, Error> {
         let vnt_eval = &dvnt[ctx.dvnt_i][ctx.dvnt_j];
+        let vnt = vnt_eval.vnt();
+
+        // Multi-base deletions: defer scoring until the full ref span is in window.
+        // Partial overlap would pass incorrect ref_len to align_alt_to_read.
+        // SNVs (ref_len=1) and insertions (ref_len=1, alt_len>1) are always safe.
+        if vnt.ref_allele().len() > 1 && vnt_eval.ref_end() > ctx.ref_end {
+            return Ok(None); // defer to a later window that covers the full deletion
+        }
         let window = match VariantWindow::compute(
             ctx.ref_start,
             ctx.ref_end,
@@ -277,7 +285,6 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             None => return Ok(None),
         };
 
-        let vnt = vnt_eval.vnt();
         let alt = vnt.alt_allele();
         let p_variant = vnt.p_variant();
         let seg_ref_start = self.seg_start[ctx.seg_i];

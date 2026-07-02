@@ -43,6 +43,7 @@ use crate::alignment::{
     ScoreOpIter, SimpleRec,
 };
 use crate::filter_algorithm::line_by_line::{
+    chimeric::{detect_chimeric_mate_complement, ChimericKind},
     detect_chimeric_event, ChimericDecision, MAX_STREAMS, READ_CT,
 };
 use crate::print_routing_counters;
@@ -474,6 +475,19 @@ impl<R: SimpleRec> LineByLine<R> {
                 // both streams' records are emitted with XC:Z: tags; the normal
                 // scoring cascade is skipped for those streams.
                 if !self.chimeric_pairs.is_empty() {
+                    // Fast path: flag-only per-mate complement check (no CIGAR/MD scanning).
+                    if let Some((ca, cb)) =
+                        detect_chimeric_mate_complement(&best, &self.chimeric_pairs)
+                    {
+                        self.emit_chimeric(&mut best, ChimericDecision::Chimeric {
+                            stream_a: ca,
+                            stream_b: cb,
+                            kind: ChimericKind::MateSplit,
+                        })?;
+                        i = 0;
+                        continue;
+                    }
+                    // Full detection: read-split + false-positive rejection via supplementary MD.
                     let cd = detect_chimeric_event(&best, &self.chimeric_pairs);
                     if matches!(cd, ChimericDecision::Chimeric { .. }) {
                         tracing::debug!(

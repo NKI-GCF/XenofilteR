@@ -6,7 +6,7 @@
 //! which owns all writers (no Mutex required).
 
 use super::core::{FragmentBuffer, LineByLine, Scratch};
-use super::chimeric::{ChimericDecision, detect_chimeric_event};
+use super::chimeric::{ChimericDecision, detect_chimeric_event, detect_chimeric_mate_complement, ChimericKind};
 use super::ordering::{score_bundle, ScoringContext};
 use crate::{
     Error,
@@ -144,6 +144,19 @@ impl LineByLine<RecordBuf> {
                 } else {
                     // -- Chimeric pre-check (IO thread, before scoring workers) --
                     if !self.chimeric_pairs.is_empty() {
+                        // Fast path: flag-only per-mate complement check (no CIGAR/MD scanning).
+                        if let Some((ca, cb)) =
+                            detect_chimeric_mate_complement(&best, &self.chimeric_pairs)
+                        {
+                            self.emit_chimeric(&mut best, ChimericDecision::Chimeric {
+                                stream_a: ca,
+                                stream_b: cb,
+                                kind: ChimericKind::MateSplit,
+                            })?;
+                            i = 0;
+                            continue;
+                        }
+                        // Full detection: read-split + false-positive rejection via supplementary MD.
                         let cd = detect_chimeric_event(&best, &self.chimeric_pairs);
                         if matches!(cd, ChimericDecision::Chimeric { .. }) {
                             // Chimeric routing is a pure IO-thread decision
