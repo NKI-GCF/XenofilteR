@@ -1,16 +1,6 @@
-use crate::Error;
-use crate::aln_stream::BamStreamReader;
-use crate::bam::{AlnFormat, OutputMode};
-use crate::config::{Config, StripReadSuffix};
+use super::*;
+use crate::bam::AlnFormat;
 use crate::tests::create_record;
-use crate::variant::StoreTrait;
-use crate::{AlignmentStream, AlnStream};
-use noodles::bam::io::Reader as BamReader;
-use noodles::bgzf::VirtualPosition;
-use noodles::sam::{Header, alignment::record_buf::RecordBuf};
-use std::fs::File;
-use std::num::NonZeroUsize;
-use std::sync::Arc;
 
 // A dummy struct to test default trait methods
 struct DefaultStream;
@@ -183,7 +173,7 @@ fn test_from_bam_record_implementations() -> Result<(), Error> {
 #[test]
 fn test_bam_stream_reader_trait() -> Result<(), Error> {
     let file = File::open("tests/data/test_input_1_a.bam").expect("Test BAM file required");
-    let mut bam = BamReader::new(file);
+    let mut bam = BgzfBamReader::Single(BamReader::new(file));
     let _header = bam.read_header()?;
 
     let rec = bam.next_record().expect("Should have a record")?;
@@ -351,11 +341,9 @@ fn test_next_qname_returns_pending_records_name() -> Result<(), Error> {
 fn test_un_next_errors_when_already_occupied() -> Result<(), Error> {
     let mut stream = empty_aln_stream();
     stream.un_next(create_record(b"r1", "5M", &[], &[30; 5], "5", false)?)?;
-    assert!(
-        stream
-            .un_next(create_record(b"r2", "5M", &[], &[30; 5], "5", false)?)
-            .is_err()
-    );
+    assert!(stream
+        .un_next(create_record(b"r2", "5M", &[], &[30; 5], "5", false)?)
+        .is_err());
     Ok(())
 }
 

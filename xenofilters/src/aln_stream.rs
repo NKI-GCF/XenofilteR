@@ -1,22 +1,21 @@
 mod cram;
 mod sam_stdin;
 
-use crate::Error;
 use crate::alignment::SimpleRec;
-use crate::bam::{OutputMode, out_from_file, path_unicode_ok};
+use crate::bam::{out_from_file, path_unicode_ok, OutputMode};
 use crate::config::MatchingAlgorithm;
 use crate::config::{Config, StripReadSuffix};
 use crate::variant::{
-    Population, Sample, Store, StoreTrait, parse_population_record, parse_sample_record,
+    parse_population_record, parse_sample_record, Population, Sample, Store, StoreTrait,
 };
+use crate::Error;
 use noodles::bam::{io::Reader as BamReader, record::Record};
-use noodles::bgzf::VirtualPosition;
-use noodles::bgzf::io::Reader as BgzfReader;
-use noodles::sam::Header;
+use noodles::bgzf::{self, io::MultithreadedReader, VirtualPosition};
 use noodles::sam::alignment::record_buf::RecordBuf;
-use std::num::NonZeroUsize;
+use noodles::sam::Header;
 use std::fs::File;
-use std::io::{Read as ioRead, Seek as ioSeek};
+use std::io::Read as ioRead;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -42,32 +41,72 @@ pub(crate) trait AlignmentStream<R: SimpleRec> {
     }
 }
 
-pub(crate) trait BamStreamReader {
-    fn next_record(&mut self) -> Option<std::io::Result<Record>>;
-    fn seek_vpos(&mut self, pos: VirtualPosition) -> std::io::Result<VirtualPosition>;
+/// Wraps both bgzf reader variants in a zero-cost internal enum.
+/// `Single` is seekable (required by HashLookup pass-2).
+/// `Multi` is not seekable but parallelises decompression.
+pub(crate) enum BgzfBamReader {
+    Single(BamReader<bgzf::io::Reader<File>>),
+    Multi(BamReader<MultithreadedReader<File>>),
 }
 
-impl<T: ioRead + ioSeek> BamStreamReader for BamReader<BgzfReader<T>> {
-    fn next_record(&mut self) -> Option<std::io::Result<Record>> {
-        self.records().next()
+impl BgzfBamReader {
+    fn read_header(&mut self) -> std::io::Result<Header> {
+        match self {
+            Self::Single(r) => r.read_header(),
+            Self::Multi(r) => r.read_header(),
+        }
     }
 
+    /// Returns an error for the multithreaded variant.
+    /// HashLookup must always be constructed with `Single`.
     fn seek_vpos(&mut self, pos: VirtualPosition) -> std::io::Result<VirtualPosition> {
-        // Bypass the BAM wrapper and seek directly on the underlying BGZF reader
-        self.get_mut().seek(pos)
-        /* Depending on the exact micro-version/patch-level resolution of your noodles crates,
-         * BgzfReader might expect standard std::io::SeekFrom positioning where the packed u64
-         * is treated as the virtual position. If the block above throws a type mismatch error,
-         * use this variant instead:
-        self.get_mut()
-            .seek(std::io::SeekFrom::Start(u64::from(pos)))
-            .map(VirtualPosition::from)
-        */
+        match self {
+            Self::Single(r) => r.get_mut().seek(pos),
+            Self::Multi(_) => Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "seek_vpos unavailable on MultithreadedReader; \
+                 use --matching-algorithm namesorted or collated with --threads",
+            )),
+        }
+    }
+
+    fn next_record(&mut self) -> Option<std::io::Result<Record>> {
+        match self {
+            Self::Single(r) => r.records().next(),
+            Self::Multi(r) => r.records().next(),
+        }
+    }
+
+    /// Raw header bytes for SO: / GO: sort-order validation.
+    /// Both variants can read sequentially from position 0.
+    fn read_raw_header_bytes(&mut self) -> std::io::Result<Vec<u8>> {
+        // Re-read the raw SAM header via the inner bgzf reader.
+        // After `read_header()` the file cursor is at the first record;
+        // this secondary read is only used during `new()` before any
+        // records are consumed.
+        match self {
+            Self::Single(r) => {
+                let mut hr = r.header_reader();
+                hr.read_magic_number()?;
+                let mut rhr = hr.raw_sam_header_reader()?;
+                let mut buf = Vec::new();
+                rhr.read_to_end(&mut buf)?;
+                Ok(buf)
+            }
+            Self::Multi(r) => {
+                let mut hr = r.header_reader();
+                hr.read_magic_number()?;
+                let mut rhr = hr.raw_sam_header_reader()?;
+                let mut buf = Vec::new();
+                rhr.read_to_end(&mut buf)?;
+                Ok(buf)
+            }
+        }
     }
 }
 
-pub(crate) struct AlnStream<R, B = BamReader<BgzfReader<File>>> {
-    pub(crate) bam: Option<B>,
+pub(crate) struct AlnStream<R> {
+    pub(crate) bam: Option<BgzfBamReader>,
     next: Option<R>,
     sample_variants: Option<Arc<Store<Sample>>>,
     population_variants: Option<Arc<Store<Population>>>,
@@ -83,44 +122,32 @@ where
     pub(crate) fn new(opt: &mut Config, i: usize) -> Result<Self, Error> {
         let path = opt.alignment[i].as_str();
         let file = File::open(path)?;
-        /* FIXME: Multithreaded reading is not yet working. Errors:
-         * expected struct `noodles::noodles_bam::io::Reader<noodles::noodles_bgzf::io::Reader<File>>`
-         * found struct `noodles::noodles_bam::io::Reader<noodles::noodles_bgzf::io::Reader<MultithreadedReader<File>>>
-         *
-         * If I wripe File in B in MultithreadedReader, I get a different error about trait bounds
-         * not being satisfied these on noodles structs:
-         * pub struct Reader<R> doesn't satisfy `_: BamStreamReader`
-         * pub struct MultithreadedReader<R> doesn't satisfy `MultithreadedReader<File>: std::io::Seek`
-         * seek is required for the hash lookup algorithm only.
 
+        // MultithreadedReader parallelises bgzf block decompression.
+        // Requires threads > 1 AND a non-seeking backend (namesorted / collated).
+        // HashLookup pass-2 uses seek_vpos → must use Single.
+        let seekable_required = opt.matching_algorithm == MatchingAlgorithm::Hashlookup;
         let threads = NonZeroUsize::new(opt.threads).unwrap_or(NonZeroUsize::MIN);
 
-        // -- BGZF reader with configurable worker count --------------------
-        // NEEDS VERIFICATION: bgzf::io::reader::Builder::set_worker_count
-        // availability in noodles 0.111.0. Falls back to single-threaded if absent.
-        let bgzf = MultithreadedReader::with_worker_count(threads,
-            if path == "-" {
-                // Stdin: boxed to unify types.
-                // SAM stdin is handled in the AlnFormat::Sam branch below.
-                return Err(Error::StdinRequiresSamFormat);
-            } else {
-                std::fs::File::open(path)?
-            });
-        let mut bam = BamReader::new(bgzf);
-        */
-        let mut bam = BamReader::new(file);
-        let header  = bam.read_header()?;
+        let mut bam = if !seekable_required && opt.threads > 1 {
+            tracing::debug!(
+                stream = i,
+                threads = opt.threads,
+                "Using MultithreadedReader for bgzf decompression"
+            );
+            BgzfBamReader::Multi(BamReader::from(MultithreadedReader::with_worker_count(
+                threads, file,
+            )))
+        } else {
+            BgzfBamReader::Single(BamReader::new(file))
+        };
 
-        let mut header_reader = bam.header_reader();
-        header_reader.read_magic_number()?;
-        let mut raw_sam_header_reader = header_reader.raw_sam_header_reader()?;
+        let header = bam.read_header()?;
 
-        let mut buf = Vec::new();
-        raw_sam_header_reader.read_to_end(&mut buf)?;
-
-        // Only name-sorted mode requires name-ordered input.
+        // Sort-order check (namesorted only).
+        let raw = bam.read_raw_header_bytes()?;
         if opt.matching_algorithm == MatchingAlgorithm::Namesorted {
-            for parts in buf
+            for parts in raw
                 .split(|&b| b == b'\n')
                 .map(|s| s.split(|&b| b == b'\t').collect::<Vec<_>>())
             {
@@ -133,8 +160,8 @@ where
             }
         }
 
-        let test_record = match bam.records().next() {
-            Some(Ok(rec)) => rec,
+        let test_record = match bam.next_record() {
+            Some(Ok(r)) => r,
             Some(Err(e)) => return Err(e.into()),
             None => {
                 return Err(Error::BamHasNoRecords {
@@ -198,7 +225,6 @@ where
             .map(path_unicode_ok)
             .transpose()?;
 
-        let threads = NonZeroUsize::new(opt.threads).unwrap_or(NonZeroUsize::MIN);
         let next_rec = R::from_bam_record(&header, test_record)?;
 
         Ok(AlnStream {
@@ -237,21 +263,6 @@ impl<R> AlignmentStream<R> for AlnStream<R>
 where
     R: SimpleRec + FromBamRecord,
 {
-    fn next_qname(&self) -> &[u8] {
-        self.next
-            .as_ref()
-            .and_then(|r| r.name())
-            .map_or(b"", |n| n.as_ref())
-    }
-
-    fn un_next(&mut self, rec: R) -> Result<(), Error> {
-        if self.next.is_some() {
-            return Err(Error::CannotUnNext);
-        }
-        self.next = Some(rec);
-        Ok(())
-    }
-
     fn next_rec(&mut self) -> Result<Option<R>, Error> {
         let header = &self.header;
         Ok(self
@@ -265,6 +276,39 @@ where
                 })
             })
             .transpose()?)
+    }
+
+    fn fetch_by_virtual_offset(&mut self, virtual_offset: u64) -> Result<RecordBuf, Error> {
+        let vpos = VirtualPosition::from(virtual_offset);
+        let bam = self.bam.as_mut().ok_or(Error::NoBamReaderForSeek)?;
+        bam.seek_vpos(vpos).map_err(|e| {
+            // Provide a clear message when misused with the wrong backend.
+            if e.kind() == std::io::ErrorKind::Unsupported {
+                Error::FetchByVirtualOffsetNotSupported
+            } else {
+                Error::from(e)
+            }
+        })?;
+        let rec = bam
+            .next_record()
+            .ok_or(Error::NoRecordAtVirtualOffset { virtual_offset })??;
+        RecordBuf::try_from_alignment_record(&self.header, &rec)
+            .map_err(|e| Error::RecordBufConversion(e.to_string()))
+    }
+
+    fn next_qname(&self) -> &[u8] {
+        self.next
+            .as_ref()
+            .and_then(|r| r.name())
+            .map_or(b"", |n| n.as_ref())
+    }
+
+    fn un_next(&mut self, rec: R) -> Result<(), Error> {
+        if self.next.is_some() {
+            return Err(Error::CannotUnNext);
+        }
+        self.next = Some(rec);
+        Ok(())
     }
 
     fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<(), Error> {
@@ -283,7 +327,7 @@ where
                 // LineByLine and routing records from all streams through a shared writer
                 // (Arc<Mutex<MergedOutput>> or caller-level aggregation).
                 // Tracked in TODO_rust.md.
-                use crate::bam::{MergedOutput, expand_header};
+                use crate::bam::{expand_header, MergedOutput};
                 let expanded = expand_header(self.header.clone());
                 self.output_mode =
                     OutputMode::Merged(MergedOutput::new(path, expanded, add_pg, threads)?);
@@ -326,18 +370,6 @@ where
 
     fn header(&self) -> &Header {
         &self.header
-    }
-
-    fn fetch_by_virtual_offset(&mut self, virtual_offset: u64) -> Result<RecordBuf, Error> {
-        let vpos = VirtualPosition::from(virtual_offset);
-        let bam = self.bam.as_mut().ok_or_else(|| Error::NoBamReaderForSeek)?;
-        bam.seek_vpos(vpos)?;
-        let rec = bam
-            .next_record() // ← use trait method
-            .ok_or(Error::NoRecordAtVirtualOffset { virtual_offset })?
-            .map_err(|e| Error::BamReadError(format!("{e}")))?;
-        RecordBuf::try_from_alignment_record(&self.header, &rec)
-            .map_err(|e| Error::RecordBufConversion(format!("{e}")))
     }
 }
 

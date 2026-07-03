@@ -4,8 +4,8 @@ mod sample;
 mod store;
 
 pub(crate) use eval::Eval;
-pub(crate) use population::{Population, parse_population_record};
-pub(crate) use sample::{Sample, parse_sample_record};
+pub(crate) use population::{parse_population_record, Population};
+pub(crate) use sample::{parse_sample_record, Sample};
 pub(super) use store::{Store, StoreTrait, VNT_CT};
 
 use crate::filter_algorithm::line_by_line::READ_CT;
