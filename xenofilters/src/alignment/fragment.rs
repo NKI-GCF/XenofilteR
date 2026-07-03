@@ -359,6 +359,10 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
 
         Ok(Some((weighted_ref, alt_score)))
     }
+    #[cfg(test)]
+    pub(crate) fn seg_len(&self) -> usize {
+        self.seg.len()
+    }
 }
 
 impl<'r, R> Fragment<'r, R>

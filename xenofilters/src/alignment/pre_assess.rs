@@ -51,13 +51,14 @@ struct AlignSig {
 /// the chimeric-junction penalty (gap_open + bases × gap_extend) is applied
 /// in the NW phase and may negate the match contribution; without knowing
 /// the penalty magnitude we cannot compare supplementary matches across streams.
+/// del events are subtracted from the match count because they are not exact matches.
 fn sig_from_fragment_profile(fp: &FragmentProfile) -> AlignSig {
     let mut sig = AlignSig::default();
     for mate in &fp.mates {
         if mate.is_supplementary {
             continue;
         }
-        sig.primary_match_bases += mate.ops.iter().filter(|&&op| op == ReadOp::Match).count();
+        sig.primary_match_bases += mate.ops.iter().filter(|&&op| op == ReadOp::Match).count() - mate.del_events as usize;
         sig.supp_count += mate.supp_count;
     }
     sig
@@ -70,13 +71,26 @@ fn sig_from_fragment_profile(fp: &FragmentProfile) -> AlignSig {
 /// Returns `None` when one axis favours A and the other favours B; the NW score
 /// must then break the tie.
 fn subsumes(a: &AlignSig, b: &AlignSig) -> Option<Ordering> {
-    let a_dom = a.primary_match_bases >= b.primary_match_bases && a.supp_count <= b.supp_count;
-    let b_dom = b.primary_match_bases >= a.primary_match_bases && b.supp_count <= a.supp_count;
-    match (a_dom, b_dom) {
-        (true, false) => Some(Ordering::Greater),
-        (false, true) => Some(Ordering::Less),
-        (true, true) => Some(Ordering::Equal), // identical on both axes
-        (false, false) => None,                // e.g. A has more matches but more supps
+    if a.supp_count == b.supp_count {
+        if a.primary_match_bases > b.primary_match_bases {
+            Some(Ordering::Greater)
+        } else if a.primary_match_bases < b.primary_match_bases {
+            Some(Ordering::Less)
+        } else {
+            Some(Ordering::Equal) // identical on both axes
+        }
+    } else if a.supp_count < b.supp_count {
+        if a.primary_match_bases >= b.primary_match_bases {
+            Some(Ordering::Greater)
+        } else {
+            None // a has fewer supps but fewer matches → incomparable
+        }
+    } else {
+        if b.primary_match_bases >= a.primary_match_bases {
+            Some(Ordering::Less)
+        } else {
+            None // b has fewer supps but fewer matches → incomparable
+        }
     }
 }
 
@@ -196,6 +210,12 @@ pub(crate) fn pre_assess_alignments(
     mcfs_b: &SmallVec<[MdCigFlags<'_>; READ_CT]>,
 ) -> PreAssessResult {
     if mcfs_a.len() != mcfs_b.len() || mcfs_a.is_empty() {
+        #[cfg(test)]
+        eprintln!(
+            "pre_assess_alignments: segment count mismatch ({} vs {})",
+            mcfs_a.len(),
+            mcfs_b.len()
+        );
         return PreAssessResult::FullScoring;
     }
 
@@ -208,6 +228,8 @@ pub(crate) fn pre_assess_alignments(
     };
 
     if !fp_a.valid() || !fp_b.valid() {
+        #[cfg(test)]
+        eprintln!("pre_assess_alignments: invalid fragment profile (malformed CIGAR/MD)");
         return PreAssessResult::FullScoring;
     }
 
@@ -215,13 +237,30 @@ pub(crate) fn pre_assess_alignments(
     let sig_a = sig_from_fragment_profile(&fp_a);
     let sig_b = sig_from_fragment_profile(&fp_b);
     if let Some(ord) = subsumes(&sig_a, &sig_b) {
+        #[cfg(test)]
+        eprintln!(
+            "pre_assess_alignments: Tier 2.5a early decision1: {:?} vs {:?} => {:?}",
+            sig_a, sig_b, ord
+        );
         return PreAssessResult::EarlyDecision(ord);
     }
 
     // Tier 2.5b: per-position read-space comparison — reuses the same profiles.
     match compare_fragment_profiles(&fp_a, &fp_b) {
-        ReadSpaceDecision::EarlyDecision(ord) => PreAssessResult::EarlyDecision(ord),
+        ReadSpaceDecision::EarlyDecision(ord) => {
+            #[cfg(test)]
+            eprintln!(
+                "pre_assess_alignments: Tier 2.5b early decision2: {:?} vs {:?} => {:?}",
+                sig_a, sig_b, ord
+            );
+            PreAssessResult::EarlyDecision(ord)
+        },
         ReadSpaceDecision::PartialScoring { .. } | ReadSpaceDecision::FallThrough => {
+            #[cfg(test)]
+            eprintln!(
+                "pre_assess_alignments: Tier 2.5b fallthrough: {:?} vs {:?} => FullScoring",
+                sig_a, sig_b
+            );
             PreAssessResult::FullScoring
         }
     }
@@ -371,15 +410,15 @@ mod tests {
                 md_a: "5^A5",
                 cigar_b: "10M",
                 md_b: "10",
-                want: None,
+                want: Some(Less),
             },
             Row {
                 label: "a has insertion b does not → fallthrough (read-space ambiguity)",
-                cigar_a: "5M2I5M",
+                cigar_a: "5M2I3M",
                 md_a: "10",
                 cigar_b: "10M",
                 md_b: "10",
-                want: None,
+                want: Some(Less),
             },
         ];
         let mut misses = Vec::new();

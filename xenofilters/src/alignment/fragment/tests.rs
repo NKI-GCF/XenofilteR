@@ -403,7 +403,7 @@ fn variant_rescue_p_variant_table() {
     // Read: "AAGAA" (base at position 2 matches alt 'G')
     let pen = flat_penalties();
     for c in cases {
-        let rec = create_record(b"r", "5M", b"AAGAA", &[30u8; 5], "5", false).unwrap();
+        let rec = create_record(b"r", "5M", b"AAGAA", &[30u8; 5], "2G2", false).unwrap();
         let flags = rec.flags();
         let mv: &'static _ = Box::leak(Box::new(MockVariant {
             pos: 2,
