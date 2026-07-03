@@ -1,14 +1,14 @@
-use crate::Error;
 use crate::alignment::{BaseOp, MdCigFlags, ScoreOpIter};
+use crate::Error;
 use noodles::core::Position;
 use noodles::sam::alignment::{
     record::data::field::Tag,
-    record_buf::{Data, data::field::Value},
+    record_buf::{data::field::Value, Data},
 };
 use noodles::sam::alignment::{
     record::{
+        cigar::{op::Kind, Op},
         Flags,
-        cigar::{Op, op::Kind},
     },
     record_buf::{Cigar, QualityScores, RecordBuf, Sequence},
 };
@@ -122,75 +122,155 @@ fn ops_for(cigar: &str, md: &str) -> Result<Vec<String>, Error> {
         .collect())
 }
 
+// Table-driven unified test that replaces multiple small test functions.
 #[test]
-fn test_pure_match() -> Result<(), Error> {
-    assert_eq!(ops_for("5M", "5")?, vec!["M", "M", "M", "M", "M"]);
-    Ok(())
-}
+fn table_driven_ops_tests_collect_misses() {
+    use std::fmt::Write as _;
 
-#[test]
-fn test_single_mismatch() -> Result<(), Error> {
-    assert_eq!(ops_for("5M", "2A2")?, vec!["M", "M", "X", "M", "M"]);
-    Ok(())
-}
+    enum Expectation {
+        Exact(Vec<&'static str>),
+        Len(usize),
+        Err,
+    }
 
-#[test]
-fn test_consecutive_mismatches() -> Result<(), Error> {
-    // MD "1AC2": 1 match, 2 consecutive mismatches, 2 matches = 5 bases
-    assert_eq!(ops_for("5M", "1AC2")?, vec!["M", "X", "X", "M", "M"]);
-    Ok(())
-}
+    struct Case {
+        msg: &'static str,
+        cigar: &'static str,
+        md: &'static str,
+        expect: Expectation,
+    }
 
-#[test]
-fn test_insertion_not_consumed_by_md_and_grouped() -> Result<(), Error> {
-    assert_eq!(ops_for("2M2I2M", "4")?, vec!["M", "M", "I2", "M", "M"]);
-    Ok(())
-}
+    let cases = vec![
+        Case {
+            msg: "pure match",
+            cigar: "5M",
+            md: "5",
+            expect: Expectation::Exact(vec!["M", "M", "M", "M", "M"]),
+        },
+        Case {
+            msg: "single mismatch",
+            cigar: "5M",
+            md: "2A2",
+            expect: Expectation::Exact(vec!["M", "M", "X", "M", "M"]),
+        },
+        Case {
+            msg: "consecutive mismatches",
+            cigar: "5M",
+            md: "1AC2",
+            expect: Expectation::Exact(vec!["M", "X", "X", "M", "M"]),
+        },
+        Case {
+            msg: "insertion not consumed by md and grouped",
+            cigar: "2M2I2M",
+            md: "4",
+            expect: Expectation::Exact(vec!["M", "M", "I2", "M", "M"]),
+        },
+        Case {
+            msg: "deletion consumes caret block",
+            cigar: "2M3D2M",
+            md: "2^AAA2",
+            expect: Expectation::Exact(vec!["M", "M", "D3", "M", "M"]),
+        },
+        Case {
+            msg: "soft clip is single grouped op",
+            cigar: "3S5M",
+            md: "5",
+            expect: Expectation::Exact(vec!["C3", "M", "M", "M", "M", "M"]),
+        },
+        Case {
+            msg: "ref skip not consumed by md",
+            cigar: "2M3N2M",
+            md: "4",
+            expect: Expectation::Exact(vec!["M", "M", "N3", "M", "M"]),
+        },
+        Case {
+            msg: "hard clip and pad are invisible to iterator 1",
+            cigar: "2H5M2H",
+            md: "5",
+            expect: Expectation::Exact(vec!["M", "M", "M", "M", "M"]),
+        },
+        Case {
+            msg: "hard clip and pad are invisible to iterator 2",
+            cigar: "2M2P2M",
+            md: "4",
+            expect: Expectation::Exact(vec!["M", "M", "M", "M"]),
+        },
+        Case {
+            msg: "sequence match mismatch kinds route through md",
+            cigar: "5=",
+            md: "5",
+            expect: Expectation::Exact(vec!["M", "M", "M", "M", "M"]),
+        },
+        Case {
+            msg: "multidigit md run length",
+            cigar: "12M",
+            md: "12",
+            expect: Expectation::Len(12),
+        },
+        Case {
+            msg: "deletion length mismatch is error",
+            cigar: "2M3D2M",
+            md: "2^AA2",
+            expect: Expectation::Err,
+        },
+        Case {
+            msg: "invalid md character is error",
+            cigar: "4M",
+            md: "2x2",
+            expect: Expectation::Err,
+        },
+    ];
 
-#[test]
-fn test_deletion_consumes_caret_block() -> Result<(), Error> {
-    assert_eq!(ops_for("2M3D2M", "2^AAA2")?, vec!["M", "M", "D3", "M", "M"]);
-    Ok(())
-}
+    let mut misses: Vec<String> = Vec::new();
 
-#[test]
-fn test_soft_clip_is_single_grouped_op() -> Result<(), Error> {
-    assert_eq!(ops_for("3S5M", "5")?, vec!["C3", "M", "M", "M", "M", "M"]);
-    Ok(())
-}
+    for c in cases {
+        match ops_for(c.cigar, c.md) {
+            Ok(got) => match c.expect {
+                Expectation::Exact(ref evec) => {
+                    let expected: Vec<String> = evec.iter().map(|s| s.to_string()).collect();
+                    if got != expected {
+                        let mut s = String::new();
+                        writeln!(&mut s, "{} failed:", c.msg).ok();
+                        writeln!(&mut s, "  input: cigar='{}' md='{}'", c.cigar, c.md).ok();
+                        writeln!(&mut s, "  expected: {:?}", expected).ok();
+                        writeln!(&mut s, "  got     : {:?}", got).ok();
+                        misses.push(s);
+                    }
+                }
+                Expectation::Len(n) => {
+                    if got.len() != n {
+                        let mut s = String::new();
+                        writeln!(&mut s, "{} failed (len):", c.msg).ok();
+                        writeln!(&mut s, "  input: cigar='{}' md='{}'", c.cigar, c.md).ok();
+                        writeln!(&mut s, "  expected len: {}", n).ok();
+                        writeln!(&mut s, "  got len     : {}", got.len()).ok();
+                        misses.push(s);
+                    }
+                }
+                Expectation::Err => {
+                    let mut s = String::new();
+                    writeln!(&mut s, "{} failed (expected error but got Ok):", c.msg).ok();
+                    writeln!(&mut s, "  input: cigar='{}' md='{}'", c.cigar, c.md).ok();
+                    writeln!(&mut s, "  got: {:?}", got).ok();
+                    misses.push(s);
+                }
+            },
+            Err(e) => {
+                match c.expect {
+                    Expectation::Err => { /* expected error -> OK */ }
+                    _ => {
+                        let mut s = String::new();
+                        writeln!(&mut s, "{} failed (unexpected error):", c.msg).ok();
+                        writeln!(&mut s, "  input: cigar='{}' md='{}'", c.cigar, c.md).ok();
+                        writeln!(&mut s, "  error: {:?}", e).ok();
+                        misses.push(s);
+                    }
+                }
+            }
+        }
+    }
 
-#[test]
-fn test_ref_skip_not_consumed_by_md() -> Result<(), Error> {
-    assert_eq!(ops_for("2M3N2M", "4")?, vec!["M", "M", "N3", "M", "M"]);
-    Ok(())
-}
-
-#[test]
-fn test_hard_clip_and_pad_are_invisible_to_iterator() -> Result<(), Error> {
-    assert_eq!(ops_for("2H5M2H", "5")?, vec!["M", "M", "M", "M", "M"]);
-    assert_eq!(ops_for("2M2P2M", "4")?, vec!["M", "M", "M", "M"]);
-    Ok(())
-}
-
-#[test]
-fn test_sequence_match_mismatch_kinds_route_through_md() -> Result<(), Error> {
-    assert_eq!(ops_for("5=", "5")?, vec!["M", "M", "M", "M", "M"]);
-    Ok(())
-}
-
-#[test]
-fn test_multidigit_md_run_length() -> Result<(), Error> {
-    assert_eq!(ops_for("12M", "12")?.len(), 12);
-    Ok(())
-}
-
-#[test]
-fn test_deletion_length_mismatch_is_error() {
-    // CIGAR deletes 3 bases, MD caret block only has 2 — must error, not silently desync.
-    assert!(ops_for("2M3D2M", "2^AA2").is_err());
-}
-
-#[test]
-fn test_invalid_md_character_is_error() {
-    assert!(ops_for("4M", "2x2").is_err());
+    if !misses.is_empty() {
+        panic!("Table-driven ops tests failures:\n\n{}", misses.join("\n"));
+    }
 }
