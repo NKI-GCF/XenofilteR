@@ -64,7 +64,9 @@ pub(crate) struct Config {
     ///
     /// hashlookup: works on arbitrary (non-sorted, non-collated) BAM input; highest
     /// memory usage; single-threaded only; preserves driving-stream (stream 0) output order.
-    #[arg(long, default_value = "namesorted", help_heading = "Input")]
+    #[arg(long, default_value = "namesorted",
+          env = "XENOFILTERS_ALGORITHM",
+          help_heading = "Input")]
     pub(crate) matching_algorithm: MatchingAlgorithm,
 
     /// Input format. Must match actual file content.
@@ -84,6 +86,7 @@ pub(crate) struct Config {
     #[arg(long, help_heading = "Input")]
     pub(crate) single_alignment_mode: bool,
 
+    // FIXME: what if there are multiple CRAM inputs?  TODO: allow multiple references.
     /// Reference FASTA for CRAM decoding (required when --input-format cram).
     #[arg(long, help_heading = "Input")]
     pub(crate) reference: Option<PathBuf>,
@@ -127,7 +130,9 @@ pub(crate) struct Config {
     pub(crate) no_program_line: bool,
 
     /// Write JSON summary statistics to this path (MultiQC-compatible).
-    #[arg(long, help_heading = "Output")]
+    #[arg(long,
+          env = "XENOFILTERS_STATS_OUTPUT",
+          help_heading = "Output")]
     pub(crate) stats_output: Option<PathBuf>,
 
     // -- Scoring --------------------------------------------------------------
@@ -193,7 +198,9 @@ pub(crate) struct Config {
     // -- Parallelism -----------------------------------------------------------
 
     /// Number of bgzf (de)compression threads per reader/writer.
-    #[arg(short = 't', long, default_value = "4", help_heading = "Parallelism")]
+    #[arg(short = 't', long, default_value = "4",
+          env = "XENOFILTERS_THREADS",
+          help_heading = "Parallelism")]
     pub(crate) threads: usize,
 
     /// Number of parallel scoring worker threads.
@@ -205,7 +212,9 @@ pub(crate) struct Config {
     ///
     /// Set to 1 (the default) for deterministic output order.
     /// Set to 0 to use all available logical CPUs.
-    #[arg(short = 'S', long, default_value = "1", help_heading = "Parallelism")]
+    #[arg(short = 'S', long, default_value = "1",
+          env = "XENOFILTERS_SCORE_THREADS",
+          help_heading = "Parallelism")]
     pub(crate) score_threads: usize,
 
     // -- Chimeric -------------------------------------------------------------

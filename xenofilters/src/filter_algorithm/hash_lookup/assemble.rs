@@ -24,9 +24,15 @@
 pub(crate) mod pending;
 pub(crate) mod stream;
 
-pub(crate) use pending::{PendingFragment, insert};
+pub(crate) use pending::{insert, PendingFragment};
 pub(crate) use stream::{EarlyKind, MappedRecord, RecordKind, StreamKind};
 
-use std::collections::HashMap;
+use ahash::RandomState;
 
-pub(crate) type FragmentTable = HashMap<Box<[u8]>, PendingFragment>;
+/// Read names are attacker-uncontrolled; SipHash's DoS resistance is unnecessary.
+/// ahash is ~2–3× faster on short byte-string keys.
+pub(crate) type FragmentTable = std::collections::HashMap<Box<[u8]>, PendingFragment, RandomState>;
+
+pub(crate) fn new_fragment_table() -> FragmentTable {
+    FragmentTable::with_hasher(RandomState::new())
+}

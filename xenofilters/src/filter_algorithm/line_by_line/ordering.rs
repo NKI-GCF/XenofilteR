@@ -523,7 +523,7 @@ impl<R: SimpleRec> LineByLine<R> {
                 return Err(Error::AlignmentStillHasReads { i });
             }
         }
-        self.progress.as_ref().map(|p| p.finish());
+        if let Some(p) = self.progress.as_ref() { p.finish() }
         Ok(())
     }
 

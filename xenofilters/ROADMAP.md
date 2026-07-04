@@ -80,8 +80,31 @@ Items marked ✓ are complete; ○ are planned; ◑ are in progress.
   heap allocations; correctness no longer depends on stream ordering within `best`.
 
 ---
+## v0.5 — Performance
 
-## v0.5 — Internal Architecture
+### memchr-accelerated MD parsing
+`memchr::memchr3(b'A', b'C', b'T', md)` + `memchr::memchr(b'^', md)` can replace the
+hand-rolled loop in `md_mismatches`. Benefit is SIMD-width dependent and may be
+negligible on typical 20–30 byte MD strings. Requires criterion benchmark showing
+>5% improvement before adoption.
+
+### jemalloc global allocator
+`tikv-jemallocator` as `#[global_allocator]` benefits HashLookup's
+`Box<MappedRecord>` churn. Unknown magnitude without profiling. Benchmark with
+`heaptrack` against a real PDX dataset (>10 M fragments) before adopting.
+
+### crossbeam work-stealing for parallel scoring
+Replace bounded `crossbeam_channel` in `parallel_io_loop` with
+`crossbeam::deque::{Injector, Worker, Stealer}`. Eliminates head-of-line blocking
+when one fragment triggers deep variant rescue. Requires restructuring
+`FragmentBundle` dispatch and result collection. Significant refactor.
+
+### compact_str for short read names
+Replace `Box<[u8]>` keys in `FragmentTable` with `compact_str::CompactString`
+(inline up to 24 bytes). Real Illumina names are 50+ bytes; benefit likely zero
+on production data. Profile first.
+
+## v0.6 — Internal Architecture
 
 ### ScoreCtx: shared scoring context struct
 

@@ -96,7 +96,7 @@ pub(crate) fn detect_chimeric_mate_complement<R: SimpleRec>(
 
         // Both streams must have paired-end records.
         let paired = sa.get_records().iter().chain(sb.get_records().iter())
-            .any(|r| r.flags().map_or(false, |f| f.is_segmented()));
+            .any(|r| r.flags().is_ok_and(|f| f.is_segmented()));
         if !paired { continue; }
 
         let mk_a = flag_mate_map(sa);

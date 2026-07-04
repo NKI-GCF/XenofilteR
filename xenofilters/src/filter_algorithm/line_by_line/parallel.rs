@@ -207,7 +207,7 @@ impl LineByLine<RecordBuf> {
                 return Err(Error::AlignmentStillHasReadsAfterParallelProcessing { j: i });
             }
         }
-        self.progress.as_ref().map(|p| p.finish());
+        if let Some(p) = self.progress.as_ref() { p.finish() }
         Ok(())
     }
 

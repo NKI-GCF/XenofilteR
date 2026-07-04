@@ -1,38 +1,37 @@
 //! One-line stderr progress updated every 100 k fragments.
 
-use std::io::Write;
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 const REPORT_INTERVAL: u64 = 100_000;
 
+const STYLE: &str = "[xenofilters] {human_pos} frags  {wide_bar:.cyan/blue}  \
+     {per_sec}  {elapsed_precise} elapsed  {eta_precise} ETA";
+
 pub(crate) struct ProgressReporter {
-    fragments:  u64,
-    start:      std::time::Instant,
+    bar: ProgressBar,
 }
 
 impl ProgressReporter {
     pub(crate) fn new() -> Self {
-        Self { fragments: 0, start: std::time::Instant::now() }
+        let bar = ProgressBar::with_draw_target(
+            None,
+            ProgressDrawTarget::stderr_with_hz(4), // 4 redraws/sec
+        );
+        bar.set_style(
+            ProgressStyle::with_template(STYLE)
+                .expect("progress template is valid")
+                .progress_chars("█░"),
+        );
+        Self { bar }
     }
 
-    /// Call once per completed fragment. Returns true on every report tick.
+    /// Call once per completed fragment. Returns true on every draw tick.
     pub(crate) fn tick(&mut self) -> bool {
-        self.fragments += 1;
-        if self.fragments % REPORT_INTERVAL != 0 {
-            return false;
-        }
-        let elapsed = self.start.elapsed().as_secs_f64();
-        let rate    = self.fragments as f64 / elapsed.max(1e-9) / 1_000.0;
-        eprint!(
-            "\r[xenofilters] {:>12} fragments  {:.1} k/s  {:.1}s elapsed   ",
-            self.fragments, rate, elapsed
-        );
-        let _ = std::io::stderr().flush();
-        true
+        self.bar.inc(1);
+        self.bar.is_finished() // always false; keeps caller API stable
     }
 
     pub(crate) fn finish(&self) {
-        eprintln!();
+        self.bar.finish_and_clear();
     }
-
-    pub(crate) fn count(&self) -> u64 { self.fragments }
 }

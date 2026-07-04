@@ -35,7 +35,7 @@ pub(crate) struct Fragment<'r, R> {
 ///
 /// `p_variant > 0.5` is a structural precondition for any entry to have
 /// a positive delta; callers need not filter further.
-pub(super) fn wis_max_rescue_delta<'v>(
+pub(crate) fn wis_max_rescue_delta<'v>(
     dvnt: &mut FragEvalVec<'v>,
     dp: &mut SmallVec<[f64; READ_CT]>,
 ) -> f64 {
@@ -373,7 +373,7 @@ where
         self.seg[seg_i]
             .quality_at(nt_i)
             .map(|q| (q as usize).min(MAX_Q - 1))
-            .ok_or_else(|| Error::QualityScoreOutOfBounds { nt_i, seg_i })
+            .ok_or(Error::QualityScoreOutOfBounds { nt_i, seg_i })
     }
 }
 

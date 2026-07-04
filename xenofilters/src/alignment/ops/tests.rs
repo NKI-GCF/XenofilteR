@@ -115,11 +115,8 @@ fn ops_for(cigar: &str, md: &str) -> Result<Vec<String>, Error> {
     let flags = rec.flags();
     let mcf = MdCigFlags::try_from_record(&rec, &flags)?;
     let ops: Result<Vec<BaseOp>, _> = ScoreOpIter::new(&mcf).collect();
-    Ok(ops
-        .map_err(|e| anyhow::anyhow!("{e}"))?
-        .iter()
-        .map(op_repr)
-        .collect())
+    //Ok(ops.iter().map(op_repr).collect())
+    Ok(ops?.iter().map(op_repr).collect())
 }
 
 // Table-driven unified test that replaces multiple small test functions.

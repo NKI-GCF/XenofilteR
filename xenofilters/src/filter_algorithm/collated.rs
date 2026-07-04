@@ -28,12 +28,13 @@ use noodles::sam::alignment::record_buf::{RecordBuf, data::field::Value};
 use reader::{CollatedReader, canonical_name};
 use smallvec::SmallVec;
 use std::collections::HashMap;
+use ahash::RandomState;
 
 pub(crate) struct CollatedMatcher<R: SimpleRec> {
     a: CollatedReader<R>,
     b: CollatedReader<R>,
-    waiting_a: HashMap<Box<[u8]>, FragmentState<R>>,
-    waiting_b: HashMap<Box<[u8]>, FragmentState<R>>,
+    waiting_a: HashMap<Box<[u8]>, FragmentState<R>, RandomState>,
+    waiting_b: HashMap<Box<[u8]>, FragmentState<R>, RandomState>,
     penalties: Penalty,
     scratch: Scratch,
     pub(crate) routing_counters: SmallVec<[u64; 8]>,
@@ -76,8 +77,8 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         Ok(Self {
             a: CollatedReader::new(stream0, strip, 0),
             b: CollatedReader::new(stream1, strip, 1),
-            waiting_a: HashMap::new(),
-            waiting_b: HashMap::new(),
+            waiting_a: HashMap::with_hasher(RandomState::new()),
+            waiting_b: HashMap::with_hasher(RandomState::new()),
             penalties,
             scratch: Scratch::new(),
             routing_counters: SmallVec::from_elem(0, aln_len * 4),

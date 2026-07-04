@@ -30,7 +30,8 @@ use crate::region::{AmbiguousRegions, DiagnosticVariants};
 use crate::variant::FragEvalVec;
 use crate::{print_routing_counters, Error};
 use assemble::{
-    insert, EarlyKind, FragmentTable, MappedRecord, PendingFragment, RecordKind, StreamKind,
+    insert, new_fragment_table, EarlyKind, FragmentTable, MappedRecord, PendingFragment,
+    RecordKind, StreamKind,
 };
 use noodles::core::Position;
 use noodles::sam::alignment::record::cigar::op::{Kind, Op};
@@ -102,7 +103,7 @@ impl<R: SimpleRec> HashLookup<R> {
         }
         Ok(Self {
             aln,
-            table: FragmentTable::new(),
+            table: new_fragment_table(),
             staged: StagedOutput::new(),
             seq_counter: 0,
             record_counters: [0, 0],

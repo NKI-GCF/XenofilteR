@@ -58,7 +58,8 @@ fn sig_from_fragment_profile(fp: &FragmentProfile) -> AlignSig {
         if mate.is_supplementary {
             continue;
         }
-        sig.primary_match_bases += mate.ops.iter().filter(|&&op| op == ReadOp::Match).count() - mate.del_events as usize;
+        sig.primary_match_bases +=
+            mate.ops.iter().filter(|&&op| op == ReadOp::Match).count() - mate.del_events as usize;
         sig.supp_count += mate.supp_count;
     }
     sig
@@ -104,7 +105,7 @@ fn subsumes(a: &AlignSig, b: &AlignSig) -> Option<Ordering> {
 /// match when the CIGAR op is M/=/X (0/7/8) AND the corresponding MD token is
 /// a digit (not a mismatch letter). Gracefully returns the count accumulated so
 /// far on any parse inconsistency.
-fn match_count_raw(cigar_bytes: &[u8], md: &[u8]) -> usize {
+pub(crate) fn match_count_raw(cigar_bytes: &[u8], md: &[u8]) -> usize {
     let mut matches = 0usize;
     let mut md_pos = 0usize;
     let mut md_match_remain = 0usize;
@@ -254,7 +255,7 @@ pub(crate) fn pre_assess_alignments(
                 sig_a, sig_b, ord
             );
             PreAssessResult::EarlyDecision(ord)
-        },
+        }
         ReadSpaceDecision::PartialScoring { .. } | ReadSpaceDecision::FallThrough => {
             #[cfg(test)]
             eprintln!(
@@ -316,6 +317,38 @@ pub(crate) fn pre_assess_scoring_records(
         Some(ord) => PreAssessResult::EarlyDecision(ord),
         None => PreAssessResult::FullScoring,
     }
+}
+
+#[cfg(test)]
+pub(crate) fn md_mismatches(md: &[u8]) -> usize {
+    let mut count = 0;
+    let mut pos = 0;
+    while pos < md.len() {
+        match md[pos] {
+            b'0'..=b'9' => {
+                // Skip digits
+                while pos < md.len() && md[pos].is_ascii_digit() {
+                    pos += 1;
+                }
+            }
+            b'^' => {
+                // Skip deletion block
+                pos += 1; // skip '^'
+                while pos < md.len() && !md[pos].is_ascii_digit() {
+                    pos += 1;
+                }
+            }
+            b'A' | b'C' | b'G' | b'T' | b'N' => {
+                count += 1; // mismatch
+                pos += 1;
+            }
+            _ => {
+                // Malformed MD string; stop counting
+                break;
+            }
+        }
+    }
+    count
 }
 
 // ---------------------------------------------------------------------------

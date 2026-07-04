@@ -1,4 +1,3 @@
-extern crate anyhow;
 extern crate clap;
 extern crate core;
 extern crate noodles;
@@ -53,6 +52,34 @@ fn run(mut config: Config) -> Result<(), Error> {
 
 fn main() -> Result<(), Error> {
     let config = Config::parse();
+
+    // JSON logging when RUST_LOG_FORMAT=json (e.g. for log aggregators).
+    // Plain fmt is the default.
+    let use_json = std::env::var("RUST_LOG_FORMAT")
+        .map(|v| v.eq_ignore_ascii_case("json"))
+        .unwrap_or(false);
+
+    let default_level = match config.verbose {
+        0 => "warn",
+        1 => "info",
+        _ => "debug",
+    };
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
+
+    if use_json {
+        tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(filter)
+            .with_writer(std::io::stderr)
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_target(false)
+            .with_writer(std::io::stderr)
+            .init();
+    }
 
     fmt()
         .with_env_filter(
@@ -259,6 +286,7 @@ fn load_diagnostic_variants(
 pub(crate) mod tests {
     pub(crate) mod common;
     mod exploratory;
+    pub(crate) mod property;
     use super::*;
     pub(crate) use alignment::tests::*;
     pub(crate) use aln_stream::tests::*;
