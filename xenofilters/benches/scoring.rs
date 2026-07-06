@@ -8,7 +8,7 @@ use xenofilters::{
         MdCigFlags,
         pre_assess::pre_assess_alignments,
     },
-    filter_algorithm::line_by_line::Scratch,
+    filter_algorithm::line_by_line::core::Scratch,
     penalty::Penalty,
     tests::create_record,
 };

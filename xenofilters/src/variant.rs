@@ -1,4 +1,4 @@
-mod eval;
+pub mod eval;
 mod population;
 mod sample;
 mod store;

@@ -84,7 +84,7 @@ pub struct Scratch {
 }
 
 impl Scratch {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             prev: SmallVec::new(),
             curr: SmallVec::new(),

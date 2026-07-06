@@ -10,7 +10,7 @@ use std::path::PathBuf;
 const ARG_MAX: usize = 4;
 
 #[derive(Copy, Clone, Debug, ValueEnum, PartialEq, Default)]
-pub(crate) enum StripReadSuffix {
+pub enum StripReadSuffix {
     #[default]
     Auto,
     True,
@@ -20,7 +20,7 @@ pub(crate) enum StripReadSuffix {
 
 /// Fragment-matching algorithm.
 #[derive(Copy, Clone, Debug, ValueEnum, PartialEq, Default)]
-pub(crate) enum MatchingAlgorithm {
+pub enum MatchingAlgorithm {
     /// Streaming merge. Both BAMs must be in identical query-name order.
     /// Lowest memory. Fastest. Supports multithreading. Default.
     #[default]
@@ -51,7 +51,7 @@ pub struct Config {
     /// Input alignments to compare. If the same readnames are consecutive and in the same order for
     /// all inputs, a low memory non-hashing strategy is adopted.
     #[arg(required = true, num_args = 1..MAX_STREAMS, help_heading = "Input")]
-    pub(crate) alignment: Vec<String>,
+    pub alignment: Vec<String>,
 
     /// Fragment-matching algorithm.
     ///
@@ -67,33 +67,33 @@ pub struct Config {
     #[arg(long, default_value = "namesorted",
           env = "XENOFILTERS_ALGORITHM",
           help_heading = "Input")]
-    pub(crate) matching_algorithm: MatchingAlgorithm,
+    pub matching_algorithm: MatchingAlgorithm,
 
     /// Input format. Must match actual file content.
     #[arg(long, default_value = "bam", help_heading = "Input")]
-    pub(crate) input_format: AlnFormat,
+    pub input_format: AlnFormat,
 
     /// Strip fastq-style /1 and /2 from read names when comparing
     #[arg(short = 'R', long, default_value = "auto", help_heading = "Input")]
-    pub(crate) strip_read_suffix: StripReadSuffix,
+    pub strip_read_suffix: StripReadSuffix,
 
     /// Read first alignment from stdin; enforced with only one input alignment
     #[arg(short, long, default_value = "false", help_heading = "Input")]
-    pub(crate) read_from_stdin: bool,
+    pub read_from_stdin: bool,
 
     /// Required explicit flag to allow running with only a single alignment stream
     /// using strain-specific variant profiles.
     #[arg(long, help_heading = "Input")]
-    pub(crate) single_alignment_mode: bool,
+    pub single_alignment_mode: bool,
 
     // FIXME: what if there are multiple CRAM inputs?  TODO: allow multiple references.
     /// Reference FASTA for CRAM decoding (required when --input-format cram).
     #[arg(long, help_heading = "Input")]
-    pub(crate) reference: Option<PathBuf>,
+    pub reference: Option<PathBuf>,
 
     /// Explicitly indicate that reads are paired-end
     #[arg(short, long, help_heading = "Input")]
-    pub(crate) is_paired: Option<bool>,
+    pub is_paired: Option<bool>,
 
     // -- Output ---------------------------------------------------------------
 
@@ -102,61 +102,61 @@ pub struct Config {
     // or keep the discarded and ambiguous reads based on read groups.
     /// Assign fragments matching alignment to these respective files. Writes first alignment to stdout when omitted
     #[arg(short, long, num_args = 1..MAX_STREAMS, help_heading = "Output")]
-    pub(crate) output: Vec<PathBuf>,
+    pub output: Vec<PathBuf>,
 
     /// Output file for all alignments (winners, discarded, and ambiguous).
     /// If set, overrides --output, --discarded-output, and --ambiguous-output.
     #[arg(short, long, help_heading = "Output")]
-    pub(crate) merged_output: Option<PathBuf>,
+    pub merged_output: Option<PathBuf>,
 
     /// Discard fragments distancing more in alignment to these files. Default: do not discard
     #[arg(short, long, num_args = 0..ARG_MAX, help_heading = "Output")]
-    pub(crate) discarded_output: Vec<PathBuf>,
+    pub discarded_output: Vec<PathBuf>,
 
     /// Write ambiguous reads (equally good mappings) to these files. Default: do not write
     #[arg(short, long, num_args = 0..ARG_MAX, help_heading = "Output")]
-    pub(crate) ambiguous_output: Vec<PathBuf>,
+    pub ambiguous_output: Vec<PathBuf>,
 
     /// Output format of stdout
     #[arg(short = 'O', long, default_value = "sam", help_heading = "Output")]
-    pub(crate) stdout_format: AlnFormat,
+    pub stdout_format: AlnFormat,
 
     /// Add an XF tag to the records.
     #[arg(short = 'A', long, default_value = "false", help_heading = "Output")]
-    pub(crate) add_decision_tag: bool,
+    pub add_decision_tag: bool,
 
     /// Don't add a PG line to the output BAM header.
     #[arg(short = 'P', long, default_value = "false", help_heading = "Output")]
-    pub(crate) no_program_line: bool,
+    pub no_program_line: bool,
 
     /// Write JSON summary statistics to this path (MultiQC-compatible).
     #[arg(long,
           env = "XENOFILTERS_STATS_OUTPUT",
           help_heading = "Output")]
-    pub(crate) stats_output: Option<PathBuf>,
+    pub stats_output: Option<PathBuf>,
 
     // -- Scoring --------------------------------------------------------------
 
     /// Mismatch penalty (affects mismatches)
     #[arg(short, long, default_value = "4", value_parser = clap::value_parser!(f64), help_heading = "Scoring")]
-    pub(crate) mismatch_penalty: f64,
+    pub mismatch_penalty: f64,
 
     /// Gap open penalty for deletions and insertions
     #[arg(short, long, default_value = "6", value_parser = clap::value_parser!(f64), help_heading = "Scoring")]
-    pub(crate) gap_open: f64,
+    pub gap_open: f64,
 
     /// Gap extend penalty (affects indels)
     #[arg(short = 'e', long, default_value = "1", value_parser = clap::value_parser!(f64), help_heading = "Scoring")]
-    pub(crate) gap_extend: f64,
+    pub gap_extend: f64,
 
     /// Penalty for 5'- and 3'-end clipping
     #[arg(short = 'c', long, default_value = "5", value_parser = clap::value_parser!(f64), help_heading = "Scoring")]
-    pub(crate) clipping_penalty: f64,
+    pub clipping_penalty: f64,
 
     /// Threshold (in phred scale) for considering two alignments equally good and thus ambiguous.
     /// Set to 0 to disable.
     #[arg(short, long, default_value = "0", value_parser = clap::value_parser!(u32).range(..=0x8000), help_heading = "Scoring")]
-    pub(crate) ambiguous_threshold: u32,
+    pub ambiguous_threshold: u32,
 
     /// Base-length constant used in the supplementary-alignment chimeric-junction
     /// penalty:  penalty = gap_open + chimeric_junction_bases × gap_extend.
@@ -166,19 +166,19 @@ pub struct Config {
     /// of typical chimeric span costlier than a 20-base insertion but cheaper
     /// than mapping to the wrong species entirely.
     #[arg(short = 'J', long, default_value = "20", value_parser = clap::value_parser!(u32).range(0..=10000), help_heading = "Scoring")]
-    pub(crate) chimeric_junction_bases: u32,
+    pub chimeric_junction_bases: u32,
 
     // -- Variants -------------------------------------------------------------
 
     /// Sample-specific variants used for variant-aware scoring.
     /// For single alignments, prefix with index (e.g., '0:file.vcf').
     #[arg(short, long, num_args = 0..ARG_MAX, help_heading = "Variants")]
-    pub(crate) sample_variants: Vec<String>,
+    pub sample_variants: Vec<String>,
 
     /// Population variants used for variant-aware scoring.
     /// For single alignments, prefix with index (e.g., '1:file.vcf').
     #[arg(short, long, num_args = 0..ARG_MAX, help_heading = "Variants")]
-    pub(crate) population_variants: Vec<String>,
+    pub population_variants: Vec<String>,
 
     // -- Regions --------------------------------------------------------------
 
@@ -187,13 +187,13 @@ pub struct Config {
     /// Collated: must be bgzf-compressed and tabix-indexed (.bed.gz + .tbi).
     /// HashLookup: loaded fully into memory.
     #[arg(long, num_args = 0..=2, help_heading = "Regions")]
-    pub(crate) ambiguous_regions: Vec<String>,
+    pub ambiguous_regions: Vec<String>,
 
     /// VCF/BCF of species-diagnostic positions per stream (positional: stream 0, then 1).
     /// Reads overlapping these positions are forced through full scoring.
     /// Same indexing and compression rules as --ambiguous-regions.
     #[arg(long, num_args = 0..=2, help_heading = "Regions")]
-    pub(crate) diagnostic_variants: Vec<String>,
+    pub diagnostic_variants: Vec<String>,
 
     // -- Parallelism -----------------------------------------------------------
 
@@ -201,7 +201,7 @@ pub struct Config {
     #[arg(short = 't', long, default_value = "4",
           env = "XENOFILTERS_THREADS",
           help_heading = "Parallelism")]
-    pub(crate) threads: usize,
+    pub threads: usize,
 
     /// Number of parallel scoring worker threads.
     ///
@@ -215,7 +215,7 @@ pub struct Config {
     #[arg(short = 'S', long, default_value = "1",
           env = "XENOFILTERS_SCORE_THREADS",
           help_heading = "Parallelism")]
-    pub(crate) score_threads: usize,
+    pub score_threads: usize,
 
     // -- Chimeric -------------------------------------------------------------
 
@@ -232,7 +232,7 @@ pub struct Config {
     ///          where HPV can integrate into human and human+HPV tissue is xenografted
     ///          in mouse.  Pairs not listed compete normally in the tournament.
     #[arg(long, num_args = 0.., help_heading = "Chimeric")]
-    pub(crate) chimeric_pairs: Vec<String>,
+    pub chimeric_pairs: Vec<String>,
 
     /// Human-readable labels for each alignment stream (positional: stream 0, 1, …).
     ///
@@ -242,32 +242,32 @@ pub struct Config {
     ///
     /// Example: `--stream-labels human hpv mouse`
     #[arg(long, num_args = 0.., help_heading = "Chimeric")]
-    pub(crate) stream_labels: Vec<String>,
+    pub stream_labels: Vec<String>,
 
     /// Parsed and validated chimeric stream pairs.
     /// Stored in canonical order (lower index first) so lookups are O(pairs).
     #[arg(skip)]
-    pub(crate) parsed_chimeric_pairs: Vec<[usize; 2]>,
+    pub parsed_chimeric_pairs: Vec<[usize; 2]>,
 
     // -- Filters ---------------------------------------------------------------
 
     /// Exclude read(pair)s, unmapped in both alignments, even from the filter output.
     #[arg(short = 'U', long, default_value = "false", help_heading = "Filters")]
-    pub(crate) discard_unmapped: bool,
+    pub discard_unmapped: bool,
 
     /// Skip secondary mappings even if the primary mapping is written
     #[arg(short, long, default_value = "false", help_heading = "Filters")]
-    pub(crate) skip_secondary: bool,
+    pub skip_secondary: bool,
 
     /// Suppress per-fragment progress output to stderr.
     #[arg(long, help_heading = "Filters")]
-    pub(crate) quiet: bool,
+    pub quiet: bool,
 
     // -- Verbosity -------------------------------------------------------------
 
     /// Increase log verbosity (-v = INFO, -vv = DEBUG). Overridden by RUST_LOG.
     #[arg(short, long, action = clap::ArgAction::Count, help_heading = "Verbosity")]
-    pub(crate) verbose: u8,
+    pub verbose: u8,
 }
 
 impl Config {

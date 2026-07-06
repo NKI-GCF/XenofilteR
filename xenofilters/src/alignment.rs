@@ -55,6 +55,7 @@ pub(crate) fn stringify_record<R: Record + PartialEq>(rec: &R) -> String {
 pub(crate) mod tests {
     use super::*;
     use crate::Error;
+    use crate::tests::create_record;
     pub(crate) use ops::tests::*;
 
     #[test]

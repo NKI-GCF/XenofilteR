@@ -1,5 +1,5 @@
 pub(super) mod chimeric;
-pub(super) mod core;
+pub mod core;
 pub(super) mod io;
 pub(super) mod parallel;
 

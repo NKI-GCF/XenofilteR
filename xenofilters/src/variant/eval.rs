@@ -9,7 +9,7 @@ pub struct Eval<'a> {
 }
 
 impl<'a> Eval<'a> {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Eval {
             incurred: 0.0,
             alt_score: 0.0,
@@ -26,7 +26,7 @@ impl<'a> Eval<'a> {
         self.vnt
             .expect("VariantEval should always have a variant reference")
     }
-    pub(crate) fn set_variant(&mut self, vnt: &'a dyn Variant) {
+    pub fn set_variant(&mut self, vnt: &'a dyn Variant) {
         self.vnt = Some(vnt);
     }
     pub(crate) fn start(&self) -> usize {
@@ -38,7 +38,7 @@ impl<'a> Eval<'a> {
     pub(crate) fn alt_end(&self) -> usize {
         self.vnt().pos() + self.vnt().alt_allele().len()
     }
-    pub(crate) fn update(&mut self, add: f64, alt_score: f64) {
+    pub fn update(&mut self, add: f64, alt_score: f64) {
         self.incurred += add;
         self.alt_score += alt_score;
     }
