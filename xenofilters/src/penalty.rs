@@ -1,7 +1,7 @@
 pub(super) const MAX_Q: usize = 93;
 
 #[derive(Clone, Copy)]
-pub(super) struct Penalty {
+pub struct Penalty {
     pub(crate) gap_open: f64,
     pub(crate) gap_extend: f64,
     pub(crate) log_likelihood_mismatch: [f64; MAX_Q],

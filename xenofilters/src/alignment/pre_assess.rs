@@ -105,7 +105,7 @@ fn subsumes(a: &AlignSig, b: &AlignSig) -> Option<Ordering> {
 /// match when the CIGAR op is M/=/X (0/7/8) AND the corresponding MD token is
 /// a digit (not a mismatch letter). Gracefully returns the count accumulated so
 /// far on any parse inconsistency.
-pub(crate) fn match_count_raw(cigar_bytes: &[u8], md: &[u8]) -> usize {
+pub fn match_count_raw(cigar_bytes: &[u8], md: &[u8]) -> usize {
     let mut matches = 0usize;
     let mut md_pos = 0usize;
     let mut md_match_remain = 0usize;
@@ -206,7 +206,7 @@ pub(crate) enum PreAssessResult {
 ///
 /// Falls back to `FullScoring` on segment-count mismatch, malformed MD/CIGAR,
 /// insertions, or when one stream has more matches but also more supplementaries.
-pub(crate) fn pre_assess_alignments(
+pub fn pre_assess_alignments(
     mcfs_a: &SmallVec<[MdCigFlags<'_>; READ_CT]>,
     mcfs_b: &SmallVec<[MdCigFlags<'_>; READ_CT]>,
 ) -> PreAssessResult {

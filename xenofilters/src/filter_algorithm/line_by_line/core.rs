@@ -16,7 +16,7 @@ use noodles::sam::alignment::Record;
 use smallvec::SmallVec;
 use crate::progress::ProgressReporter;
 
-pub(crate) const READ_CT: usize = 8;
+pub const READ_CT: usize = 8;
 pub(crate) const VNT_LEN: usize = 16;
 
 pub(crate) const MAX_STREAMS: usize = 32;
@@ -75,7 +75,7 @@ impl Default for Cell {
     }
 }
 
-pub(crate) struct Scratch {
+pub struct Scratch {
     pub(crate) prev: SmallVec<[Cell; VNT_LEN]>,
     pub(crate) curr: SmallVec<[Cell; VNT_LEN]>,
     pub(crate) dp: SmallVec<[f64; READ_CT]>,

@@ -45,7 +45,7 @@ pub(crate) enum MatchingAlgorithm {
     about = "Fast alignment-based read classifier for xenograft / PDX sequencing data",
     long_about = None,
 )]
-pub(crate) struct Config {
+pub struct Config {
     // -- Input ----------------------------------------------------------------
 
     /// Input alignments to compare. If the same readnames are consecutive and in the same order for
