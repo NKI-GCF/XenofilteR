@@ -1,7 +1,7 @@
 use crate::Error;
 use crate::variant::Variant;
 use noodles::bcf::record::Record;
-use noodles::vcf::{Header, variant::record::info::field::Value};
+use noodles::vcf::{Header, variant::record::info::field::{Value, value::Array::Float}};
 
 pub(crate) struct Population {
     pos: usize,
@@ -50,14 +50,11 @@ pub(crate) fn parse_population_record(
     // NEEDS VERIFICATION: Array::Float iterator API for noodles 0.111.0.
     let afs: Vec<f64> = match record.info().get(header, "AF").transpose()?.flatten() {
         Some(Value::Float(af)) => vec![af as f64],
-        Some(Value::Array(arr)) => match arr {
-            noodles::vcf::variant::record::info::field::value::Array::Float(fs) => {
-                fs.iter()
-                    .filter_map(|r| r.ok().flatten())
-                    .map(|f| f as f64)
-                    .collect()
-            }
-            _ => return Err(Error::MissingOrInvalidAfTag),
+        Some(Value::Array(Float(fs))) => {
+            fs.iter()
+                .filter_map(|r| r.ok().flatten())
+                .map(|f| f as f64)
+                .collect()
         },
         _ => return Err(Error::MissingOrInvalidAfTag),
     };

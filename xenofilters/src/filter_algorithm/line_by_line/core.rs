@@ -75,6 +75,7 @@ impl Default for Cell {
     }
 }
 
+#[derive(Default)]
 pub struct Scratch {
     pub(crate) prev: SmallVec<[Cell; VNT_LEN]>,
     pub(crate) curr: SmallVec<[Cell; VNT_LEN]>,

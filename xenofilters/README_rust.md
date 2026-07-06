@@ -106,3 +106,10 @@ cargo build --release
 ```
 
 Requires Rust ≥ 1.88 (edition 2024, `let`-chain syntax).
+
+## Verification
+cargo check                          # binary builds
+cargo check --lib                    # library builds
+cargo test --lib                     # lib unit tests
+cargo bench --no-run --features bench-internals   # benches compile
+cargo test --test integration        # integration tests compile
