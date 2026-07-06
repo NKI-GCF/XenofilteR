@@ -191,6 +191,60 @@ readability.
 - ○ **GitHub Actions CI** — build matrix (Linux x86_64, Linux aarch64, macOS);
   `cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check`.
 
+### crossbeam work-stealing for parallel fragment scoring
+
+**Problem:** Bounded `crossbeam_channel` in `parallel_io_loop` causes head-of-line
+blocking when a fragment with N overlapping variants takes O(N log N) to score.
+Cheap fragments behind it in the channel wait despite idle workers.
+
+**Affected configuration:** `--score-threads > 1` AND `--sample-variants` or
+`--population-variants` with many overlapping sites. Negligible impact otherwise
+(NW cost is O(L) and uniform without variants).
+
+**Design:**
+
+```
+IO thread
+  └─ injector.push(bundle)          // non-blocking; unbounded Injector
+  └─ in_flight.fetch_add(1)
+  └─ throttle: spin while in_flight > MAX_IN_FLIGHT
+                                     // MAX_IN_FLIGHT = score_threads * 4
+
+N workers (each owns a Worker<FragmentBundle> + knows all Stealers)
+  loop {
+    bundle = local.pop()
+        or steal_from_siblings()
+        or injector.steal()
+        or park_until_woken();
+    score_bundle(bundle);
+    result_tx.send(scored);           // bounded channel back to IO thread
+    in_flight.fetch_sub(1);
+  }
+```
+
+Back-pressure: `in_flight` atomic counter + IO thread spin. Prevents injector
+from growing unboundedly when scoring is slower than reading. `MAX_IN_FLIGHT =
+score_threads × 4` is a starting point; needs tuning against real PDX datasets.
+
+**Changes required:**
+- Replace `(work_tx, work_rx): (Sender, Receiver)` with
+  `crossbeam::deque::Injector<FragmentBundle>` + per-worker
+  `Worker<FragmentBundle>` + `Vec<Stealer<FragmentBundle>>`.
+- Worker thread startup: create `Worker::new_fifo()`, share `Arc<[Stealer]>`.
+- IO thread wakeup: replace channel blocking with `Parker`/`Unparker` from
+  `crossbeam_utils::sync`.
+- Result collection: keep existing bounded `result_tx`/`result_rx` channel
+  (already non-blocking for IO thread).
+
+**Prerequisite:** Criterion benchmark showing measurable head-of-line blocking
+on a dataset with variant rescue enabled (`--sample-variants`) and high variant
+density (>1 variant per 10 bp). Without this evidence, the simpler bounded
+channel is correct.
+
+**Risk:** injector is not FIFO across stealing. Output order already
+non-deterministic in parallel mode; this is acceptable.
+```
+
 ---
 
 ## Known limitations (not on the roadmap)
