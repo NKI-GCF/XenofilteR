@@ -7,7 +7,7 @@ use super::stream::{StreamAccumulator, StreamKind, RecordKind};
 // PendingFragment — unchanged structurally; type updated to RecordKind
 // ---------------------------------------------------------------------------
 
-pub(crate) struct PendingFragment {
+pub struct PendingFragment {
     driving_buf: StreamAccumulator,
     lookup_buf: StreamAccumulator,
     pub(crate) driving: StreamKind,

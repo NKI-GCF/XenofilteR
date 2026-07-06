@@ -1,16 +1,16 @@
-pub(crate) mod fragment;
-mod fragment_state;
+pub mod fragment;
+pub mod fragment_state;
 pub(crate) mod mate_kind;
 mod md_cig_flags;
 pub(crate) mod ops;
-pub(crate) mod pre_assess;
+pub mod pre_assess;
 mod read_profile; // private — used only by pre_assess
 mod variant_window;
 
 pub(crate) use fragment::{Fragment, SimpleRec};
 pub(crate) use fragment_state::FragmentState;
 pub(crate) use mate_kind::{mate_slot, segment_id, MateClassifiable, MateKind};
-pub(crate) use md_cig_flags::MdCigFlags;
+pub use md_cig_flags::MdCigFlags;
 pub(crate) use ops::{BaseOp, ScoreOpIter};
 pub(crate) use pre_assess::{pre_assess_alignments, pre_assess_scoring_records, PreAssessResult};
 pub(crate) use variant_window::{align_alt_to_read, weighted_ref_score, VariantWindow};

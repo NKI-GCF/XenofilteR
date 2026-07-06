@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    alignment::{fragment::SimpleRec, MdCigFlags, ScoreOpIter},
+    alignment::{fragment::SimpleRec, MdCigFlags},
     config::Config,
     filter_algorithm::line_by_line::Scratch,
     penalty::Penalty,
@@ -11,7 +11,6 @@ use crate::{
 use noodles::sam::alignment::record::Flags;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::{smallvec, SmallVec};
-use std::cmp::Ordering;
 
 // ---------------------------------------------------------------------------
 // Test penalty helpers
@@ -405,7 +404,7 @@ fn variant_rescue_p_variant_table() {
     for c in cases {
         let rec = create_record(b"r", "5M", b"AAGAA", &[30u8; 5], "2G2", false).unwrap();
         let flags = rec.flags();
-        let mv: &'static _ = Box::leak(Box::new(MockVariant {
+        let _mv: &'static _ = Box::leak(Box::new(MockVariant {
             pos: 2,
             ref_a: vec![b'A'],
             alt_a: vec![b'G'],

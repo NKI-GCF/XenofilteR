@@ -4,7 +4,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use ahash::RandomState;
 use std::collections::HashMap;
-use xenofilters::filter_algorithm::hash_lookup::assemble::PendingFragment;
 
 fn make_keys(n: usize) -> Vec<Box<[u8]>> {
     // Realistic Illumina read names: ~50 bytes.

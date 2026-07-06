@@ -14,7 +14,7 @@ use smallvec::SmallVec;
 use context::{VariantCtx, WindowCtx};
 pub(crate) use record::SimpleRec;
 
-pub(crate) struct Fragment<'r, R> {
+pub struct Fragment<'r, R> {
     pen: &'r Penalty,
     seg: SmallVec<[&'r R; READ_CT]>,
     md_cig_flags: SmallVec<[MdCigFlags<'r>; READ_CT]>,
@@ -70,7 +70,7 @@ pub fn wis_max_rescue_delta<'v>(
 }
 
 impl<'r, R: SimpleRec> Fragment<'r, R> {
-    pub(crate) fn new(
+    pub fn new(
         pen: &'r Penalty,
         seg: SmallVec<[&'r R; READ_CT]>,
         md_cig_flags: SmallVec<[MdCigFlags<'r>; READ_CT]>,
@@ -94,7 +94,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             nt_i: 0,
         })
     }
-    pub(crate) fn score<'v>(
+    pub fn score<'v>(
         &mut self,
         scratch: &mut Scratch,
         dvnt: &mut FragEvalVec<'v>,

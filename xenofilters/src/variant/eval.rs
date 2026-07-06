@@ -1,7 +1,7 @@
 use crate::variant::Variant;
 
 #[derive(Clone, Copy)]
-pub(crate) struct Eval<'a> {
+pub struct Eval<'a> {
     vnt: Option<&'a dyn Variant>,
     // FIXME: a variant could have multiple alleles, so these should become smallvecs:
     alt_score: f64,

@@ -15,7 +15,7 @@ use store::EvalVec;
 pub(super) type FragEvalVec<'v> = SmallVec<[EvalVec<'v>; READ_CT]>;
 
 /// Trait for any object that can be scored against an alignment.
-pub(crate) trait Variant: Sync + Send {
+pub trait Variant: Sync + Send {
     /// The 1-based reference position of the variant.
     fn pos(&self) -> usize;
 

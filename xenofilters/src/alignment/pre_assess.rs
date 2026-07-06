@@ -181,7 +181,7 @@ pub fn match_count_raw(cigar_bytes: &[u8], md: &[u8]) -> usize {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
-pub(crate) enum PreAssessResult {
+pub enum PreAssessResult {
     /// Structural dominance resolved the fragment without NW DP.
     /// `Greater` = stream A wins, `Less` = stream B wins, `Equal` = tie.
     EarlyDecision(Ordering),

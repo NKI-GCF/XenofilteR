@@ -4,7 +4,6 @@ use crate::{
     config::{Config, StripReadSuffix},
     filter_algorithm::hash_lookup::HashLookup,
     tests::create_record,
-    Error,
 };
 use noodles::sam::alignment::record::Flags;
 use noodles::sam::alignment::record_buf::RecordBuf;

@@ -13,9 +13,9 @@
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+
     use crate::alignment::MdCigFlags;
-    use crate::alignment::SimpleRec;
+
     use crate::alignment::{align_alt_to_read, weighted_ref_score, Fragment, VariantWindow};
     use crate::filter_algorithm::line_by_line::{Scratch, READ_CT};
     use crate::penalty::Penalty;
@@ -23,8 +23,8 @@ mod tests {
     use crate::variant::Eval;
     use crate::variant::FragEvalVec;
     use crate::variant::Variant;
-    use noodles::sam::alignment::record::data::field::{Tag, Value};
-    use noodles::sam::alignment::record::Flags;
+    use noodles::sam::alignment::record::data::field::Tag;
+
     use noodles::sam::alignment::record_buf::{data::field::Value as RBValue, RecordBuf};
     use smallvec::{smallvec, SmallVec};
     use std::f64;
@@ -81,7 +81,7 @@ mod tests {
         let read = b"AAGAA";
         // create a read-record; reuse create_record helper (alignment tests do this)
         let rec = create_record(b"r", "5M", b"AAGAA", &[30u8; 5], "5", false)?;
-        let flags = rec.flags();
+        let _flags = rec.flags();
 
         let w = VariantWindow::compute(1, 6, 3, 4).expect("window computation");
         let pen = flat_penalty();
@@ -281,12 +281,12 @@ mod tests {
     fn quality_index_clamping_and_errors() -> Result<(), crate::Error> {
         // Build a record with extremely large quality values (simulate overflow)
         let qual_big: Vec<u8> = vec![255u8; 10];
-        let mut rec = create_record(b"r", "10M", &[], &qual_big, "10", false)?;
+        let rec = create_record(b"r", "10M", &[], &qual_big, "10", false)?;
         // The fragment q() clamps to MAX_Q-1 and should not panic.
         let flags = rec.flags();
         let md_flags = smallvec![MdCigFlags::try_from_record(&rec, &flags)?];
         let p = flat_penalty();
-        let mut frag = Fragment::new(&p, smallvec![&rec], md_flags)?;
+        let frag = Fragment::new(&p, smallvec![&rec], md_flags)?;
         // q(0, 0) should be within bounds (clamped)
         let q0 = frag.q(0, 0)?;
         assert_eq!(q0, (crate::penalty::MAX_Q - 1));
@@ -303,11 +303,11 @@ mod tests {
         // Read seq where reverse-complement has support: original read "CCT"
         // alt "G" aligns to reversed/complemented base
         let read = b"CCT";
-        let mut rec = create_record(b"r", "3M", read, &[30u8; 3], "3", true)?; // set reverse flag
+        let rec = create_record(b"r", "3M", read, &[30u8; 3], "3", true)?; // set reverse flag
         let flags = rec.flags();
         let md_flags = smallvec![MdCigFlags::try_from_record(&rec, &flags)?];
         let p = flat_penalty();
-        let mut frag = Fragment::new(&p, smallvec![&rec], md_flags)?;
+        let _frag = Fragment::new(&p, smallvec![&rec], md_flags)?;
         let mut scratch = Scratch::new();
         // Variant alt "G" at pos that corresponds to read index 1 when revcomped.
         let w = VariantWindow::compute(0, 3, 1, 2).unwrap(); // single-base window

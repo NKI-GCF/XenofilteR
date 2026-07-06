@@ -1,7 +1,7 @@
 //! Parametric test infrastructure shared across all test modules.
 //! Import with `use crate::tests::common::*;`
 
-use crate::{Error, tests::create_record};
+use crate::tests::create_record;
 use noodles::sam::alignment::record_buf::RecordBuf;
 
 /// A single row in a table-driven test.

@@ -2,7 +2,7 @@ use crate::Error;
 use noodles::sam::alignment::record::{Cigar, Flags, Record, data::field::Tag, data::field::Value};
 use std::cmp::Ordering;
 
-pub(crate) struct MdCigFlags<'r> {
+pub struct MdCigFlags<'r> {
     flags: &'r Flags,
     md: &'r [u8],
     cig: Box<dyn Cigar + 'r>,
@@ -18,7 +18,7 @@ pub(crate) struct MdCigFlags<'r> {
 
 impl<'r> MdCigFlags<'r> {
     /// Build an `MdCigRef` from a stored `MdCigFlags` and its matching record.
-    pub(crate) fn try_from_record<R: Record>(
+    pub fn try_from_record<R: Record>(
         record: &'r R,
         flags: &'r Flags,
     ) -> Result<Self, Error> {

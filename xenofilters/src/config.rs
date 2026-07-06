@@ -512,7 +512,7 @@ impl Config {
     }
 
     /// Build a [`Penalty`] from the current penalty parameters.
-    pub(super) fn to_penalties(&self) -> Penalty {
+    pub fn to_penalties(&self) -> Penalty {
         let mut error_prob = [0.0_f64; MAX_Q];
         for (q, item) in error_prob.iter_mut().enumerate() {
             *item = 10f64.powf(-(q as f64) / 10.0);

@@ -2,14 +2,13 @@ use crate::{
     alignment::FragmentState,
     aln_stream::AlignmentStream,
     config::Config,
-    filter_algorithm::line_by_line::{core::FragmentBuffer, ordering::Decision},
+    filter_algorithm::line_by_line::core::FragmentBuffer,
     tests::{create_record, MockStream},
     Error, LineByLine,
 };
 use noodles::sam::alignment::record::Flags;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::{smallvec, SmallVec};
-use std::cmp::Ordering;
 
 // ---------------------------------------------------------------------------
 // Builder helpers
@@ -263,11 +262,8 @@ fn chimeric_read_split_complementary_clips() {
     // read2: entirely in HPV (0x81)
     // Both streams' read1 primary — segment IDs *not* disjoint (both claim read1),
     // so mate-split detection doesn't fire. Read-split detection must fire.
-    use crate::alignment::ops::tests::create_cigar;
-    use noodles::{
-        core::Position,
-        sam::alignment::record_buf::{Cigar, QualityScores},
-    };
+
+    use noodles::core::Position;
 
     let q = vec![30u8; 50];
 

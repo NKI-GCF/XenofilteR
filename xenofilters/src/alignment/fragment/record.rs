@@ -6,7 +6,7 @@
 
 use noodles::sam::{Header, alignment::record_buf::RecordBuf};
 
-pub(crate) trait SimpleRec:
+pub trait SimpleRec:
     noodles::sam::alignment::Record + PartialEq
 {
     fn quality_at(&self, i: usize) -> Option<u8>;

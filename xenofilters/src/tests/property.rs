@@ -126,7 +126,7 @@ proptest! {
             .enumerate()
             .map(|(i, _)| Box::leak(Box::new(V { pos: i * 5, delta: 0.0 })) as &'static V)
             .collect();
-        let mut evals: smallvec::SmallVec<[Eval<'_>; 4]> = vs
+        let evals: smallvec::SmallVec<[Eval<'_>; 4]> = vs
             .iter()
             .zip(deltas.iter())
             .map(|(v, &d)| {

@@ -4,7 +4,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use xenofilters::{
     alignment::{
-        fragment::{score_state_nw, Fragment},
+        fragment::Fragment,
         MdCigFlags,
         pre_assess::pre_assess_alignments,
     },
@@ -101,7 +101,7 @@ fn bench_pre_assess(c: &mut Criterion) {
 fn bench_wis(c: &mut Criterion) {
     use xenofilters::{
         alignment::fragment::wis_max_rescue_delta,
-        variant::{Eval, Variant},
+        variant::{eval::Eval, Variant},
     };
 
     struct V { pos: usize, len: usize, delta: f64 }

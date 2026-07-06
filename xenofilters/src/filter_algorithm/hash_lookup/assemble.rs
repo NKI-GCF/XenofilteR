@@ -21,7 +21,7 @@
 //! identical-contribution in both streams (Unmapped-Unmapped or
 //! Perfect-Perfect), even when the fragment as a whole requires scoring.
 
-pub(crate) mod pending;
+pub mod pending;
 pub(crate) mod stream;
 
 pub(crate) use pending::{insert, PendingFragment};
