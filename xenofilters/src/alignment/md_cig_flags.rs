@@ -14,6 +14,12 @@ pub struct MdCigFlags<'r> {
     /// We only need this on the PRIMARY record: once all primaries have been
     /// seen and none carries a non-empty SA tag, no supplementaries can follow.
     supp_count: usize,
+    /// Read sequence (ASCII bases). `None` when bisulfite mode is off or
+    /// the sequence is unavailable (hard-clipped supplementary).
+    seq: Option<Vec<u8>>,
+    /// Whether this record is on the reverse strand. Used for strand-specific
+    /// bisulfite conversion detection (C→T forward, G→A reverse).
+    is_reverse: bool,
 }
 
 impl<'r> MdCigFlags<'r> {
@@ -21,6 +27,7 @@ impl<'r> MdCigFlags<'r> {
     pub fn try_from_record<R: Record>(
         record: &'r R,
         flags: &'r Flags,
+        bisulfite: bool,
     ) -> Result<Self, Error> {
         if flags.is_unmapped() {
             return Err(Error::UnmappedRecordInMdCigFlags);
@@ -59,12 +66,42 @@ impl<'r> MdCigFlags<'r> {
             _ => 0,
         };
 
+        // Sequence for bisulfite conversion detection.
+        // Only extracted when bisulfite mode is on; zero cost otherwise.
+        let seq: Option<Vec<u8>> = if bisulfite {
+            let s = record.sequence();
+            // Hard-clipped reads have an empty sequence in BAM; treat as None.
+            if s.is_empty() { 
+                None 
+            } else {
+                // Clone the sequence into a Vec for storage.
+                let bytes: Vec<u8> = s
+                    .iter()
+                    .map(|base| {
+                        // Convert noodles base representation to ASCII byte
+                        match base {
+                            noodles::sam::alignment::record::sequence::Base::A => b'A',
+                            noodles::sam::alignment::record::sequence::Base::C => b'C',
+                            noodles::sam::alignment::record::sequence::Base::G => b'G',
+                            noodles::sam::alignment::record::sequence::Base::T => b'T',
+                            noodles::sam::alignment::record::sequence::Base::N => b'N',
+                        }
+                    })
+                    .collect();
+                if bytes.is_empty() { None } else { Some(bytes) }
+            }
+        } else {
+            None
+        };
+
         let cig: Box<dyn Cigar + 'r> = record.cigar();
         Ok(MdCigFlags {
             flags,
             md,
             cig,
             supp_count,
+            seq,
+            is_reverse: flags.is_reverse_complemented(),
         })
     }
 
@@ -76,9 +113,17 @@ impl<'r> MdCigFlags<'r> {
     /// Any supplementary record that would follow in the BAM stream carries a
     /// chimeric-junction penalty; a fragment with pending supplementaries therefore
     /// cannot be fast-pathed as perfect.
+    ///
+    /// In bisulfite mode, the perfect fast path is suppressed entirely (returns false)
+    /// to ensure that all conversions are scored correctly.
     pub(crate) fn is_perfect(&self) -> bool {
+        // Bisulfite mode: suppress perfect fast path for safety
+        if self.seq.is_some() {
+            return false;
+        }
         self.supp_count == 0 && self.cig.len() == 1 && self.md.iter().all(|&b| b.is_ascii_digit())
     }
+
     pub(crate) fn supp_count(&self) -> usize {
         self.supp_count
     }
@@ -96,6 +141,9 @@ impl<'r> MdCigFlags<'r> {
     }
     pub(crate) fn get_cigar(&self) -> &(dyn Cigar + 'r) {
         &self.cig
+    }
+    pub(crate) fn seq(&self) -> Option<&[u8]> {
+        self.seq.as_deref()
     }
 }
 
