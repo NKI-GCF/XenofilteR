@@ -2,7 +2,7 @@ use crate::Error;
 use crate::filter_algorithm::line_by_line::{MAX_STREAMS, core::COUNTER_STRIDE};
 use crate::{
     bam::AlnFormat,
-    penalty::{MAX_Q, Penalty},
+    penalty::{MAX_Q, Penalty, ErrorModel},
 };
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
@@ -124,6 +124,29 @@ pub struct Config {
     pub stats_output: Option<PathBuf>,
 
     // -- Scoring --------------------------------------------------------------
+
+    /// Platform error model. Sets defaults for gap penalties and quality
+    /// calibration. Individual penalty flags override model defaults.
+    /// illumina (default) | hifi | ont
+    #[arg(long, default_value = "illumina",
+          help_heading = "Scoring")]
+    pub error_model: ErrorModel,
+
+    /// Enable bisulfite/WGBS scoring mode.
+    ///
+    /// C→T mismatches on the forward strand and G→A mismatches on the
+    /// reverse strand are treated as zero-penalty bisulfite conversions
+    /// rather than true substitution errors.
+    ///
+    /// Requires a bisulfite-aware aligner (bismark, bwa-meth, bsbolt).
+    /// Works correctly with both directional (lister) and non-directional
+    /// WGBS libraries.
+    ///
+    /// Suppresses the Tier-2 perfect-match fast path for all reads to
+    /// ensure conversion-aware scoring is always applied.
+    #[arg(long, default_value = "false",
+          help_heading = "Scoring")]
+    pub bisulfite: bool,
 
     /// Mismatch penalty (affects mismatches)
     #[arg(short, long, default_value = "4", value_parser = clap::value_parser!(f64), help_heading = "Scoring")]
@@ -502,6 +525,23 @@ impl Config {
             return Err(Error::InvalidPenalties);
         }
 
+        if self.bisulfite {
+            tracing::info!(
+                "Bisulfite mode enabled: C→T (forward) and G→A (reverse) \
+                 mismatches scored as zero-penalty conversions. \
+                 Tier-2 perfect-match fast path suppressed."
+            );
+        }
+        if self.error_model != ErrorModel::Illumina {
+            tracing::info!(
+                model = ?self.error_model,
+                quality_calibration = self.error_model.quality_calibration(),
+                gap_open = self.gap_open,
+                gap_extend = self.gap_extend,
+                "Non-default error model active"
+            );
+        }
+
         tracing::debug!(
             threads = self.threads,
             score_threads = self.score_threads,
@@ -544,33 +584,15 @@ impl Config {
 
     /// Build a [`Penalty`] from the current penalty parameters.
     pub fn to_penalties(&self) -> Penalty {
-        let mut error_prob = [0.0_f64; MAX_Q];
-        for (q, item) in error_prob.iter_mut().enumerate() {
-            *item = 10f64.powf(-(q as f64) / 10.0);
-        }
-
-        let mut log_likelihood_match = [0.0_f64; MAX_Q];
-        for (q, item) in log_likelihood_match.iter_mut().enumerate() {
-            *item = (1.0 - error_prob[q]).log10();
-        }
-
-        let reference_penalty = 4.0;
-        let scaling_factor = self.mismatch_penalty / reference_penalty;
-
-        let mut log_likelihood_mismatch = [0.0f64; MAX_Q];
-        for (q, item) in log_likelihood_mismatch.iter_mut().enumerate() {
-            *item = -(q as f64) / 10.0 * scaling_factor;
-        }
-
-        Penalty {
-            gap_open: self.gap_open,
-            gap_extend: self.gap_extend,
-            log_likelihood_mismatch,
-            log_likelihood_match,
-            chimeric_junction_penalty: self.gap_open
-                + (self.chimeric_junction_bases as f64) * self.gap_extend,
-        }
+        Penalty::build(
+            self.gap_open,
+            self.gap_extend,
+            self.mismatch_penalty,
+            self.chimeric_junction_bases,
+            self.error_model,
+        )
     }
+
     pub(crate) fn print_routing_counters(&self, counters: &[u64], tag: &str) {
         let stream_count = counters.len() / COUNTER_STRIDE;
         for nr in 0..stream_count {
