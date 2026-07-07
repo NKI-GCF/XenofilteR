@@ -14,4 +14,3 @@ mod tests;
 // Re-export the main type and the most important items
 pub(crate) use chimeric::{detect_chimeric_event, ChimericDecision};
 pub(crate) use core::{LineByLine, Scratch, MAX_STREAMS, READ_CT};
-pub(crate) use io::print_routing_counters;

@@ -16,7 +16,7 @@ pub(crate) mod reader;
 #[cfg(test)]
 pub(crate) mod tests;
 
-use crate::{Error, print_routing_counters};
+use crate::Error;
 use crate::alignment::{FragmentState, SimpleRec, PreAssessResult, pre_assess_alignments, MateKind, mate_kind::MateClassifiable };
 use crate::aln_stream::AlignmentStream;
 use crate::config::{Config, StripReadSuffix};
@@ -47,7 +47,7 @@ pub(crate) struct CollatedMatcher<R: SimpleRec> {
 
 impl<R: SimpleRec> CollatedMatcher<R> {
     pub(crate) fn new(
-        config: Config,
+        config: &Config,
         mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
         bed: [Option<TabixBed>; 2],
         vcf: [Option<TabixVcf>; 2],
@@ -101,7 +101,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
     //
     // Output order is NOT guaranteed (acceptable for Collated).
     // N-STREAM: scales to N waiting maps; memory is O(name-order skew × streams).
-    pub(crate) fn process(&mut self) -> Result<(), Error> {
+    pub(crate) fn process(&mut self, config: &Config) -> Result<(), Error> {
         loop {
             let fa = self.a.next_fragment()?;
             let fb = self.b.next_fragment()?;
@@ -124,7 +124,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         for frag in drain_b {
             self.write_fragment(frag, None, Some(true))?;
         }
-        print_routing_counters(&self.routing_counters, "collated");
+        config.print_routing_counters(&self.routing_counters, "Collated");
         Ok(())
     }
 

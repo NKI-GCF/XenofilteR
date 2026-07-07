@@ -17,7 +17,7 @@ use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::{SmallVec, smallvec};
 use std::sync::Arc;
 use std::thread;
-use crate::print_routing_counters;
+use crate::config::Config;
 
 /// Everything a scoring worker needs for one fragment.
 /// All data is owned or `Arc`-wrapped; no lifetime entanglement.
@@ -68,7 +68,7 @@ impl LineByLine<RecordBuf> {
     /// atomic increment per stream) before spawning workers, giving every
     /// worker full variant-rescue capability with zero unsafe code and zero
     /// extra allocation.
-    pub(crate) fn process_parallel(&mut self) -> Result<(), Error> {
+    pub(crate) fn process_parallel(&mut self, config: &Config) -> Result<(), Error> {
         let n   = self.score_threads;
         let cap = n * 2; // bounded channel capacity — natural backpressure
 
@@ -101,14 +101,16 @@ impl LineByLine<RecordBuf> {
         // closes automatically when all workers have finished.
         drop(result_tx);
 
-        let io_result = self.parallel_io_loop(work_tx, result_rx, ctx, stores);
+        let io_result = self.parallel_io_loop(config, work_tx, result_rx, ctx, stores);
 
         for w in workers {
             if let Err(e) = w.join() {
                 tracing::error!(?e, "scorer thread panicked");
             }
         }
-        io_result
+        io_result?;
+
+        Ok(())
     }
 
     /// IO loop: assembles fragments, sends them for scoring, drains results.
@@ -119,6 +121,7 @@ impl LineByLine<RecordBuf> {
     /// side flowing while waiting for channel capacity.
     pub(super) fn parallel_io_loop(
         &mut self,
+        config:    &Config,
         work_tx:   Sender<FragmentBundle>,
         result_rx: Receiver<ScoredFragment>,
         ctx:       ScoringContext,
@@ -201,7 +204,7 @@ impl LineByLine<RecordBuf> {
             if let Some(ref mut p) = self.progress { p.tick(); }
         }
 
-        print_routing_counters(&self.routing_counters, "collated_parallel");
+        config.print_routing_counters(&self.routing_counters, "namesorted-parallel");
         for i in 0..aln_len {
             if self.aln[i].next_rec()?.is_some() {
                 return Err(Error::AlignmentStillHasReadsAfterParallelProcessing { j: i });

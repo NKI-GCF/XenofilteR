@@ -19,10 +19,10 @@ fn cfg() -> Config {
     }
 }
 
-fn make(s0: Vec<RecordBuf>, s1: Vec<RecordBuf>) -> HashLookup<RecordBuf> {
+fn make(s0: Vec<RecordBuf>, s1: Vec<RecordBuf>, config: &Config) -> HashLookup<RecordBuf> {
     let a0 = Box::new(MockStream::new(0, s0)) as Box<dyn AlignmentStream<RecordBuf>>;
     let a1 = Box::new(MockStream::new(1, s1)) as Box<dyn AlignmentStream<RecordBuf>>;
-    HashLookup::new(cfg(), smallvec![a0, a1], [None, None], [None, None]).unwrap()
+    HashLookup::new(&config, smallvec![a0, a1], [None, None], [None, None]).unwrap()
 }
 
 fn r(name: &[u8], cigar: &str, md: &str) -> RecordBuf {
@@ -210,13 +210,15 @@ fn hash_lookup_table() {
             ambg1: 0,
         }, // placeholder — see below
     ];
+    let config = Config::default();
+
     for c in cases {
         // Skip the suffix-stripping placeholder row.
         if c.label.starts_with("suffix") {
             continue;
         }
-        let mut h = make(c.s0.clone(), c.s1.clone());
-        h.process().unwrap();
+        let mut h = make(c.s0.clone(), c.s1.clone(), &config);
+        h.process(&config).unwrap();
         assert_eq!(out0(&h), c.out0, "[{}] out[0]", c.label);
         assert_eq!(out1(&h), c.out1, "[{}] out[1]", c.label);
         assert_eq!(disc0(&h), c.disc0, "[{}] disc[0]", c.label);
@@ -228,7 +230,7 @@ fn hash_lookup_table() {
 
 #[test]
 fn hash_lookup_suffix_stripping() {
-    let cfg = Config {
+    let config = Config {
         strip_read_suffix: StripReadSuffix::True,
         gap_open: 6.0,
         gap_extend: 1.0,
@@ -243,8 +245,8 @@ fn hash_lookup_suffix_stripping() {
         1,
         vec![create_record(b"R1/2", "5M5S", &[], &[30u8; 10], "5", false).unwrap()],
     )) as Box<dyn AlignmentStream<RecordBuf>>;
-    let mut h = HashLookup::new(cfg, smallvec![a0, a1], [None, None], [None, None]).unwrap();
-    h.process().unwrap();
+    let mut h = HashLookup::new(&config, smallvec![a0, a1], [None, None], [None, None]).unwrap();
+    h.process(&config).unwrap();
     assert_eq!(out0(&h), 1, "s0 perfect should win");
     assert_eq!(disc1(&h), 1, "s1 should be discarded");
 }

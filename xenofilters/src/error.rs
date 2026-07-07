@@ -147,6 +147,9 @@ pub enum Error {
         source: std::io::Error,
     },
 
+    #[error("Ambiguous fraction {value} is out of range [0.0, 1.0]")]
+    WarnAmbigFractionOutOfRange { value: f64 },
+
     // ---------------------------------------------------------------------------
     // Region / BED / Tabix
     // ---------------------------------------------------------------------------
@@ -385,11 +388,6 @@ pub enum Error {
     #[error("namesorted supports at most {max} alignment streams (got {count})")]
     MaxStreamsExceeded { count: usize, max: usize },
 
-    #[error(
-        "Cannot use --merged-output in combination with --output, --discarded-output, or --ambiguous-output."
-    )]
-    MergedOutputConflict,
-
     #[error("--ambiguous-regions: at most 2 files (one per stream), got {count}")]
     TooManyAmbiguousRegionsFiles { count: usize },
 
@@ -413,11 +411,6 @@ pub enum Error {
         "More output paths ({count}) than logical alignment processing streams ({max}) specified"
     )]
     TooManyOutputPaths { count: usize, max: usize },
-
-    #[error(
-        "More discarded output paths ({count}) than logical alignment processing streams ({max}) specified"
-    )]
-    TooManyDiscardedOutputPaths { count: usize, max: usize },
 
     #[error(
         "Only one ambiguous output file is allowed when operating on a single alignment stream (got {count})."

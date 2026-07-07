@@ -1,8 +1,5 @@
-mod cram;
-mod sam_stdin;
-
 use crate::alignment::SimpleRec;
-use crate::bam::{out_from_file, path_unicode_ok, OutputMode};
+use crate::bam::{out_from_file, path_unicode_ok, SUFFIX_AMBIGUOUS, SUFFIX_FILTERED, BamOutput, rewrite_rg, expand_header};
 use crate::config::MatchingAlgorithm;
 use crate::config::{Config, StripReadSuffix};
 use crate::variant::{
@@ -18,9 +15,6 @@ use std::io::Read as ioRead;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::Arc;
-
-pub(crate) use cram::CramStream;
-pub(crate) use sam_stdin::SamStdinStream;
 
 pub(crate) trait AlignmentStream<R: SimpleRec> {
     fn next_qname(&self) -> &[u8];
@@ -111,7 +105,9 @@ pub(crate) struct AlnStream<R> {
     sample_variants: Option<Arc<Store<Sample>>>,
     population_variants: Option<Arc<Store<Population>>>,
     pub(crate) header: Header,
-    output_mode: OutputMode,
+    output: Option<BamOutput>,
+    ambiguous: Option<BamOutput>,
+    write_discarded: bool,
     threads: NonZeroUsize,
 }
 
@@ -121,12 +117,13 @@ where
 {
     pub(crate) fn new(opt: &mut Config, i: usize) -> Result<Self, Error> {
         let path = opt.alignment[i].as_str();
+        let seekable_required = opt.matching_algorithm == MatchingAlgorithm::Hashlookup;
+
         let file = File::open(path)?;
 
         // MultithreadedReader parallelises bgzf block decompression.
         // Requires threads > 1 AND a non-seeking backend (namesorted / collated).
         // HashLookup pass-2 uses seek_vpos → must use Single.
-        let seekable_required = opt.matching_algorithm == MatchingAlgorithm::Hashlookup;
         let threads = NonZeroUsize::new(opt.threads).unwrap_or(NonZeroUsize::MIN);
 
         let mut bam = if !seekable_required && opt.threads > 1 {
@@ -143,6 +140,13 @@ where
         };
 
         let header = bam.read_header()?;
+
+        let is_pass2 = header.read_groups().keys()
+            .any(|id| id.ends_with(SUFFIX_AMBIGUOUS.as_bytes()));
+
+        if is_pass2 {
+            opt.is_pass2 = true; // set on Config; overrides threshold selection
+        }
 
         // Sort-order check (namesorted only).
         let raw = bam.read_raw_header_bytes()?;
@@ -216,10 +220,6 @@ where
             .transpose()?;
 
         opt.output.get(i).map(path_unicode_ok).transpose()?;
-        opt.discarded_output
-            .get(i)
-            .map(path_unicode_ok)
-            .transpose()?;
         opt.ambiguous_output
             .get(i)
             .map(path_unicode_ok)
@@ -233,11 +233,9 @@ where
             sample_variants,
             population_variants,
             header,
-            output_mode: OutputMode::MultiFile {
-                output: None,
-                filt: None,
-                ambiguous: None,
-            },
+            output: None,
+            ambiguous: None,
+            write_discarded: opt.write_discarded,
             threads,
         })
     }
@@ -311,49 +309,38 @@ where
         Ok(())
     }
 
-    fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<(), Error> {
-        self.output_mode.write(rec, is_best, &self.header)
+    fn write_record(&mut self, mut rec: RecordBuf, is_best: Option<bool>) -> Result<(), Error> {
+        let (dest, suffix) = match is_best {
+            Some(true) => (self.output.as_mut(), None),
+            Some(false) => match self.write_discarded {
+                true => (self.ambiguous.as_mut(), Some(SUFFIX_FILTERED)),
+                false => (None, None),
+            },
+            None => (self.ambiguous.as_mut(), Some(SUFFIX_AMBIGUOUS)),
+        };
+        if let Some(sfx) = suffix {
+            rewrite_rg(&mut rec, sfx)?;
+        }
+        if let Some(w) = dest {
+            w.write_alignment_record(&self.header, &rec)?;
+        }
+        Ok(())
     }
 
     fn init_writers(&mut self, opt: &Config, i: usize) -> Result<(), Error> {
         let add_pg = !opt.no_program_line;
         let threads = self.threads.into();
-
-        if let Some(ref path) = opt.merged_output {
-            if i == 0 {
-                // Stream 0 owns the single merged writer.
-                // KNOWN LIMITATION: MergedOutput is owned per-stream (stream 0 only).
-                // Correct multi-stream merged output requires lifting MergedOutput into
-                // LineByLine and routing records from all streams through a shared writer
-                // (Arc<Mutex<MergedOutput>> or caller-level aggregation).
-                // Tracked in TODO_rust.md.
-                use crate::bam::{expand_header, MergedOutput};
-                let expanded = expand_header(self.header.clone());
-                self.output_mode =
-                    OutputMode::Merged(MergedOutput::new(path, expanded, add_pg, threads)?);
-            }
-            // i > 0: no-op writer; all records written through stream 0's MergedOutput.
-            // This is a known limitation; correct multi-stream merged output requires
-            // an Arc<Mutex<MergedOutput>> or caller-level aggregation.
-        } else {
-            self.output_mode = OutputMode::MultiFile {
-                output: opt
-                    .output
-                    .get(i)
-                    .map(|f| out_from_file(f, &self.header, add_pg, threads))
-                    .transpose()?,
-                filt: opt
-                    .discarded_output
-                    .get(i)
-                    .map(|f| out_from_file(f, &self.header, add_pg, threads))
-                    .transpose()?,
-                ambiguous: opt
-                    .ambiguous_output
-                    .get(i)
-                    .map(|f| out_from_file(f, &self.header, add_pg, threads))
-                    .transpose()?,
-            };
-        }
+        self.output = opt
+            .output
+            .get(i)
+            .map(|f| out_from_file(f, &self.header, add_pg, threads))
+            .transpose()?;
+        let expanded = expand_header(self.header.clone(), opt);
+        self.ambiguous = opt
+            .ambiguous_output
+            .get(i)
+            .map(|f| out_from_file(f, &expanded, add_pg, threads))
+            .transpose()?;
         Ok(())
     }
 

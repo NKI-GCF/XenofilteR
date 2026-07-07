@@ -28,7 +28,7 @@ use crate::filter_algorithm::line_by_line::{ordering::Decision, Scratch, READ_CT
 use crate::penalty::Penalty;
 use crate::region::{AmbiguousRegions, DiagnosticVariants};
 use crate::variant::FragEvalVec;
-use crate::{print_routing_counters, Error};
+use crate::Error;
 use assemble::{
     insert, new_fragment_table, EarlyKind, FragmentTable, MappedRecord, PendingFragment,
     RecordKind, StreamKind,
@@ -85,7 +85,7 @@ pub(crate) struct HashLookup<R: SimpleRec> {
 
 impl<R: SimpleRec> HashLookup<R> {
     pub(crate) fn new(
-        config: Config,
+        config: &Config,
         mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
         bed: [Option<AmbiguousRegions>; 2],
         vcf: [Option<DiagnosticVariants>; 2],
@@ -118,7 +118,7 @@ impl<R: SimpleRec> HashLookup<R> {
         })
     }
 
-    pub(crate) fn process(&mut self) -> Result<(), Error> {
+    pub(crate) fn process(&mut self, config: &Config) -> Result<(), Error> {
         let mut exhausted = [false; 2];
         loop {
             let mut finished = true;
@@ -153,7 +153,7 @@ impl<R: SimpleRec> HashLookup<R> {
             &mut self.routing_counters,
             self.add_decision_tag,
         )?;
-        print_routing_counters(&self.routing_counters, "hash_lookup");
+        config.print_routing_counters(&self.routing_counters, "Hash-lookup");
         Ok(())
     }
 

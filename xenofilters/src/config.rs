@@ -1,5 +1,5 @@
 use crate::Error;
-use crate::filter_algorithm::line_by_line::MAX_STREAMS;
+use crate::filter_algorithm::line_by_line::{MAX_STREAMS, core::COUNTER_STRIDE};
 use crate::{
     bam::AlnFormat,
     penalty::{MAX_Q, Penalty},
@@ -97,21 +97,9 @@ pub struct Config {
 
     // -- Output ---------------------------------------------------------------
 
-    // FIXME: make this merged_output, and not discarded_output, ambiguous_output, and output.
-    // Then we can have a single output file for all alignments, and the user can choose to discard
-    // or keep the discarded and ambiguous reads based on read groups.
     /// Assign fragments matching alignment to these respective files. Writes first alignment to stdout when omitted
     #[arg(short, long, num_args = 1..MAX_STREAMS, help_heading = "Output")]
     pub output: Vec<PathBuf>,
-
-    /// Output file for all alignments (winners, discarded, and ambiguous).
-    /// If set, overrides --output, --discarded-output, and --ambiguous-output.
-    #[arg(short, long, help_heading = "Output")]
-    pub merged_output: Option<PathBuf>,
-
-    /// Discard fragments distancing more in alignment to these files. Default: do not discard
-    #[arg(short, long, num_args = 0..ARG_MAX, help_heading = "Output")]
-    pub discarded_output: Vec<PathBuf>,
 
     /// Write ambiguous reads (equally good mappings) to these files. Default: do not write
     #[arg(short, long, num_args = 0..ARG_MAX, help_heading = "Output")]
@@ -154,9 +142,14 @@ pub struct Config {
     pub clipping_penalty: f64,
 
     /// Threshold (in phred scale) for considering two alignments equally good and thus ambiguous.
-    /// Set to 0 to disable.
-    #[arg(short, long, default_value = "0", value_parser = clap::value_parser!(u32).range(..=0x8000), help_heading = "Scoring")]
-    pub ambiguous_threshold: u32,
+    /// default (auto) selects 10 for pass 1, 0 for pass 2. In pass 2 input RGs contain _xenoambig.
+    #[arg(long, default_value_t = u32::MAX, help_heading = "Scoring")]
+    pub(crate) ambiguous_threshold: u32,
+
+    /// Warn when ambiguous fraction exceeds this value after scoring.
+    /// Default 0.05 (5%). Set 1.0 to disable.
+    #[arg(long, default_value = "0.05", value_parser = clap::value_parser!(f64), help_heading = "Scoring")]
+    pub(crate) warn_ambig_fraction: f64,
 
     /// Base-length constant used in the supplementary-alignment chimeric-junction
     /// penalty:  penalty = gap_open + chimeric_junction_bases × gap_extend.
@@ -244,34 +237,62 @@ pub struct Config {
     #[arg(long, num_args = 0.., help_heading = "Chimeric")]
     pub stream_labels: Vec<String>,
 
-    /// Parsed and validated chimeric stream pairs.
-    /// Stored in canonical order (lower index first) so lookups are O(pairs).
-    #[arg(skip)]
-    pub parsed_chimeric_pairs: Vec<[usize; 2]>,
-
     // -- Filters ---------------------------------------------------------------
-
-    /// Exclude read(pair)s, unmapped in both alignments, even from the filter output.
-    #[arg(short = 'U', long, default_value = "false", help_heading = "Filters")]
-    pub discard_unmapped: bool,
-
     /// Skip secondary mappings even if the primary mapping is written
     #[arg(short, long, default_value = "false", help_heading = "Filters")]
     pub skip_secondary: bool,
 
-    /// Suppress per-fragment progress output to stderr.
-    #[arg(long, help_heading = "Filters")]
-    pub quiet: bool,
+    /// Include discarded read(pair)s, in ambiguous output.
+    #[arg(short = 'U', long, default_value = "false", hide = true)]
+    pub write_discarded: bool,
+
+    /// Exclude read(pair)s, unmapped in both alignments, from ambiguous output.
+    #[arg(short = 'U', long, default_value = "true", hide = true)]
+    pub discard_unmapped: bool,
 
     // -- Verbosity -------------------------------------------------------------
 
     /// Increase log verbosity (-v = INFO, -vv = DEBUG). Overridden by RUST_LOG.
     #[arg(short, long, action = clap::ArgAction::Count, help_heading = "Verbosity")]
     pub verbose: u8,
+
+    /// Suppress per-fragment progress output to stderr.
+    #[arg(long, help_heading = "Filters")]
+    pub quiet: bool,
+
+    // -- Internal --------------------------------------------------------------
+
+    /// Parsed and validated chimeric stream pairs.
+    /// Stored in canonical order (lower index first) so lookups are O(pairs).
+    #[arg(skip)]
+    pub parsed_chimeric_pairs: Vec<[usize; 2]>,
+
+    #[arg(skip)]
+    pub is_pass2: bool,
+
+    #[arg(skip)]
+    pub resolved_ambiguous_log_threshold: f64,
 }
 
 impl Config {
     pub(super) fn validate_and_init(&mut self) -> Result<(), Error> {
+        // Detect pass 2: any input BAM whose header contains _xenoambig RG.
+        // Detection is done at stream-open time; store result for threshold selection.
+        // self.is_pass2 is set in AlnStream::new() after reading the header.
+
+        // Resolve threshold.
+        self.resolved_ambiguous_log_threshold = self.ambiguous_threshold_to_log_likelihood();
+
+        if self.is_pass2 {
+            tracing::info!(
+                threshold_phred = match self.ambiguous_threshold {
+                    u32::MAX => if self.is_pass2 { 0 } else { 10 },
+                    phred => phred,
+                },
+                "Pass 2 detected via _xenoambig read groups"
+            );
+        }
+
         let aln_count = self.alignment.len();
         // -- Chimeric pair parsing --------------------------------------------
         let mut parsed_chimeric_pairs: Vec<[usize; 2]> = Vec::new();
@@ -313,6 +334,11 @@ impl Config {
                 pairs = ?self.parsed_chimeric_pairs,
                 "Chimeric pair detection enabled"
             );
+        }
+        if self.warn_ambig_fraction < 0.0 || self.warn_ambig_fraction > 1.0 {
+            return Err(Error::WarnAmbigFractionOutOfRange {
+                value: self.warn_ambig_fraction,
+            });
         }
 
         if self.input_format == AlnFormat::Cram && self.reference.is_none() {
@@ -384,13 +410,7 @@ impl Config {
                 }
             }
         }
-        if self.merged_output.is_some()
-            && (!self.output.is_empty()
-                || !self.discarded_output.is_empty()
-                || !self.ambiguous_output.is_empty())
-            {
-                return Err(Error::MergedOutputConflict);
-            }
+
         if self.ambiguous_regions.len() > 2 {
             return Err(Error::TooManyAmbiguousRegionsFiles {
                 count: self.ambiguous_regions.len(),
@@ -455,12 +475,6 @@ impl Config {
                 max: logical_len,
             });
         }
-        if self.discarded_output.len() > logical_len {
-            return Err(Error::TooManyDiscardedOutputPaths {
-                count: self.discarded_output.len(),
-                max: logical_len,
-            });
-        }
 
         if aln_count == 1 {
             if self.ambiguous_output.len() > 1 {
@@ -498,6 +512,23 @@ impl Config {
             "Configuration validated"
         );
 
+        Ok(())
+    }
+
+    pub(crate) fn check_namesorted_header(&self, raw: &[u8]) -> Result<(), Error> {
+        if self.matching_algorithm == MatchingAlgorithm::Namesorted {
+            for parts in raw
+                .split(|&b| b == b'\n')
+                .map(|s| s.split(|&b| b == b'\t').collect::<Vec<_>>())
+            {
+                if parts.len() >= 3
+                    && parts[0] == b"@HD"
+                    && (parts[2] == b"SO:coordinate" || parts[2] == b"GO:reference")
+                {
+                    return Err(Error::CoordinateSortedInputDetected);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -539,6 +570,51 @@ impl Config {
             chimeric_junction_penalty: self.gap_open
                 + (self.chimeric_junction_bases as f64) * self.gap_extend,
         }
+    }
+    pub(crate) fn print_routing_counters(&self, counters: &[u64], tag: &str) {
+        let stream_count = counters.len() / COUNTER_STRIDE;
+        for nr in 0..stream_count {
+            let b = nr * COUNTER_STRIDE;
+            tracing::info!(
+                stream    = nr,
+                backend   = tag,
+                discard   = counters[b],
+                out       = counters[b + 1],
+                ambiguous = counters[b + 2],
+                chimeric  = counters[b + 3],
+                "Stream summary"
+            );
+        }
+
+        let total: u64 = counters.iter().sum();
+        if total == 0 { return; }
+
+        let ambiguous: u64 = counters
+            .chunks_exact(COUNTER_STRIDE)
+            .map(|c| c[2])
+            .sum();
+        let ambig_fraction = ambiguous as f64 / total as f64;
+
+        if ambig_fraction > self.warn_ambig_fraction {
+            let threshold_phred = match self.ambiguous_threshold {
+                u32::MAX => if self.is_pass2 { 0 } else { 10 },
+                p        => p,
+            };
+            tracing::warn!(
+                ambiguous_pct    = format!("{:.1}", ambig_fraction * 100.0),
+                threshold_phred,
+                "Ambiguous fraction exceeds warning level. \
+                 Consider pass 2 with BQSR or lowering --ambiguous-threshold."
+            );
+        }
+    }
+
+    fn ambiguous_threshold_to_log_likelihood(&self) -> f64 {
+        let phred = match self.ambiguous_threshold {
+            u32::MAX => if self.is_pass2 { 0 } else { 10 },
+            phred => phred,
+        };
+        (phred as f64) * std::f64::consts::LN_10 / 10.0
     }
 }
 

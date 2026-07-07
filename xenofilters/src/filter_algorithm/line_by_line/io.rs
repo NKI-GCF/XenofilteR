@@ -5,22 +5,6 @@ use noodles::sam::alignment::record::data::field::Tag;
 use noodles::sam::alignment::record_buf::data::field::Value;
 use noodles::sam::alignment::record_buf::RecordBuf;
 
-pub(crate) fn print_routing_counters(counters: &[u64], tag: &str) {
-    let stream_count = counters.len() / COUNTER_STRIDE;
-    for nr in 0..stream_count {
-        let b = nr * COUNTER_STRIDE;
-        tracing::info!(
-            stream = nr,
-            backend = tag,
-            discard = counters[b],
-            out = counters[b + 1],
-            ambiguous = counters[b + 2],
-            chimeric = counters[b + 3],
-            "Stream summary"
-        );
-    }
-}
-
 impl<R: SimpleRec> LineByLine<R> {
     /// Insert a single-byte aux tag into `rec`.
     pub(super) fn add_aux_tags(
@@ -71,7 +55,8 @@ mod tests {
 
     #[test]
     fn test_add_aux_tags_inserts_expected_tag_and_value() -> Result<(), Error> {
-        let mut lbl: LineByLine<RecordBuf> = LineByLine::new(Config::default(), smallvec![])?;
+        let config = Config::default();
+        let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&config, smallvec![])?;
         let mut rec = create_record(b"r", "5M", &[], &[], "5", false)?;
         lbl.add_aux_tags(&mut rec, b"XF", 42)?;
 

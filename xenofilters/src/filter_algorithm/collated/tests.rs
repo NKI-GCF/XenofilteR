@@ -18,7 +18,7 @@ fn cfg() -> Config {
     }
 }
 
-fn make(s0: Vec<RecordBuf>, s1: Vec<RecordBuf>, cfg: Config) -> CollatedMatcher<RecordBuf> {
+fn make(s0: Vec<RecordBuf>, s1: Vec<RecordBuf>, cfg: &Config) -> CollatedMatcher<RecordBuf> {
     let a0 = Box::new(MockStream::new(0, s0)) as Box<dyn AlignmentStream<RecordBuf>>;
     let a1 = Box::new(MockStream::new(1, s1)) as Box<dyn AlignmentStream<RecordBuf>>;
     CollatedMatcher::new(cfg, smallvec![a0, a1], [None, None], [None, None]).unwrap()
@@ -101,10 +101,11 @@ fn collated_table() {
     ];
     let mut misses = vec![];
     let routing_names = ["chimeric", "ambiguous", "out", "discarded"];
+    let config = cfg();
     for c in cases {
         eprintln!("Running test case: {}", c.label);
-        let mut m = make(c.s0.clone(), c.s1.clone(), cfg());
-        m.process().unwrap();
+        let mut m = make(c.s0.clone(), c.s1.clone(), &config);
+        m.process(&config).unwrap();
         let rc = &m.routing_counters;
         for i in 0..8 {
             let name = routing_names[i % 4];
@@ -125,7 +126,7 @@ fn collated_table() {
 
 #[test]
 fn collated_suffix_stripping() {
-    let cfg = Config {
+    let config = Config {
         strip_read_suffix: StripReadSuffix::True,
         gap_open: 6.0,
         gap_extend: 1.0,
@@ -134,8 +135,8 @@ fn collated_suffix_stripping() {
     };
     let s0 = vec![create_record(b"R1/1", "10M", &[], &[30u8; 10], "10", false).unwrap()];
     let s1 = vec![create_record(b"R1/2", "5M5S", &[], &[30u8; 10], "5", false).unwrap()];
-    let mut m = make(s0, s1, cfg);
-    m.process().unwrap();
+    let mut m = make(s0, s1, &config);
+    m.process(&config).unwrap();
     assert_eq!(m.routing_counters[1], 1, "s0 should win");
     assert_eq!(m.routing_counters[4], 1, "s1 discarded");
 }

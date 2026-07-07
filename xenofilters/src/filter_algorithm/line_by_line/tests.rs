@@ -15,7 +15,7 @@ fn test_qname_suffix_logic() -> Result<(), Error> {
         ..Config::default()
     };
 
-    let lbl = LineByLine::new(config.clone(), smallvec![])?;
+    let lbl = LineByLine::new(&config, smallvec![])?;
     let best: FragmentBuffer<RecordBuf> = smallvec![FragmentState::from_record(
         create_record(b"read/1", "10M", &[], &[], "10", false)?,
         0
@@ -26,12 +26,12 @@ fn test_qname_suffix_logic() -> Result<(), Error> {
 
     // Mode: Some(true) (Always strip last 2)
     config.strip_read_suffix = StripReadSuffix::True;
-    let lbl = LineByLine::new(config.clone(), smallvec![])?;
+    let lbl = LineByLine::new(&config, smallvec![])?;
     assert_eq!((lbl.is_new_qname)(&best, b"read_suffix"), Some(true)); // "read" != "read_suff"
 
     // Mode: Some(false) (Exact match)
     config.strip_read_suffix = StripReadSuffix::False;
-    let lbl = LineByLine::new(config, smallvec![])?;
+    let lbl = LineByLine::new(&config, smallvec![])?;
     assert_eq!((lbl.is_new_qname)(&best, b"read/1"), Some(false));
     assert_eq!((lbl.is_new_qname)(&best, b"read/2"), Some(true));
     Ok(())
@@ -43,7 +43,7 @@ fn test_qname_suffix_logic_variable_mode() -> Result<(), Error> {
         strip_read_suffix: StripReadSuffix::Variable,
         ..Config::default()
     };
-    let lbl = LineByLine::new(config, smallvec![])?;
+    let lbl = LineByLine::new(&config, smallvec![])?;
 
     let with_suffix: FragmentBuffer<RecordBuf> = smallvec![FragmentState::from_record(
         create_record(b"read/1", "10M", &[], &[], "10", false)?,

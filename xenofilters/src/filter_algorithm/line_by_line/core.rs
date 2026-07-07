@@ -130,7 +130,7 @@ pub(crate) struct LineByLine<R> {
 
 impl<R: SimpleRec> LineByLine<R> {
     pub(crate) fn new(
-        config: Config,
+        config: &Config,
         mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
     ) -> Result<Self, Error> {
         let is_unmapped_skipped = match config.discard_unmapped {

@@ -14,9 +14,6 @@ pub mod stats;
 pub mod variant;
 
 pub use error::Error;
-pub(crate) use filter_algorithm::line_by_line::print_routing_counters;
-use crate::aln_stream::{CramStream, SamStdinStream};
-use crate::bam::AlnFormat;
 use aln_stream::{AlignmentStream, AlnStream};
 use config::{Config, MatchingAlgorithm};
 use filter_algorithm::{
@@ -38,6 +35,7 @@ pub fn run(mut config: Config) -> Result<(), Error> {
     // existing main() body moved here verbatim
     init_tracing(&config);
     config.validate_and_init()?;
+
     match config.matching_algorithm {
         MatchingAlgorithm::Namesorted  => run_namesorted(config),
         MatchingAlgorithm::Hashlookup  => run_hashlookup(config),
@@ -112,32 +110,15 @@ fn run_namesorted(mut config: Config) -> Result<(), Error> {
     let mut aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> = smallvec![];
     for i in 0..logical_loops {
         let idx = if config.alignment.len() == 1 { 0 } else { i };
-        let path = config.alignment[idx].as_str();
-        let stream: Box<dyn AlignmentStream<RecordBuf> + Unpin> = match config.input_format {
-            AlnFormat::Cram => Box::new(CramStream::new(
-                Path::new(path),
-                config
-                    .reference
-                    .as_deref()
-                    .ok_or(Error::MissingReference(path.to_string()))?,
-            )?),
-            AlnFormat::Sam if path == "-" => Box::new(SamStdinStream::new(&mut config, i)?),
-            AlnFormat::Sam => {
-                // File-based SAM: wrap in AlnStream with SAM reader.
-                // TODO: add SamFileStream; for now error.
-                return Err(Error::SamFileNotYetSupported);
-            }
-            AlnFormat::Bam => Box::new(AlnStream::<RecordBuf>::new(&mut config, idx)?),
-        };
         tracing::debug!(stream = i, path = %config.alignment[idx], "Opening stream");
-        aln.push(stream);
+        aln.push(Box::new(AlnStream::<RecordBuf>::new(&mut config, idx)?));
         if aln[i].next_qname() != aln[0].next_qname() {
             return Err(Error::InputAlignmentsMustHaveSameReadOrder);
         }
     }
     if score_threads > 1 {
-        let mut lbl = LineByLine::new(config, aln)?;
-        let result = lbl.process_parallel();
+        let mut lbl = LineByLine::new(&config, aln)?;
+        let result = lbl.process_parallel(&config);
         if let Some(p) = stats_path {
             stats::write_stats(
                 &p,
@@ -150,7 +131,7 @@ fn run_namesorted(mut config: Config) -> Result<(), Error> {
         result
     } else {
         tracing::info!(streams = logical_loops, "Starting sequential pipeline");
-        LineByLine::new(config, aln)?.process_sequential()
+        LineByLine::new(&config, aln)?.process_sequential(&config)
     }
 }
 
@@ -176,7 +157,7 @@ fn run_hashlookup(mut config: Config) -> Result<(), Error> {
     let vcf = load_diagnostic_variants(&config.diagnostic_variants, &name_to_id)?;
 
     tracing::info!(streams = 2, "Starting HashLookup pipeline");
-    HashLookup::new(config, aln, bed, vcf)?.process()
+    HashLookup::new(&config, aln, bed, vcf)?.process(&config)
 }
 
 // ---------------------------------------------------------------------------
@@ -227,7 +208,7 @@ fn run_collated(mut config: Config) -> Result<(), Error> {
     ];
 
     tracing::info!(streams = 2, "Starting Collated pipeline");
-    CollatedMatcher::new(config, aln, bed, vcf)?.process()
+    CollatedMatcher::new(&config, aln, bed, vcf)?.process(&config)
 }
 
 // ---------------------------------------------------------------------------

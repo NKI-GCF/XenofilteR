@@ -46,13 +46,13 @@ use crate::filter_algorithm::line_by_line::{
     chimeric::{detect_chimeric_mate_complement, ChimericKind},
     detect_chimeric_event, ChimericDecision, MAX_STREAMS, READ_CT,
 };
-use crate::print_routing_counters;
 use crate::variant::StoreTrait;
 use crate::Error;
 use noodles::sam::alignment::RecordBuf;
 use smallvec::{smallvec, SmallVec};
 use std::f64::consts::LN_10;
 use std::sync::Arc;
+use crate::config::Config;
 
 pub(crate) fn compute_cancel_slot<R: SimpleRec>(best: &FragmentBuffer<R>) -> [bool; 2] {
     // -- Pass 0: per-mate classification (cheap, borrow-only) -----------
@@ -451,7 +451,7 @@ fn score_candidate_owned(
 
 impl<R: SimpleRec> LineByLine<R> {
     /// Original single-threaded process loop.
-    pub(crate) fn process_sequential(&mut self) -> Result<(), Error> {
+    pub(crate) fn process_sequential(&mut self, config: &Config) -> Result<(), Error> {
         let mut best: FragmentBuffer<R> = smallvec![];
         let mut i = 0;
         let aln_len = self.aln.len();
@@ -517,13 +517,13 @@ impl<R: SimpleRec> LineByLine<R> {
                 i = 0;
             }
         }
-        print_routing_counters(&self.routing_counters, "namesorted");
         for i in 0..aln_len {
             if self.aln[i].next_rec()?.is_some() {
                 return Err(Error::AlignmentStillHasReads { i });
             }
         }
         if let Some(p) = self.progress.as_ref() { p.finish() }
+        config.print_routing_counters(&self.routing_counters, "namesorted");
         Ok(())
     }
 

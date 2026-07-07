@@ -40,12 +40,10 @@ impl MockStream {
             sample_variants: None,
             population_variants: None,
             header: Header::default(),
-            output_mode: OutputMode::MultiFile {
-                output: None,
-                filt: None,
-                ambiguous: None,
-            },
+            output: None,
+            ambiguous: None,
             threads: NonZeroUsize::MIN,
+            write_discarded: false,
         };
         Self {
             reads,
@@ -127,12 +125,10 @@ fn empty_aln_stream() -> AlnStream<RecordBuf> {
         sample_variants: None,
         population_variants: None,
         header: Header::default(),
-        output_mode: OutputMode::MultiFile {
-            output: None,
-            filt: None,
-            ambiguous: None,
-        },
+        output: None,
+        ambiguous: None,
         threads: NonZeroUsize::MIN,
+        write_discarded: false,
     }
 }
 
@@ -208,28 +204,13 @@ fn test_aln_stream_header_returns_actual_reference() {
 }
 
 #[test]
-fn test_aln_stream_init_writers_multi_and_merged() -> Result<(), Error> {
+fn test_aln_stream_init_writers() -> Result<(), Error> {
     let mut stream = empty_aln_stream();
     let mut config = Config::default();
 
     config.no_program_line = true;
 
-    // Test MultiFile path
     stream.init_writers(&config, 1)?;
-    match &stream.output_mode {
-        OutputMode::MultiFile { .. } => {}
-        _ => panic!("Expected MultiFile output mode"),
-    }
-
-    // Test Merged path
-    config.merged_output = Some("tests/data/dummy_merged_out.bam".into());
-
-    // i == 1 should ignore creating the MergedOutput and do nothing
-    stream.init_writers(&config, 1)?;
-
-    // i == 0 should attempt to initialize MergedOutput
-    // Even if it fails due to path issues, the mutation is killed by branching correctly
-    let _ = stream.init_writers(&config, 0);
 
     Ok(())
 }
