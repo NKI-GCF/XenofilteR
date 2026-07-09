@@ -1,5 +1,5 @@
 use crate::Error;
-use noodles::sam::alignment::record::{Cigar, Flags, Record, data::field::Tag, data::field::Value};
+use noodles::sam::alignment::record::{data::field::Tag, data::field::Value, Cigar, Flags, Record};
 use std::cmp::Ordering;
 
 pub struct MdCigFlags<'r> {
@@ -18,7 +18,7 @@ pub struct MdCigFlags<'r> {
     /// the sequence is unavailable (hard-clipped supplementary).
     seq: Option<Vec<u8>>,
     /// Whether this record is on the reverse strand. Used for strand-specific
-    /// bisulfite conversion detection (C→T forward, G→A reverse).
+    /// bisulfite conversion detection (C->T forward, G->A reverse).
     is_reverse: bool,
 }
 
@@ -71,24 +71,15 @@ impl<'r> MdCigFlags<'r> {
         let seq: Option<Vec<u8>> = if bisulfite {
             let s = record.sequence();
             // Hard-clipped reads have an empty sequence in BAM; treat as None.
-            if s.is_empty() { 
-                None 
+            if s.is_empty() {
+                None
             } else {
                 // Clone the sequence into a Vec for storage.
-                let bytes: Vec<u8> = s
-                    .iter()
-                    .map(|base| {
-                        // Convert noodles base representation to ASCII byte
-                        match base {
-                            noodles::sam::alignment::record::sequence::Base::A => b'A',
-                            noodles::sam::alignment::record::sequence::Base::C => b'C',
-                            noodles::sam::alignment::record::sequence::Base::G => b'G',
-                            noodles::sam::alignment::record::sequence::Base::T => b'T',
-                            noodles::sam::alignment::record::sequence::Base::N => b'N',
-                        }
-                    })
-                    .collect();
-                if bytes.is_empty() { None } else { Some(bytes) }
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s.iter().collect())
+                }
             }
         } else {
             None

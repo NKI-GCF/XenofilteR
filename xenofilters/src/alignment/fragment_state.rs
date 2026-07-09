@@ -16,16 +16,18 @@ pub(crate) struct FragmentState<R> {
     flags: SmallVec<[Flags; 8]>,
     records: SmallVec<[R; 8]>,
     species_nr: usize,
+    bisulfite: bool,
 }
 
 type McfPair<'f> = (SmallVec<[MdCigFlags<'f>; 8]>, SmallVec<[MdCigFlags<'f>; 8]>);
 
 impl<R: SimpleRec> FragmentState<R> {
-    pub(crate) fn from_record(r: R, species_nr: usize) -> Result<Self, Error> {
+    pub(crate) fn from_record(r: R, species_nr: usize, bisulfite: bool) -> Result<Self, Error> {
         Ok(FragmentState {
             flags: smallvec![r.flags()?],
             records: smallvec![r],
             species_nr,
+            bisulfite,
         })
     }
     pub(crate) fn add_record(&mut self, r: R) -> Result<(), Error> {
@@ -70,7 +72,7 @@ impl<R: SimpleRec> FragmentState<R> {
         self.flags
             .iter()
             .zip(self.records.iter())
-            .map(|(flags, rec)| MdCigFlags::try_from_record(rec, flags))
+            .map(|(flags, rec)| MdCigFlags::try_from_record(rec, flags, self.bisulfite))
             .collect()
     }
 
@@ -108,7 +110,7 @@ impl<R: SimpleRec> FragmentState<R> {
             SmallVec::with_capacity(self.get_records().len());
         let mut perfect_self = true;
         for (flags, record) in self.flags.iter().zip(self.records.iter()) {
-            let mcf = MdCigFlags::try_from_record(record, flags)?;
+            let mcf = MdCigFlags::try_from_record(record, flags, self.bisulfite)?;
             if flags.is_supplementary() || !mcf.is_perfect() {
                 perfect_self = false;
             }
@@ -119,7 +121,7 @@ impl<R: SimpleRec> FragmentState<R> {
             SmallVec::with_capacity(other.get_records().len());
         let mut perfect_other = true;
         for (flags, record) in other.flags.iter().zip(other.records.iter()) {
-            let mcf = MdCigFlags::try_from_record(record, flags)?;
+            let mcf = MdCigFlags::try_from_record(record, flags, self.bisulfite)?;
             if flags.is_supplementary() || !mcf.is_perfect() {
                 perfect_other = false;
             }
@@ -248,7 +250,7 @@ impl<R: SimpleRec> MateClassifiable for FragmentState<R> {
             let kind = if flags.is_unmapped() {
                 MateKind::Unmapped
             } else {
-                match MdCigFlags::try_from_record(rec, flags) {
+                match MdCigFlags::try_from_record(rec, flags, self.bisulfite) {
                     Ok(mcf) if mcf.is_perfect() => MateKind::Perfect,
                     Ok(_) => MateKind::Other,
                     Err(_) => MateKind::Other, // malformed MD/CIGAR — must be scored

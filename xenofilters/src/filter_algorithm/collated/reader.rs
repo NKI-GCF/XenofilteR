@@ -2,13 +2,14 @@
 //! BAM stream — consuming all records that share a canonical read name
 //! before returning.
 
-use crate::Error;
 use crate::alignment::{FragmentState, SimpleRec};
 use crate::aln_stream::AlignmentStream;
+use crate::config::Config;
 use crate::config::StripReadSuffix;
 use crate::variant::StoreTrait;
-use noodles::sam::Header;
+use crate::Error;
 use noodles::sam::alignment::record_buf::RecordBuf;
+use noodles::sam::Header;
 use std::sync::Arc;
 
 /// Strip the `/1` or `/2` suffix from `raw` according to `mode`.
@@ -38,19 +39,21 @@ pub(crate) struct CollatedReader<R> {
     peeked: Option<R>,
     strip: StripReadSuffix,
     species_nr: usize,
+    bisulfite: bool,
 }
 
 impl<R: SimpleRec> CollatedReader<R> {
     pub(crate) fn new(
         inner: Box<dyn AlignmentStream<R>>,
-        strip: StripReadSuffix,
+        config: &Config,
         species_nr: usize,
     ) -> Self {
         Self {
             inner,
             peeked: None,
-            strip,
+            strip: config.strip_read_suffix,
             species_nr,
+            bisulfite: config.bisulfite,
         }
     }
 
@@ -68,11 +71,15 @@ impl<R: SimpleRec> CollatedReader<R> {
         let first_key = match first.name() {
             Some(n) => canonical_name(n.as_ref(), self.strip),
             None => {
-                return Ok(Some(FragmentState::from_record(first, self.species_nr)?));
+                return Ok(Some(FragmentState::from_record(
+                    first,
+                    self.species_nr,
+                    self.bisulfite,
+                )?));
             }
         };
 
-        let mut state = FragmentState::from_record(first, self.species_nr)?;
+        let mut state = FragmentState::from_record(first, self.species_nr, self.bisulfite)?;
 
         loop {
             match self.inner.next_rec()? {

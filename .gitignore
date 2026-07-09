@@ -4,3 +4,4 @@ xenofilters/tests
 xenofilters/tags
 xenofilters/target*/
 xenofilters/mutants.out*
+xenofilters/prompt/

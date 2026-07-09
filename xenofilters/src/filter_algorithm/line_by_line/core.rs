@@ -4,17 +4,16 @@
 //   - LineByLine::new() reads score_threads from config
 //   - process() dispatcher added (sequential vs parallel)
 
-use crate::alignment::FragmentState;
-use crate::alignment::SimpleRec;
-use crate::aln_stream::AlignmentStream;
-use crate::Error;
 use crate::{
+    alignment::{FragmentState, SimpleRec},
+    aln_stream::AlignmentStream,
     config::{Config, StripReadSuffix},
-    penalty::Penalty,
+    penalty::{ErrorModel, Penalty},
+    progress::ProgressReporter,
+    Error,
 };
 use noodles::sam::alignment::Record;
 use smallvec::SmallVec;
-use crate::progress::ProgressReporter;
 
 pub const READ_CT: usize = 8;
 pub(crate) const VNT_LEN: usize = 16;
@@ -126,6 +125,7 @@ pub(crate) struct LineByLine<R> {
     /// `chimeric_label(i)` returns `stream_labels[i]` or `"stream_N"`.
     pub(super) stream_labels: Vec<String>,
     pub(super) progress: Option<ProgressReporter>,
+    pub(super) bisulfite: bool,
 }
 
 impl<R: SimpleRec> LineByLine<R> {
@@ -208,6 +208,7 @@ impl<R: SimpleRec> LineByLine<R> {
             stream_labels: config.stream_labels.clone(),
             score_threads,
             progress,
+            bisulfite: config.bisulfite,
         })
     }
 }

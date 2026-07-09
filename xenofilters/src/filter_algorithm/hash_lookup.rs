@@ -81,6 +81,7 @@ pub(crate) struct HashLookup<R: SimpleRec> {
     strip: StripReadSuffix,
     bed: [Option<AmbiguousRegions>; 2],
     vcf: [Option<DiagnosticVariants>; 2],
+    bisulfite: bool,
 }
 
 impl<R: SimpleRec> HashLookup<R> {
@@ -115,6 +116,7 @@ impl<R: SimpleRec> HashLookup<R> {
             strip: config.strip_read_suffix,
             bed,
             vcf,
+            bisulfite: config.bisulfite,
         })
     }
 
@@ -528,7 +530,7 @@ impl<R: SimpleRec> HashLookup<R> {
         let mut mcfs: SmallVec<[MdCigFlags; READ_CT]> = SmallVec::new();
 
         for (buf, flags) in bufs.iter().zip(flags_vec.iter()) {
-            mcfs.push(MdCigFlags::try_from_record(buf, flags)?);
+            mcfs.push(MdCigFlags::try_from_record(buf, flags, self.bisulfite)?);
         }
 
         let seg: SmallVec<[&RecordBuf; READ_CT]> = bufs.iter().collect();

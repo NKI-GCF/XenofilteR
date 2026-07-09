@@ -101,6 +101,10 @@ pub(crate) fn build_read_profile(mcf: &MdCigFlags<'_>) -> ReadProfile {
             Ok(BaseOp::RefSkip(_)) => {
                 // Intron skips: no read positions, no gap penalty in current model.
             }
+            Ok(BaseOp::BisulfiteConversion) => {
+                // Count as a mismatch for read-space comparison; scored with zero penalty.
+                ops.push(ReadOp::Mismatch);
+            }
         }
     }
 

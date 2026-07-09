@@ -42,6 +42,7 @@ use crate::alignment::{
     mate_slot, segment_id, BaseOp, FragmentState, MateClassifiable, MateKind, MdCigFlags,
     ScoreOpIter, SimpleRec,
 };
+use crate::config::Config;
 use crate::filter_algorithm::line_by_line::{
     chimeric::{detect_chimeric_mate_complement, ChimericKind},
     detect_chimeric_event, ChimericDecision, MAX_STREAMS, READ_CT,
@@ -52,7 +53,6 @@ use noodles::sam::alignment::RecordBuf;
 use smallvec::{smallvec, SmallVec};
 use std::f64::consts::LN_10;
 use std::sync::Arc;
-use crate::config::Config;
 
 pub(crate) fn compute_cancel_slot<R: SimpleRec>(best: &FragmentBuffer<R>) -> [bool; 2] {
     // -- Pass 0: per-mate classification (cheap, borrow-only) -----------
@@ -479,11 +479,14 @@ impl<R: SimpleRec> LineByLine<R> {
                     if let Some((ca, cb)) =
                         detect_chimeric_mate_complement(&best, &self.chimeric_pairs)
                     {
-                        self.emit_chimeric(&mut best, ChimericDecision::Chimeric {
-                            stream_a: ca,
-                            stream_b: cb,
-                            kind: ChimericKind::MateSplit,
-                        })?;
+                        self.emit_chimeric(
+                            &mut best,
+                            ChimericDecision::Chimeric {
+                                stream_a: ca,
+                                stream_b: cb,
+                                kind: ChimericKind::MateSplit,
+                            },
+                        )?;
                         i = 0;
                         continue;
                     }
@@ -513,7 +516,9 @@ impl<R: SimpleRec> LineByLine<R> {
                 }
                 assert!(!best.is_empty());
                 self.emit_winners(&mut best, decision)?;
-                if let Some(ref mut p) = self.progress { p.tick(); }
+                if let Some(ref mut p) = self.progress {
+                    p.tick();
+                }
                 i = 0;
             }
         }
@@ -522,7 +527,9 @@ impl<R: SimpleRec> LineByLine<R> {
                 return Err(Error::AlignmentStillHasReads { i });
             }
         }
-        if let Some(p) = self.progress.as_ref() { p.finish() }
+        if let Some(p) = self.progress.as_ref() {
+            p.finish()
+        }
         config.print_routing_counters(&self.routing_counters, "namesorted");
         Ok(())
     }
@@ -626,7 +633,7 @@ impl<R: SimpleRec> LineByLine<R> {
                     }
                 }
             }
-            best.push(FragmentState::from_record(rec, i)?);
+            best.push(FragmentState::from_record(rec, i, self.bisulfite)?);
         }
         Ok(false)
     }

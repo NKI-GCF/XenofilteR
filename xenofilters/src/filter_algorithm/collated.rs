@@ -75,8 +75,8 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         let stream1 = iter.next().unwrap();
 
         Ok(Self {
-            a: CollatedReader::new(stream0, strip, 0),
-            b: CollatedReader::new(stream1, strip, 1),
+            a: CollatedReader::new(stream0, config, 0),
+            b: CollatedReader::new(stream1, config, 1),
             waiting_a: HashMap::with_hasher(RandomState::new()),
             waiting_b: HashMap::with_hasher(RandomState::new()),
             penalties,

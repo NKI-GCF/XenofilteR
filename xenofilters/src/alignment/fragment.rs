@@ -207,6 +207,10 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
                 BaseOp::RefSkip(len) => {
                     self.refpos += len;
                 }
+                BaseOp::BisulfiteConversion => {
+                    // Zero penalty: genuine C→T or G→A conversion, not a sequencing error.
+                    ref_score += self.pen.log_likelihood_bisulfite; // = 0.0
+                }
             }
             let ctx = WindowCtx::new(i, self.seg_i, ref_start, self.refpos, ref_score);
             self.evaluate_variants_in_window(scratch, dvnt, finished, ctx)?;

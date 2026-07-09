@@ -1,12 +1,7 @@
 use crate::alignment::{BaseOp, MdCigFlags, ScoreOpIter};
-use crate::Error;
-use noodles::sam::alignment::{
-    record::{
-        cigar::Op,
-        Flags,
-    },
-};
 use crate::tests::create_record;
+use crate::Error;
+use noodles::sam::alignment::record::{cigar::Op, Flags};
 
 fn op_repr(op: &BaseOp) -> String {
     match op {
@@ -179,4 +174,94 @@ fn table_driven_ops_tests_collect_misses() {
     if !misses.is_empty() {
         panic!("Table-driven ops tests failures:\n\n{}", misses.join("\n"));
     }
+}
+
+#[test]
+fn bisulfite_forward_conversion_table() {
+    // Forward strand: ref=C, read=T → BisulfiteConversion; other combos → Mis
+    struct Row {
+        ref_b: u8,
+        read_b: u8,
+        is_rev: bool,
+        want: BaseOp,
+    }
+    let cases = [
+        Row {
+            ref_b: b'C',
+            read_b: b'T',
+            is_rev: false,
+            want: BaseOp::BisulfiteConversion,
+        },
+        Row {
+            ref_b: b'C',
+            read_b: b'A',
+            is_rev: false,
+            want: BaseOp::Mis,
+        },
+        Row {
+            ref_b: b'G',
+            read_b: b'A',
+            is_rev: true,
+            want: BaseOp::BisulfiteConversion,
+        },
+        Row {
+            ref_b: b'G',
+            read_b: b'T',
+            is_rev: true,
+            want: BaseOp::Mis,
+        },
+        Row {
+            ref_b: b'A',
+            read_b: b'T',
+            is_rev: false,
+            want: BaseOp::Mis,
+        },
+        Row {
+            ref_b: b'C',
+            read_b: b'T',
+            is_rev: true,
+            want: BaseOp::Mis,
+        },
+    ];
+    for c in &cases {
+        // Use a minimal ScoreOpIter::classify_mismatch harness.
+        let seq = &[c.read_b];
+        let mut it = ScoreOpIterHarness {
+            seq: Some(seq),
+            is_reverse: c.is_rev,
+            read_pos: 0,
+        };
+        let got = it.classify_mismatch(c.ref_b);
+        assert_eq!(
+            got, c.want,
+            "ref={} read={} is_rev={}",
+            c.ref_b as char, c.read_b as char, c.is_rev
+        );
+    }
+}
+
+#[test]
+fn error_model_quality_calibration() {
+    use crate::penalty::{ErrorModel, Penalty};
+    let ill = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina);
+    let ont = Penalty::build(2.0, 0.3, 2.0, 20, ErrorModel::Ont);
+    // At Q30, ONT should trust the quality less → higher (less negative) log_lik_mismatch
+    // i.e. the mismatch is less penalised for ONT at the same reported Q.
+    assert!(
+        ont.log_likelihood_mismatch[30] > ill.log_likelihood_mismatch[30],
+        "ONT Q30 should be less penalised than Illumina Q30 (calibration factor 0.7)"
+    );
+}
+
+#[test]
+fn error_model_gap_defaults() {
+    use crate::penalty::ErrorModel;
+    assert!(
+        ErrorModel::Ont.default_gap_open() < ErrorModel::Illumina.default_gap_open(),
+        "ONT gap_open should be lower than Illumina (indel-prone chemistry)"
+    );
+    assert!(
+        ErrorModel::HiFi.default_gap_open() < ErrorModel::Illumina.default_gap_open(),
+        "HiFi gap_open should be lower (few indels in CCS)"
+    );
 }
