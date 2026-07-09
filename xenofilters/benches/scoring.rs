@@ -49,7 +49,7 @@ fn bench_score_op_iter(c: &mut Criterion) {
         let flags = rec.flags();
         g.bench_with_input(BenchmarkId::new("score_one", label), label, |b, _| {
             b.iter(|| {
-                let mcf  = MdCigFlags::try_from_record(&rec, &flags).unwrap();
+                let mcf  = MdCigFlags::try_from_record(&rec, &flags, false).unwrap();
                 let mut frag = Fragment::new(
                     &pen,
                     smallvec![black_box(&rec)],
@@ -85,8 +85,8 @@ fn bench_pre_assess(c: &mut Criterion) {
         let fb = rb.flags();
         g.bench_with_input(BenchmarkId::from_parameter(i), &i, |b, _| {
             b.iter(|| {
-                let ma = smallvec![MdCigFlags::try_from_record(&ra, &fa).unwrap()];
-                let mb = smallvec![MdCigFlags::try_from_record(&rb, &fb).unwrap()];
+                let ma = smallvec![MdCigFlags::try_from_record(&ra, &fa, false).unwrap()];
+                let mb = smallvec![MdCigFlags::try_from_record(&rb, &fb, false).unwrap()];
                 black_box(pre_assess_alignments(&ma, &mb))
             })
         });

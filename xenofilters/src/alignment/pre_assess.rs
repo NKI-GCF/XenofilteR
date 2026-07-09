@@ -367,7 +367,7 @@ mod tests {
             create_record(b"r", cigar, &[], &vec![30u8; 150], md, false).unwrap(),
         ));
         let flags: &'static _ = Box::leak(Box::new(rec.flags()));
-        let mcf = MdCigFlags::try_from_record(rec, flags).unwrap();
+        let mcf = MdCigFlags::try_from_record(rec, flags, false).unwrap();
         smallvec![mcf]
     }
 

@@ -498,8 +498,7 @@ fn test_branch_counters_and_skipping() -> Result<(), Error> {
 #[test]
 fn test_handle_ordering_logic() -> Result<(), Error> {
     let config = Config::default();
-    let lbl_setup: LineByLine<RecordBuf> =
-        LineByLine::new(&config, setup_mock_streams())?;
+    let lbl_setup: LineByLine<RecordBuf> = LineByLine::new(&config, setup_mock_streams())?;
     // Direct testing of routing_counters incrementation via write_record:
     let mut lbl: LineByLine<RecordBuf> = lbl_setup;
     let rec = create_record(b"r1", "M10", &[], &[], "10", false)?;
@@ -522,7 +521,7 @@ fn test_fragment_finished_transitions() -> Result<(), Error> {
     let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&config, setup_mock_streams())?;
     let rec = create_record(b"R1", "M10", &[], &[], "10", false)?;
     let mut best: FragmentBuffer<RecordBuf> =
-        smallvec![FragmentState::from_record(rec.clone(), 0)?];
+        smallvec![FragmentState::from_record(rec.clone(), 0, false)?];
 
     // Same QName: continues fragment
     let fin = lbl.ingest_record(0, rec, &mut best)?;

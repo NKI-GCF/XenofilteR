@@ -49,7 +49,7 @@ fn table_is_perfect_variants_collect_misses() {
         match create_record(b"r", c.cigar, &[], &[], c.md, false) {
             Ok(rec) => {
                 let flags = rec.flags();
-                match MdCigFlags::try_from_record(&rec, &flags) {
+                match MdCigFlags::try_from_record(&rec, &flags, false) {
                     Ok(mcf) => {
                         let got = mcf.is_perfect();
                         if got != c.expect_perfect {
@@ -93,8 +93,8 @@ fn table_revcomp_and_last_segment_collect_misses() {
         Ok(fwd) => match create_record(b"r", "5M", &[], &[], "5", true) {
             Ok(rev) => {
                 match (
-                        MdCigFlags::try_from_record(&fwd, &fwd.flags()),
-                        MdCigFlags::try_from_record(&rev, &rev.flags()),
+                        MdCigFlags::try_from_record(&fwd, &fwd.flags(), false),
+                        MdCigFlags::try_from_record(&rev, &rev.flags(), false),
                     ) {
                         (Ok(mf), Ok(mr)) => {
                             if mf.is_reverse_complemented() {
@@ -128,8 +128,8 @@ fn table_revcomp_and_last_segment_collect_misses() {
                     *last.flags_mut() = Flags::from_bits(0x80).unwrap(); // last segment mapped
                     *first.flags_mut() = Flags::from_bits(0x40).unwrap(); // first segment mapped
                     match (
-                        MdCigFlags::try_from_record(&last, &last.flags()),
-                        MdCigFlags::try_from_record(&first, &first.flags()),
+                        MdCigFlags::try_from_record(&last, &last.flags(), false),
+                        MdCigFlags::try_from_record(&first, &first.flags(), false),
                     ) {
                         (Ok(ml), Ok(mf)) => {
                             if !ml.is_last_segment() {
@@ -180,7 +180,7 @@ fn table_try_from_record_errors_collect_misses() {
     match create_record(b"r", "", &[], &[], "", false) {
         Ok(rec_unmapped) => {
             let flags = rec_unmapped.flags();
-            if MdCigFlags::try_from_record(&rec_unmapped, &flags).is_ok() {
+            if MdCigFlags::try_from_record(&rec_unmapped, &flags, false).is_ok() {
                 misses.push(
                     "test_try_from_record_unmapped_is_rejected: expected error but got Ok"
                         .to_string(),
@@ -198,7 +198,7 @@ fn table_try_from_record_errors_collect_misses() {
         Ok(mut rec) => {
             *rec.data_mut() = Default::default(); // strip MD tag
             let flags = rec.flags();
-            if MdCigFlags::try_from_record(&rec, &flags).is_ok() {
+            if MdCigFlags::try_from_record(&rec, &flags, false).is_ok() {
                 misses.push(
                     "test_try_from_record_missing_md_tag_errors: expected error but got Ok"
                         .to_string(),
@@ -253,10 +253,10 @@ fn partial_ord_and_eq_reproduced_collect_misses() {
         let flags_p2 = p2.flags();
         let flags_i1 = i1.flags();
         let flags_i2 = i2.flags();
-        let md_p1 = MdCigFlags::try_from_record(&p1, &flags_p1);
-        let md_p2 = MdCigFlags::try_from_record(&p2, &flags_p2);
-        let md_i1 = MdCigFlags::try_from_record(&i1, &flags_i1);
-        let md_i2 = MdCigFlags::try_from_record(&i2, &flags_i2);
+        let md_p1 = MdCigFlags::try_from_record(&p1, &flags_p1, false);
+        let md_p2 = MdCigFlags::try_from_record(&p2, &flags_p2, false);
+        let md_i1 = MdCigFlags::try_from_record(&i1, &flags_i1, false);
+        let md_i2 = MdCigFlags::try_from_record(&i2, &flags_i2, false);
         let _ = drop(flags_p1);
         let _ = drop(flags_p2);
         let _ = drop(flags_i1);

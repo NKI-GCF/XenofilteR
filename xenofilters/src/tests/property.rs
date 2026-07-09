@@ -80,7 +80,7 @@ proptest! {
             return Ok(());
         };
         let flags = rec.flags();
-        let Ok(mcf) = MdCigFlags::try_from_record(&rec, &flags) else {
+        let Ok(mcf) = MdCigFlags::try_from_record(&rec, &flags, false) else {
             return Ok(());
         };
         // Collecting all ops must not panic; errors are fine.
@@ -100,7 +100,7 @@ proptest! {
             return Ok(());
         };
         let flags = rec.flags();
-        let Ok(mcf) = MdCigFlags::try_from_record(&rec, &flags) else {
+        let Ok(mcf) = MdCigFlags::try_from_record(&rec, &flags, false) else {
             return Ok(());
         };
         let _ = mcf.is_perfect();

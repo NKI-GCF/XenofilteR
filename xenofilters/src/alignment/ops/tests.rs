@@ -11,13 +11,14 @@ fn op_repr(op: &BaseOp) -> String {
         BaseOp::Ins(n) => format!("I{n}"),
         BaseOp::Clip(n) => format!("C{n}"),
         BaseOp::RefSkip(n) => format!("N{n}"),
+        BaseOp::BisulfiteConversion => "B".into(),
     }
 }
 
 fn ops_for(cigar: &str, md: &str) -> Result<Vec<String>, Error> {
     let rec = create_record(b"r", cigar, &[], &[], md, false)?;
     let flags = rec.flags();
-    let mcf = MdCigFlags::try_from_record(&rec, &flags)?;
+    let mcf = MdCigFlags::try_from_record(&rec, &flags, false)?;
     let ops: Result<Vec<BaseOp>, _> = ScoreOpIter::new(&mcf).collect();
     //Ok(ops.iter().map(op_repr).collect())
     Ok(ops?.iter().map(op_repr).collect())
@@ -226,10 +227,11 @@ fn bisulfite_forward_conversion_table() {
     for c in &cases {
         // Use a minimal ScoreOpIter::classify_mismatch harness.
         let seq = &[c.read_b];
-        let mut it = ScoreOpIterHarness {
+        let mut it = ScoreOpIter {
             seq: Some(seq),
             is_reverse: c.is_rev,
             read_pos: 0,
+            ..Default::default()
         };
         let got = it.classify_mismatch(c.ref_b);
         assert_eq!(

@@ -37,6 +37,7 @@ mod tests {
             log_likelihood_match: [0.0; crate::penalty::MAX_Q],
             log_likelihood_mismatch: [-1.0; crate::penalty::MAX_Q],
             chimeric_junction_penalty: -3.0,
+            log_likelihood_bisulfite: 0.0,
         }
     }
 
@@ -165,7 +166,7 @@ mod tests {
         let rec1 = create_record(b"r", "5M", b"AAGAA", &[30u8; 5], "5", false)?;
         let flags1 = rec1.flags();
         let p = flat_penalty();
-        let md_flags = smallvec![MdCigFlags::try_from_record(&rec1, &flags1)?];
+        let md_flags = smallvec![MdCigFlags::try_from_record(&rec1, &flags1, false)?];
 
         let mut frag = Fragment::new(&p, smallvec![&rec1], md_flags)?;
         let mut scratch = Scratch::new();
@@ -213,8 +214,8 @@ mod tests {
 
         let md_flags: SmallVec<[MdCigFlags; READ_CT]> = {
             let mut v = SmallVec::new();
-            v.push(MdCigFlags::try_from_record(&record1, &flags1)?);
-            v.push(MdCigFlags::try_from_record(&record2, &flags2)?);
+            v.push(MdCigFlags::try_from_record(&record1, &flags1, false)?);
+            v.push(MdCigFlags::try_from_record(&record2, &flags2, false)?);
             v
         };
 
@@ -252,7 +253,7 @@ mod tests {
         rec.data_mut()
             .insert(Tag::new(b'S', b'A'), RBValue::from(sa.clone()));
         let flags = rec.flags();
-        let mcf = MdCigFlags::try_from_record(&rec, &flags)?;
+        let mcf = MdCigFlags::try_from_record(&rec, &flags, false)?;
         assert_eq!(
             mcf.supp_count(),
             1,
@@ -262,13 +263,13 @@ mod tests {
         // Perfect record detection: single op + MD purely digits -> is_perfect true
         let rec_perfect = create_record(b"r2", "5M", &[], &[30u8; 5], "5", false)?;
         let flags_p = rec_perfect.flags();
-        let mcf_p = MdCigFlags::try_from_record(&rec_perfect, &flags_p)?;
+        let mcf_p = MdCigFlags::try_from_record(&rec_perfect, &flags_p, false)?;
         assert!(mcf_p.is_perfect());
 
         // Non-perfect: mismatch in MD -> should be false
         let rec_imperfect = create_record(b"r3", "5M", &[], &[30u8; 5], "4A0", false)?;
         let flags_i = rec_imperfect.flags();
-        let mcf_i = MdCigFlags::try_from_record(&rec_imperfect, &flags_i)?;
+        let mcf_i = MdCigFlags::try_from_record(&rec_imperfect, &flags_i, false)?;
         assert!(!mcf_i.is_perfect());
 
         Ok(())
@@ -284,7 +285,7 @@ mod tests {
         let rec = create_record(b"r", "10M", &[], &qual_big, "10", false)?;
         // The fragment q() clamps to MAX_Q-1 and should not panic.
         let flags = rec.flags();
-        let md_flags = smallvec![MdCigFlags::try_from_record(&rec, &flags)?];
+        let md_flags = smallvec![MdCigFlags::try_from_record(&rec, &flags, false)?];
         let p = flat_penalty();
         let frag = Fragment::new(&p, smallvec![&rec], md_flags)?;
         // q(0, 0) should be within bounds (clamped)
@@ -305,7 +306,7 @@ mod tests {
         let read = b"CCT";
         let rec = create_record(b"r", "3M", read, &[30u8; 3], "3", true)?; // set reverse flag
         let flags = rec.flags();
-        let md_flags = smallvec![MdCigFlags::try_from_record(&rec, &flags)?];
+        let md_flags = smallvec![MdCigFlags::try_from_record(&rec, &flags, false)?];
         let p = flat_penalty();
         let _frag = Fragment::new(&p, smallvec![&rec], md_flags)?;
         let mut scratch = Scratch::new();
@@ -370,7 +371,7 @@ mod tests {
     #[test]
     fn fragment_state_sequential_and_drain_behavior() -> Result<(), crate::Error> {
         let rec1 = create_record(b"r1", "5M", &[], &[30u8; 5], "5", false)?;
-        let mut fs = crate::alignment::FragmentState::from_record(rec1, 0)?;
+        let mut fs = crate::alignment::FragmentState::from_record(rec1, 0, false)?;
         let rec2 = create_record(b"r2", "5M", &[], &[30u8; 5], "5", false)?;
         fs.add_record(rec2)?;
         assert_eq!(fs.get_records().len(), 2);
@@ -425,7 +426,7 @@ mod tests {
             // create_record should succeed; treat MD/CIGAR parsing errors as permitted
             let rec = create_record(b"r", c.cigar, &[], &[30u8; 150], c.md, false)?;
             let flags = rec.flags();
-            match MdCigFlags::try_from_record(&rec, &flags) {
+            match MdCigFlags::try_from_record(&rec, &flags, false) {
                 Ok(mcf) => {
                     // proceed to build fragment and score — must not panic
                     let md_flags = smallvec![mcf];

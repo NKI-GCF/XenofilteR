@@ -46,7 +46,7 @@ fn score_one(cigar: &str, md: &str, qual: &[u8], pen: &Penalty) -> f64 {
     let mut frag = Fragment::new(
         pen,
         smallvec![&rec],
-        smallvec![MdCigFlags::try_from_record(&rec, &flags).unwrap()],
+        smallvec![MdCigFlags::try_from_record(&rec, &flags, false).unwrap()],
     )
     .unwrap();
     let mut dvnt = smallvec![smallvec![]];
@@ -444,7 +444,7 @@ fn variant_rescue_p_variant_table() {
         let mut frag = Fragment::new(
             &pen,
             smallvec![&rec],
-            smallvec![MdCigFlags::try_from_record(&rec, &flags).unwrap()],
+            smallvec![MdCigFlags::try_from_record(&rec, &flags, false).unwrap()],
         )
         .unwrap();
         let _ = frag.score(&mut scratch, &mut dvnt).unwrap();
@@ -552,8 +552,8 @@ fn test_fragment_requires_revcmp() -> Result<(), Error> {
         &p,
         smallvec![&rec_fwd, &rec_rev],
         smallvec![
-            MdCigFlags::try_from_record(&rec_fwd, &flags_fwd)?,
-            MdCigFlags::try_from_record(&rec_rev, &flags_rev)?
+            MdCigFlags::try_from_record(&rec_fwd, &flags_fwd, false)?,
+            MdCigFlags::try_from_record(&rec_rev, &flags_rev, false)?
         ],
     )?;
 
@@ -580,7 +580,7 @@ fn test_score_variants_in_window_boundaries() -> Result<(), Error> {
     let fragment = Fragment::new(
         &p,
         smallvec![&rec],
-        smallvec![MdCigFlags::try_from_record(&rec, &flags)?],
+        smallvec![MdCigFlags::try_from_record(&rec, &flags, false)?],
     )?;
 
     // We create three variants around the right edge of a window ending at 6:
@@ -646,8 +646,8 @@ fn test_stitched_fragment_creation() -> Result<(), Error> {
     let records: SmallVec<[&RecordBuf; READ_CT]> = smallvec![&record1, &record2];
     let p = setup_penalties();
     let mut md_cig_flags: SmallVec<[MdCigFlags; READ_CT]> = SmallVec::new();
-    md_cig_flags.push(MdCigFlags::try_from_record(&record1, &flags1)?);
-    md_cig_flags.push(MdCigFlags::try_from_record(&record2, &flags2)?);
+    md_cig_flags.push(MdCigFlags::try_from_record(&record1, &flags1, false)?);
+    md_cig_flags.push(MdCigFlags::try_from_record(&record2, &flags2, false)?);
     let _stitched = Fragment::new(&p, records, md_cig_flags)?;
     Ok(())
 }
@@ -672,7 +672,7 @@ fn test_q() -> Result<(), Error> {
     )?;
     let flags = record.flags();
     let seg = smallvec![&record];
-    let md_cig_flags = smallvec![MdCigFlags::try_from_record(&record, &flags)?];
+    let md_cig_flags = smallvec![MdCigFlags::try_from_record(&record, &flags, false)?];
     let p = setup_penalties();
     let fragment = Fragment::new(&p, seg, md_cig_flags)?;
     assert_eq!(fragment.q(0, 0)?, 30);

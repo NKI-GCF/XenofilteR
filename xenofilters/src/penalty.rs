@@ -13,7 +13,7 @@ pub(super) const MAX_Q: usize = 93;
 /// All values can be individually overridden with the corresponding
 /// CLI flags; the model only sets defaults.
 #[derive(Clone, Copy, Debug, PartialEq, clap::ValueEnum, Default)]
-pub(crate) enum ErrorModel {
+pub enum ErrorModel {
     /// Standard Illumina short-read (SBS): qualities well-calibrated,
     /// indel rate ~0.1%.  Default gap_open=6, gap_extend=1.
     #[default]
@@ -33,8 +33,8 @@ impl ErrorModel {
     pub(crate) fn quality_calibration(&self) -> f64 {
         match self {
             ErrorModel::Illumina => 1.0,
-            ErrorModel::HiFi     => 1.0,
-            ErrorModel::Ont      => 0.7, // R10.4 empirical; adjust per basecaller
+            ErrorModel::HiFi => 1.0,
+            ErrorModel::Ont => 0.7, // R10.4 empirical; adjust per basecaller
         }
     }
 
@@ -42,8 +42,8 @@ impl ErrorModel {
     pub(crate) fn default_gap_open(&self) -> f64 {
         match self {
             ErrorModel::Illumina => 6.0,
-            ErrorModel::HiFi     => 4.0,
-            ErrorModel::Ont      => 2.0,
+            ErrorModel::HiFi => 4.0,
+            ErrorModel::Ont => 2.0,
         }
     }
 
@@ -51,8 +51,8 @@ impl ErrorModel {
     pub(crate) fn default_gap_extend(&self) -> f64 {
         match self {
             ErrorModel::Illumina => 1.0,
-            ErrorModel::HiFi     => 0.5,
-            ErrorModel::Ont      => 0.3,
+            ErrorModel::HiFi => 0.5,
+            ErrorModel::Ont => 0.3,
         }
     }
 
@@ -60,8 +60,8 @@ impl ErrorModel {
     pub(crate) fn default_mismatch_penalty(&self) -> f64 {
         match self {
             ErrorModel::Illumina => 4.0,
-            ErrorModel::HiFi     => 4.0,
-            ErrorModel::Ont      => 2.0, // mismatches are less surprising in ONT
+            ErrorModel::HiFi => 4.0,
+            ErrorModel::Ont => 2.0, // mismatches are less surprising in ONT
         }
     }
 }
@@ -87,36 +87,35 @@ pub struct Penalty {
 
 impl Penalty {
     pub(crate) fn build(
-        gap_open:                  f64,
-        gap_extend:                f64,
-        mismatch_penalty:          f64,
-        chimeric_junction_bases:   u32,
-        error_model:               ErrorModel,
+        gap_open: f64,
+        gap_extend: f64,
+        mismatch_penalty: f64,
+        chimeric_junction_bases: u32,
+        error_model: ErrorModel,
     ) -> Self {
         let calib = error_model.quality_calibration();
-        let mut ll_match    = [0.0f64; MAX_Q];
+        let mut ll_match = [0.0f64; MAX_Q];
         let mut ll_mismatch = [0.0f64; MAX_Q];
 
         for q in 0..MAX_Q {
-            let eff_q   = (q as f64 * calib).min(MAX_Q as f64 - 1.0);
-            let p_err   = 10f64.powf(-eff_q / 10.0);
-            ll_match[q]    = (1.0 - p_err).ln();
+            let eff_q = (q as f64 * calib).min(MAX_Q as f64 - 1.0);
+            let p_err = 10f64.powf(-eff_q / 10.0);
+            ll_match[q] = (1.0 - p_err).ln();
             ll_mismatch[q] = (p_err / 3.0).ln() * (mismatch_penalty / 4.0);
             // Scale mismatch log-likelihood by mismatch_penalty / 4.0 so that
             // the default mismatch_penalty=4 preserves backward compatibility
             // (the old formula: penalty × -q × LN_10 / 10.0 ≈ this at mid-Q).
         }
 
-        let chimeric_junction_penalty =
-            gap_open + (chimeric_junction_bases as f64) * gap_extend;
+        let chimeric_junction_penalty = gap_open + (chimeric_junction_bases as f64) * gap_extend;
 
         Penalty {
-            gap_open:                  -gap_open.abs(),
-            gap_extend:                -gap_extend.abs(),
-            log_likelihood_match:      ll_match,
-            log_likelihood_mismatch:   ll_mismatch,
+            gap_open: -gap_open.abs(),
+            gap_extend: -gap_extend.abs(),
+            log_likelihood_match: ll_match,
+            log_likelihood_mismatch: ll_mismatch,
             chimeric_junction_penalty: -chimeric_junction_penalty.abs(),
-            log_likelihood_bisulfite:  0.0, // always zero; field makes intent explicit
+            log_likelihood_bisulfite: 0.0, // always zero; field makes intent explicit
         }
     }
 }

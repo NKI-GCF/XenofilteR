@@ -2,6 +2,7 @@ use crate::alignment::MdCigFlags;
 use crate::Error;
 use noodles::sam::alignment::record::cigar::op::{Kind, Op};
 
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum BaseOp {
     Match,
     Mis,
@@ -23,9 +24,25 @@ pub(crate) struct ScoreOpIter<'a> {
     /// Remaining length in the current CIGAR M-op we haven't emitted yet.
     cig_m_remain: usize,
     // Bisulfite support
-    seq: Option<&'a [u8]>,  // read sequence; None → bisulfite detection disabled
-    is_reverse: bool,              // true = reverse-complemented read
-    read_pos: usize,               // current position in read sequence
+    seq: Option<&'a [u8]>, // read sequence; None → bisulfite detection disabled
+    is_reverse: bool,      // true = reverse-complemented read
+    read_pos: usize,       // current position in read sequence
+}
+
+#[cfg(test)]
+impl Default for ScoreOpIter<'_> {
+    fn default() -> Self {
+        Self {
+            md: &[],
+            cigar: Box::new(std::iter::empty()),
+            md_at: 0,
+            md_match_remain: 0,
+            cig_m_remain: 0,
+            seq: None,
+            is_reverse: false,
+            read_pos: 0,
+        }
+    }
 }
 
 impl<'a> ScoreOpIter<'a> {
@@ -47,9 +64,16 @@ impl<'a> ScoreOpIter<'a> {
     /// Classify a mismatch: bisulfite conversion or genuine substitution.
     /// `ref_base`: the reference base from the MD tag (ASCII uppercase).
     fn classify_mismatch(&mut self, ref_base: u8) -> BaseOp {
-        let Some(seq) = self.seq else { return BaseOp::Mis; };
-        let read_base = seq.get(self.read_pos).copied().map(|b| b.to_ascii_uppercase());
-        let Some(rb) = read_base else { return BaseOp::Mis; };
+        let Some(seq) = self.seq else {
+            return BaseOp::Mis;
+        };
+        let read_base = seq
+            .get(self.read_pos)
+            .copied()
+            .map(|b| b.to_ascii_uppercase());
+        let Some(rb) = read_base else {
+            return BaseOp::Mis;
+        };
 
         let is_conversion = if !self.is_reverse {
             // Forward strand: bisulfite converts C → T.
