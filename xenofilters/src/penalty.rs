@@ -97,25 +97,30 @@ impl Penalty {
         let mut ll_match = [0.0f64; MAX_Q];
         let mut ll_mismatch = [0.0f64; MAX_Q];
 
+        let reference_penalty = 4.0;
+        let scaling_factor = mismatch_penalty / reference_penalty;
+
         for q in 0..MAX_Q {
+            // Apply platform-specific quality calibration
             let eff_q = (q as f64 * calib).min(MAX_Q as f64 - 1.0);
+
+            // 1. Match Log-Likelihood (Base-10)
             let p_err = 10f64.powf(-eff_q / 10.0);
-            ll_match[q] = (1.0 - p_err).ln();
-            ll_mismatch[q] = (p_err / 3.0).ln() * (mismatch_penalty / 4.0);
-            // Scale mismatch log-likelihood by mismatch_penalty / 4.0 so that
-            // the default mismatch_penalty=4 preserves backward compatibility
-            // (the old formula: penalty × -q × LN_10 / 10.0 ≈ this at mid-Q).
+            ll_match[q] = (1.0 - p_err).log10();
+
+            // 2. Mismatch Log-Likelihood (Base-10 back-compat formula)
+            ll_mismatch[q] = (-eff_q / 10.0) * scaling_factor;
         }
 
         let chimeric_junction_penalty = gap_open + (chimeric_junction_bases as f64) * gap_extend;
 
         Penalty {
-            gap_open: -gap_open.abs(),
-            gap_extend: -gap_extend.abs(),
+            gap_open, // Do not force negative here; let Config/algorithms handle signs
+            gap_extend,
             log_likelihood_match: ll_match,
             log_likelihood_mismatch: ll_mismatch,
-            chimeric_junction_penalty: -chimeric_junction_penalty.abs(),
-            log_likelihood_bisulfite: 0.0, // always zero; field makes intent explicit
+            chimeric_junction_penalty,
+            log_likelihood_bisulfite: 0.0,
         }
     }
 }
