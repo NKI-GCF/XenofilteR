@@ -6,6 +6,12 @@ mod store;
 pub(crate) use eval::Eval;
 pub(crate) use population::{parse_population_record, Population};
 pub(crate) use sample::{parse_sample_record, Sample};
+pub(crate) mod indel_equiv;
+pub(crate) mod indel_equiv_impls; // WithAlleles impls + Store::insert_expanded
+pub(crate) use indel_equiv::{
+    build_diagnostic_store_expanded, build_population_store_expanded, build_sample_store_expanded,
+    enumerate_equivalents, IndelEquivalenceExpander, WithAlleles,
+};
 pub(super) use store::{Store, StoreTrait, VNT_CT};
 
 use crate::filter_algorithm::line_by_line::READ_CT;
@@ -16,6 +22,9 @@ pub(super) type FragEvalVec<'v> = SmallVec<[EvalVec<'v>; READ_CT]>;
 
 /// Trait for any object that can be scored against an alignment.
 pub trait Variant: Sync + Send {
+    /// The reference ID of the variant.
+    fn ref_id(&self) -> usize;
+
     /// The 1-based reference position of the variant.
     fn pos(&self) -> usize;
 

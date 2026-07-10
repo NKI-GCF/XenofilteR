@@ -1,433 +1,92 @@
-// src/variant/indel_equiv.rs
+// src/variant/indel_equiv.rs  (replace the build_*_store_expanded functions
+//   at the bottom with these; the enumeration core above is unchanged)
 //
-// Indel Equivalence Enumerator — Approach B implementation.
-//
-// Pre-computes all mathematically equivalent VCF representations of each
-// indel by sliding it through local repeat regions.  The hot path
-// (store.overlapping_multi / align_alt_to_read / wis_max_rescue_delta)
-// is completely unchanged; the expansion happens once at startup.
-//
-// Coordinate contract (strict):
-//   VCF input  — 1-based, inclusive (noodles Variant::variant_start()).
-//   All output — 0-based (pos = vcf_pos - 1).
+// Key corrections vs the previous version:
+//   1. All `store.insert_expanded(variants)` calls now pass `ref_id` explicitly.
+//   2. `expand_sample` / `expand_population` return `(ref_id, Vec<V>)` tuples.
+//   3. `IndelEquivalenceExpander::fetch_context` is `pub(crate)` so
+//      `diagnostic_equiv.rs` can call it.
+//   4. The name→id mapping is passed into both build functions.
 
-use std::io::{BufRead, Seek};
+use std::{
+    collections::HashMap,
+    io::{BufRead, Seek},
+    path::Path,
+};
 
 use anyhow::{Context, Result};
-use noodles::{
-    bgzf,
-    core::Position,
-    fasta,
-    fasta::record::Sequence,
-    vcf,
-    vcf::variant::record::{
-        samples::{Sample, Series},
-        AlternateBases, ReferenceBases,
-    },
-};
+use noodles::{bcf, bgzf, fasta, vcf};
 use smallvec::SmallVec;
 use tracing::{debug, warn};
 
-use crate::{
-    variant::{
-        population::{parse_population_record, Population},
-        sample::{parse_sample_record, Sample as SampleVariant},
-        store::Store,
-    },
-    Error,
+use crate::variant::{population::Population, sample::Sample, store::Store, Variant};
+
+pub(crate) use super::indel_equiv::{
+    classify, enumerate_equivalents, IndelEquivalenceExpander, IndelKind, WithAlleles, MAX_SHIFT,
 };
 
 // ---------------------------------------------------------------------------
-// Constants
+// Corrected IndelEquivalenceExpander expand methods
 // ---------------------------------------------------------------------------
-
-/// Hard limit on right-shift distance. Caps memory at ≤ MAX_SHIFT entries
-/// per indel; handles homopolymers up to 100 bp.
-pub(crate) const MAX_SHIFT: usize = 100;
-
-/// Context fetched on each side of the indel for left-normalization and
-/// right-shift enumeration. Slight over-fetch avoids off-by-one at limits.
-const CTX_WINDOW: usize = MAX_SHIFT + 16;
-
-// ---------------------------------------------------------------------------
-// EquivalentAlleles — one equivalent VCF representation
-// ---------------------------------------------------------------------------
-
-/// One equivalent (POS, REF, ALT) representation of a biological indel,
-/// stored in 0-based coordinates.
-#[derive(Debug, Clone)]
-pub(crate) struct EquivalentAlleles {
-    /// 0-based anchor position (VCF POS − 1).
-    pub(crate) pos: usize,
-    /// REF allele bytes, ASCII uppercase, including anchor at index 0.
-    pub(crate) ref_a: Vec<u8>,
-    /// ALT allele bytes, ASCII uppercase, including anchor at index 0.
-    pub(crate) alt_a: Vec<u8>,
-}
-
-// ---------------------------------------------------------------------------
-// Allele classification
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum IndelKind {
-    /// Both alleles are single bases; no sliding possible.
-    Snp,
-    /// len(ref) > len(alt) == 1 — pure deletion with VCF anchor base.
-    Deletion,
-    /// len(ref) == 1 < len(alt) — pure insertion with VCF anchor base.
-    Insertion,
-    /// Multi-base on both sides; sliding undefined.
-    Complex,
-}
-
-fn classify(ref_a: &[u8], alt_a: &[u8]) -> IndelKind {
-    match (ref_a.len(), alt_a.len()) {
-        (1, 1) => IndelKind::Snp,
-        (r, 1) if r > 1 => IndelKind::Deletion,
-        (1, a) if a > 1 => IndelKind::Insertion,
-        _ => IndelKind::Complex,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Core enumeration algorithm (pure function; no I/O)
-// ---------------------------------------------------------------------------
-
-/// Expand `(pos_0based, ref_a, alt_a)` into all equivalent VCF
-/// representations by left-normalizing and then right-shifting through
-/// the local repeat region.
-///
-/// # Parameters
-/// - `pos_0based` : 0-based anchor position (VCF POS − 1).
-/// - `ref_a`      : REF bytes including anchor; ASCII uppercase.
-/// - `alt_a`      : ALT bytes including anchor; ASCII uppercase.
-/// - `ref_ctx`    : Reference sequence bytes; `ref_ctx[0]` corresponds to
-///                  chromosome position `ctx_start` (0-based).
-///                  Must cover at least `pos_0based + len(ref_a) + MAX_SHIFT`.
-/// - `ctx_start`  : 0-based chromosome position of `ref_ctx[0]`.
-///
-/// # Returns
-/// `SmallVec` with inline capacity 8.  Always contains ≥ 1 entry
-/// (the left-normalized original).  SNPs and complex alleles return
-/// exactly 1 entry.
-pub(crate) fn enumerate_equivalents(
-    pos_0based: usize,
-    ref_a: &[u8],
-    alt_a: &[u8],
-    ref_ctx: &[u8],
-    ctx_start: usize,
-) -> SmallVec<[EquivalentAlleles; 8]> {
-    let mut out: SmallVec<[EquivalentAlleles; 8]> = SmallVec::new();
-    let kind = classify(ref_a, alt_a);
-
-    if matches!(kind, IndelKind::Snp | IndelKind::Complex) {
-        // SNPs need no expansion; complex alleles cannot be safely slid.
-        out.push(EquivalentAlleles {
-            pos: pos_0based,
-            ref_a: ref_a.to_vec(),
-            alt_a: alt_a.to_vec(),
-        });
-        return out;
-    }
-
-    // -- Left-normalize ------------------------------------------------------
-    let (mut cur_pos, mut cur_ref, mut cur_alt) =
-        left_normalize(pos_0based, ref_a, alt_a, ref_ctx, ctx_start);
-
-    out.push(EquivalentAlleles {
-        pos: cur_pos,
-        ref_a: cur_ref.clone(),
-        alt_a: cur_alt.clone(),
-    });
-
-    // -- Right-shift enumeration ---------------------------------------------
-    for _ in 0..MAX_SHIFT {
-        let next = match kind {
-            IndelKind::Deletion => {
-                right_shift_deletion(cur_pos, &cur_ref, &cur_alt, ref_ctx, ctx_start)
-            }
-            IndelKind::Insertion => {
-                right_shift_insertion(cur_pos, &cur_ref, &cur_alt, ref_ctx, ctx_start)
-            }
-            _ => unreachable!("Snp/Complex handled above"),
-        };
-        match next {
-            Some((new_pos, new_ref, new_alt)) => {
-                out.push(EquivalentAlleles {
-                    pos: new_pos,
-                    ref_a: new_ref.clone(),
-                    alt_a: new_alt.clone(),
-                });
-                cur_pos = new_pos;
-                cur_ref = new_ref;
-                cur_alt = new_alt;
-            }
-            None => break,
-        }
-    }
-
-    out
-}
-
-/// Left-normalize a simple indel.
-///
-/// Repeatedly shifts the anchor one position to the left as long as the
-/// last base of the payload (deleted or inserted sequence) matches the
-/// reference base immediately before the current anchor.
-fn left_normalize(
-    pos_0based: usize,
-    ref_a: &[u8],
-    alt_a: &[u8],
-    ref_ctx: &[u8],
-    ctx_start: usize,
-) -> (usize, Vec<u8>, Vec<u8>) {
-    let mut pos = pos_0based;
-    let mut r = ref_a.to_vec();
-    let mut a = alt_a.to_vec();
-
-    loop {
-        if pos == 0 {
-            break;
-        }
-
-        // Chromosome index of the base preceding the current anchor.
-        let prev_chrom = pos - 1;
-        let prev_ctx = match prev_chrom.checked_sub(ctx_start) {
-            Some(i) if i < ref_ctx.len() => ref_ctx[i],
-            _ => break,
-        };
-
-        // Left-shift condition: payload's last base == preceding ref base.
-        // For deletion payload is r[1:]; for insertion payload is a[1:].
-        let last_payload = if r.len() > a.len() {
-            *r.last().expect("ref non-empty")
-        } else {
-            *a.last().expect("alt non-empty")
-        };
-
-        if last_payload != prev_chrom_base_to_u8(prev_ctx) {
-            break;
-        }
-
-        // Perform shift: prepend preceding base, drop the last base.
-        r.insert(0, prev_ctx);
-        r.pop();
-        a.insert(0, prev_ctx);
-        a.pop();
-        pos -= 1;
-    }
-    (pos, r, a)
-}
-
-#[inline(always)]
-const fn prev_chrom_base_to_u8(b: u8) -> u8 {
-    b
-} // identity; name for clarity
-
-/// Attempt one right-shift of a deletion.
-///
-/// Condition: first deleted base == base immediately after the deletion
-/// in the reference (i.e., `ref_ctx[anchor + 1] == ref_ctx[anchor + 1 + del_len]`).
-///
-/// New representation:
-/// ```text
-///   new_anchor   = cur_ref[1]               (first deleted base)
-///   new_deleted  = cur_ref[2..] + ref_ctx[after_deletion]
-///   new_ref      = [new_anchor] + new_deleted
-///   new_alt      = [new_anchor]
-/// ```
-fn right_shift_deletion(
-    cur_pos: usize,
-    cur_ref: &[u8], // anchor + deleted sequence
-    cur_alt: &[u8], // anchor only (len == 1)
-    ref_ctx: &[u8],
-    ctx_start: usize,
-) -> Option<(usize, Vec<u8>, Vec<u8>)> {
-    debug_assert_eq!(cur_alt.len(), 1, "deletion alt must be single anchor");
-    let del_len = cur_ref.len().checked_sub(1)?; // number of deleted bases
-    if del_len == 0 {
-        return None;
-    }
-
-    // Chromosome coordinates (0-based):
-    let first_del_chrom = cur_pos + 1;
-    let after_del_chrom = cur_pos + 1 + del_len;
-
-    // Map to ref_ctx slice indices.
-    let first_del_idx = first_del_chrom.checked_sub(ctx_start)?;
-    let after_del_idx = after_del_chrom.checked_sub(ctx_start)?;
-
-    if first_del_idx >= ref_ctx.len() || after_del_idx >= ref_ctx.len() {
-        return None;
-    }
-
-    // The shift is valid iff the first deleted base equals the base that
-    // would "slide in" from the right.
-    if ref_ctx[first_del_idx] != ref_ctx[after_del_idx] {
-        return None;
-    }
-
-    let new_anchor = cur_ref[1]; // == ref_ctx[first_del_idx]
-
-    let mut new_ref = Vec::with_capacity(cur_ref.len());
-    new_ref.push(new_anchor);
-    new_ref.extend_from_slice(&cur_ref[2..]); // remaining deleted bases
-    new_ref.push(ref_ctx[after_del_idx]); // base that cycles in
-
-    let new_alt = vec![new_anchor];
-
-    Some((cur_pos + 1, new_ref, new_alt))
-}
-
-/// Attempt one right-shift of an insertion.
-///
-/// Condition: first inserted base == base immediately after the current anchor.
-///
-/// After a valid shift, the inserted sequence rotates left by one position.
-/// ```text
-///   new_anchor  = ref_ctx[cur_anchor + 1]
-///   new_ins_seq = ins_seq[1..] + ins_seq[0]
-///   new_alt     = [new_anchor] + new_ins_seq
-///   new_ref     = [new_anchor]
-/// ```
-fn right_shift_insertion(
-    cur_pos: usize,
-    cur_ref: &[u8], // anchor only (len == 1)
-    cur_alt: &[u8], // anchor + inserted sequence
-    ref_ctx: &[u8],
-    ctx_start: usize,
-) -> Option<(usize, Vec<u8>, Vec<u8>)> {
-    debug_assert_eq!(cur_ref.len(), 1, "insertion ref must be single anchor");
-    let ins_len = cur_alt.len().checked_sub(1)?;
-    if ins_len == 0 {
-        return None;
-    }
-
-    let next_chrom = cur_pos + 1;
-    let next_ctx_idx = next_chrom.checked_sub(ctx_start)?;
-    if next_ctx_idx >= ref_ctx.len() {
-        return None;
-    }
-
-    let first_ins = cur_alt[1]; // first inserted base (index 0 is anchor)
-    let next_ref = ref_ctx[next_ctx_idx];
-
-    // Shift valid iff first inserted base == next reference base.
-    if first_ins != next_ref {
-        return None;
-    }
-
-    let new_anchor = next_ref;
-
-    let mut new_alt = Vec::with_capacity(cur_alt.len());
-    new_alt.push(new_anchor);
-    new_alt.extend_from_slice(&cur_alt[2..]); // ins_seq[1:]
-    new_alt.push(cur_alt[1]); // ins_seq[0] rotated to end
-
-    let new_ref = vec![new_anchor];
-
-    Some((cur_pos + 1, new_ref, new_alt))
-}
-
-// ---------------------------------------------------------------------------
-// IndelEquivalenceExpander — orchestrates FASTA fetch + enumeration
-// ---------------------------------------------------------------------------
-
-/// Wraps an indexed FASTA reader and expands each VCF indel into all
-/// equivalent representations.
-///
-/// # Type parameter
-/// `R` must implement `BufRead + Seek` so the FASTA index can random-access
-/// the reference.  Typically `std::io::BufReader<std::fs::File>`.
-pub(crate) struct IndelEquivalenceExpander<R: BufRead + Seek> {
-    fasta: fasta::IndexedReader<R>,
-}
 
 impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
-    pub(crate) fn new(fasta: fasta::IndexedReader<R>) -> Self {
-        Self { fasta }
-    }
-
-    /// Fetch the reference context window around a VCF indel.
+    /// Expand one VCF record into `(ref_id, Vec<Sample>)`.
     ///
-    /// Returns `(ctx_start_0based, bytes)` where `bytes[0]` corresponds
-    /// to chromosome position `ctx_start_0based` (0-based).
-    fn fetch_context(
+    /// Returns `None` when the chromosome is absent from `name_to_id`
+    /// (logged as a warning; record skipped without error).
+    pub(crate) fn expand_sample_with_refid(
         &mut self,
-        chrom: &str,
-        pos_0based: usize,
-        ref_len: usize,
-    ) -> Result<(usize, Vec<u8>)> {
-        // Start: ctx_start = max(0, pos_0based - CTX_WINDOW)
-        let ctx_start = pos_0based.saturating_sub(CTX_WINDOW);
-        // End: cover pos + ref_len + MAX_SHIFT (exclusive, 0-based).
-        let ctx_end = pos_0based + ref_len + MAX_SHIFT + 1;
-
-        // noodles positions are 1-based and inclusive.
-        let start_1based =
-            Position::new(ctx_start + 1).context("position overflow in FASTA fetch")?;
-        let end_1based = Position::new(ctx_end).context("position overflow in FASTA fetch")?;
-
-        let region = format!("{chrom}:{}-{}", ctx_start + 1, ctx_end);
-        let record = self
-            .fasta
-            .query(&region.parse().context("invalid region string")?)
-            .with_context(|| format!("FASTA query failed for {region}"))?;
-
-        let bytes: Vec<u8> = record
-            .sequence()
-            .as_ref()
-            .iter()
-            .map(|&b| b.to_ascii_uppercase())
-            .collect();
-
-        Ok((ctx_start, bytes))
-    }
-
-    /// Expand a single sample VCF record into all equivalent `SampleVariant`s.
-    ///
-    /// The original scoring parameters (`genotype_quality`, `alt_haplotype`,
-    /// `phase_set`, `gamete_mode`) are replicated unchanged across all
-    /// equivalent representations; only `pos`, `ref_a`, and `alt_a` change.
-    pub(crate) fn expand_sample(
-        &mut self,
-        record: &mut vcf::variant::RecordBuf,
+        rec: &mut vcf::variant::RecordBuf,
         header: &vcf::Header,
-        chrom: &str,
+        name_to_id: &HashMap<String, usize>,
         gamete: bool,
-    ) -> Result<Vec<SampleVariant>> {
-        // Parse the canonical variant first (existing function; unchanged).
-        let canonicals = match crate::variant::sample::parse_sample_record(record, header) {
+    ) -> Result<Option<(usize, Vec<Sample>)>> {
+        let chrom = rec.reference_sequence_name().to_string();
+        let ref_id = match name_to_id.get(&chrom) {
+            Some(&id) => id,
+            None => {
+                warn!(
+                    chrom,
+                    "chromosome absent from reference header; skipping sample record"
+                );
+                return Ok(None);
+            }
+        };
+
+        let canonicals = match crate::variant::sample::parse_sample_record(rec, header) {
             Ok(v) => v,
             Err(e) => {
-                warn!(chrom, "parse_sample_record failed: {e}; skipping record");
-                return Ok(vec![]);
+                warn!(chrom, "parse_sample_record: {e}; skipping");
+                return Ok(None);
             }
         };
 
         let mut out = Vec::new();
         for canon in &canonicals {
             let kind = classify(canon.ref_allele(), canon.alt_allele());
-            if matches!(kind, IndelKind::Snp) {
-                out.push(canon.clone());
-                continue;
-            }
+
             if matches!(kind, IndelKind::Complex) {
-                warn!(
-                    chrom,
-                    pos = canon.pos() + 1, // report 1-based in warning
-                    "Complex allele skipped for indel equivalence expansion"
-                );
-                out.push(canon.clone());
+                warn!(chrom, pos = canon.pos() + 1, "Complex allele not expanded");
+                out.push(canon.with_alleles_refid(
+                    ref_id,
+                    canon.pos(),
+                    canon.ref_allele(),
+                    canon.alt_allele(),
+                ));
+                continue;
+            }
+            if matches!(kind, IndelKind::Snp) {
+                out.push(canon.with_alleles_refid(
+                    ref_id,
+                    canon.pos(),
+                    canon.ref_allele(),
+                    canon.alt_allele(),
+                ));
                 continue;
             }
 
-            let ref_len = canon.ref_allele().len();
-            let (ctx_start, ctx) = self
-                .fetch_context(chrom, canon.pos(), ref_len)
-                .with_context(|| format!("fetching context at {chrom}:{}", canon.pos() + 1))?;
-
+            let (ctx_start, ctx) =
+                self.fetch_context(&chrom, canon.pos(), canon.ref_allele().len())?;
             let equivalents = enumerate_equivalents(
                 canon.pos(),
                 canon.ref_allele(),
@@ -435,59 +94,74 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
                 &ctx,
                 ctx_start,
             );
-
             debug!(
                 chrom,
                 pos = canon.pos() + 1,
-                n_equivalents = equivalents.len(),
-                "Indel equivalence expansion"
+                n = equivalents.len(),
+                "Sample indel expansion"
             );
 
             for eq in &equivalents {
-                // Clone with shifted coordinates; scoring parameters preserved.
-                out.push(canon.with_alleles(eq.pos, &eq.ref_a, &eq.alt_a));
+                out.push(canon.with_alleles_refid(ref_id, eq.pos, &eq.ref_a, &eq.alt_a));
             }
         }
-        Ok(out)
+        Ok(Some((ref_id, out)))
     }
 
-    /// Expand a single population VCF record into all equivalent `Population`s.
-    pub(crate) fn expand_population(
+    /// Expand one VCF record into `(ref_id, Vec<Population>)`.
+    pub(crate) fn expand_population_with_refid(
         &mut self,
-        record: &mut vcf::variant::RecordBuf,
+        rec: &mut vcf::variant::RecordBuf,
         header: &vcf::Header,
-        chrom: &str,
-    ) -> Result<Vec<Population>> {
-        let canonicals = match crate::variant::population::parse_population_record(record, header) {
+        name_to_id: &HashMap<String, usize>,
+    ) -> Result<Option<(usize, Vec<Population>)>> {
+        let chrom = rec.reference_sequence_name().to_string();
+        let ref_id = match name_to_id.get(&chrom) {
+            Some(&id) => id,
+            None => {
+                warn!(chrom, "chromosome absent; skipping population record");
+                return Ok(None);
+            }
+        };
+
+        let canonicals = match crate::variant::population::parse_population_record(rec, header) {
             Ok(v) => v,
             Err(e) => {
-                warn!(chrom, "parse_population_record failed: {e}; skipping");
-                return Ok(vec![]);
+                warn!(chrom, "parse_population_record: {e}; skipping");
+                return Ok(None);
             }
         };
 
         let mut out = Vec::new();
         for canon in &canonicals {
             let kind = classify(canon.ref_allele(), canon.alt_allele());
-            if matches!(kind, IndelKind::Snp) {
-                out.push(canon.clone());
-                continue;
-            }
+
             if matches!(kind, IndelKind::Complex) {
                 warn!(
                     chrom,
                     pos = canon.pos() + 1,
-                    "Complex allele skipped for indel equivalence expansion"
+                    "Complex population allele not expanded"
                 );
-                out.push(canon.clone());
+                out.push(canon.with_alleles_refid(
+                    ref_id,
+                    canon.pos(),
+                    canon.ref_allele(),
+                    canon.alt_allele(),
+                ));
+                continue;
+            }
+            if matches!(kind, IndelKind::Snp) {
+                out.push(canon.with_alleles_refid(
+                    ref_id,
+                    canon.pos(),
+                    canon.ref_allele(),
+                    canon.alt_allele(),
+                ));
                 continue;
             }
 
-            let ref_len = canon.ref_allele().len();
-            let (ctx_start, ctx) = self
-                .fetch_context(chrom, canon.pos(), ref_len)
-                .with_context(|| format!("fetching context at {chrom}:{}", canon.pos() + 1))?;
-
+            let (ctx_start, ctx) =
+                self.fetch_context(&chrom, canon.pos(), canon.ref_allele().len())?;
             let equivalents = enumerate_equivalents(
                 canon.pos(),
                 canon.ref_allele(),
@@ -495,86 +169,87 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
                 &ctx,
                 ctx_start,
             );
-
             debug!(
                 chrom,
                 pos = canon.pos() + 1,
-                n_equivalents = equivalents.len(),
-                "Population indel equivalence expansion"
+                n = equivalents.len(),
+                "Population indel expansion"
             );
 
             for eq in &equivalents {
-                out.push(canon.with_alleles(eq.pos, &eq.ref_a, &eq.alt_a));
+                out.push(canon.with_alleles_refid(ref_id, eq.pos, &eq.ref_a, &eq.alt_a));
             }
         }
-        Ok(out)
+        Ok(Some((ref_id, out)))
     }
 }
 
 // ---------------------------------------------------------------------------
-// `with_alleles` extension on variant types
-// ---------------------------------------------------------------------------
-// These must be implemented on SampleVariant and Population respectively.
-// Shown here as a trait to avoid repeating the derive boilerplate.
-
-pub(crate) trait WithAlleles: Sized {
-    /// Clone self with new 0-based position and alleles; all scoring
-    /// parameters (p_variant, GQ, AF, phase information) are preserved.
-    fn with_alleles(&self, pos_0based: usize, ref_a: &[u8], alt_a: &[u8]) -> Self;
-}
-
-// ---------------------------------------------------------------------------
-// Store<V>::insert_expanded  (extension; keep existing internals unchanged)
+// WithAllelesRefId — variant of WithAlleles that also sets ref_id
 // ---------------------------------------------------------------------------
 //
-// `Store<V>` already maintains a per-chromosome sorted Vec<V> for binary-
-// search range queries.  `insert_expanded` simply calls the existing per-
-// variant insert path for each element in the expanded Vec.  The hot-path
-// `overlapping_multi` implementation is untouched.
+// Avoids two separate clone+update steps. Implemented on Sample + Population
+// in indel_equiv_impls.rs.
 
-use crate::variant::store::Store;
-use crate::variant::Variant;
+pub(crate) trait WithAllelesRefId: Sized {
+    fn with_alleles_refid(
+        &self,
+        ref_id: usize,
+        pos_0based: usize,
+        ref_a: &[u8],
+        alt_a: &[u8],
+    ) -> Self;
+}
 
-impl<V: Variant + Clone + Ord> Store<V> {
-    /// Insert a batch of pre-expanded equivalent variants.
-    ///
-    /// Equivalent to calling `insert` once per entry; re-sorts after
-    /// the batch to maintain the binary-search invariant.
-    ///
-    /// Called once per VCF record at startup; not on the hot path.
-    pub(crate) fn insert_expanded(&mut self, variants: Vec<V>) {
-        for v in variants {
-            self.insert(v);
+impl WithAllelesRefId for Sample {
+    fn with_alleles_refid(
+        &self,
+        ref_id: usize,
+        pos_0based: usize,
+        ref_a: &[u8],
+        alt_a: &[u8],
+    ) -> Self {
+        Self {
+            ref_id,
+            pos: pos_0based,
+            ref_a: ref_a.to_vec(),
+            alt_a: alt_a.to_vec(),
+            genotype_quality: self.genotype_quality,
+            alt_haplotype: self.alt_haplotype,
+            phase_set: self.phase_set,
+            gamete_mode: self.gamete_mode,
+        }
+    }
+}
+
+impl WithAllelesRefId for Population {
+    fn with_alleles_refid(
+        &self,
+        ref_id: usize,
+        pos_0based: usize,
+        ref_a: &[u8],
+        alt_a: &[u8],
+    ) -> Self {
+        Self {
+            ref_id,
+            pos: pos_0based,
+            ref_a: ref_a.to_vec(),
+            alt_a: alt_a.to_vec(),
+            allele_frequency: self.allele_frequency,
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Initialization loop (shown as a standalone function)
+// build_sample_store_expanded  (corrected)
 // ---------------------------------------------------------------------------
-//
-// Wire this into AlnStream::new() or the per-stream variant-store
-// initialization block in main.rs where Store<Sample> / Store<Population>
-// are currently constructed.
 
-use std::path::Path;
-
-/// Build a `Store<SampleVariant>` with indel equivalence expansion.
-///
-/// Replaces the bare `Store::from_vcf(path)` call in aln_stream.rs
-/// when `--reference` is supplied.
-///
-/// # Coordinate contract
-/// All positions in the returned `Store` are 0-based.  The existing
-/// `store.overlapping_multi(tid, read_start, read_end)` hot path operates
-/// on 0-based half-open intervals and is unchanged.
 pub(crate) fn build_sample_store_expanded(
     vcf_path: &Path,
     fasta_path: &Path,
-    header: &vcf::Header,
+    name_to_id: &HashMap<String, usize>,
     gamete: bool,
-) -> Result<Store<SampleVariant>> {
-    use noodles::{bgzf, vcf::io::Reader as VcfReader};
+) -> Result<Store<Sample>> {
     use std::{fs::File, io::BufReader};
 
     let fasta_reader = fasta::IndexedReader::new(BufReader::new(
@@ -582,109 +257,114 @@ pub(crate) fn build_sample_store_expanded(
             .with_context(|| format!("opening FASTA {}", fasta_path.display()))?,
     ));
     let mut expander = IndelEquivalenceExpander::new(fasta_reader);
-    let mut store = Store::<SampleVariant>::new();
+    let mut store = Store::<Sample>::new();
 
-    // BCF (bgzf) or plain VCF — determine from extension.
-    let is_bcf = vcf_path.extension().map_or(false, |e| e == "bcf");
-    let mut reader: Box<dyn Iterator<Item = Result<vcf::variant::RecordBuf>>> = if is_bcf {
-        use noodles::bcf;
-        let mut bcf_reader =
-            bcf::io::Reader::new(bgzf::io::Reader::new(BufReader::new(File::open(vcf_path)?)));
-        let _hdr = bcf_reader.read_header()?;
-        Box::new(
-            bcf_reader
-                .record_bufs(header)
-                .map(|r| r.map_err(anyhow::Error::from)),
-        )
-    } else {
-        let mut vcf_reader = vcf::io::Reader::new(BufReader::new(File::open(vcf_path)?));
-        let _hdr = vcf_reader.read_header()?;
-        Box::new(
-            vcf_reader
-                .record_bufs(header)
-                .map(|r| r.map_err(anyhow::Error::from)),
-        )
-    };
-
+    let header = read_vcf_or_bcf_header(vcf_path)?;
     let mut n_canonical = 0u64;
     let mut n_expanded = 0u64;
 
-    for rec_result in reader {
-        let mut rec = rec_result.context("reading VCF record")?;
-        // Derive chromosome name for FASTA fetch.
-        let chrom_id = rec.reference_sequence_name().to_string();
-        let variants = expander
-            .expand_sample(&mut rec, header, &chrom_id, gamete)
-            .with_context(|| format!("expanding record at {chrom_id}"))?;
-        n_expanded += variants.len() as u64;
+    for_each_vcf_record(vcf_path, &header, |rec| {
         n_canonical += 1;
-        store.insert_expanded(variants);
-    }
+        if let Some((ref_id, variants)) =
+            expander.expand_sample_with_refid(rec, &header, name_to_id, gamete)?
+        {
+            n_expanded += variants.len() as u64;
+            store.insert_expanded(ref_id, variants);
+        }
+        Ok(())
+    })?;
+
+    store.dedup();
 
     tracing::info!(
-        vcf  = %vcf_path.display(),
+        vcf = %vcf_path.display(),
         n_canonical,
         n_expanded,
-        "Sample variant store built with indel equivalence expansion"
+        "Sample store built with indel equivalence expansion"
     );
     Ok(store)
 }
 
-/// Build a `Store<Population>` with indel equivalence expansion.
+// ---------------------------------------------------------------------------
+// build_population_store_expanded  (corrected)
+// ---------------------------------------------------------------------------
+
 pub(crate) fn build_population_store_expanded(
     vcf_path: &Path,
     fasta_path: &Path,
-    header: &vcf::Header,
+    name_to_id: &HashMap<String, usize>,
 ) -> Result<Store<Population>> {
-    use noodles::{bgzf, vcf::io::Reader as VcfReader};
     use std::{fs::File, io::BufReader};
 
-    let fasta_reader = fasta::IndexedReader::new(std::io::BufReader::new(
-        std::fs::File::open(fasta_path)
+    let fasta_reader = fasta::IndexedReader::new(BufReader::new(
+        File::open(fasta_path)
             .with_context(|| format!("opening FASTA {}", fasta_path.display()))?,
     ));
     let mut expander = IndelEquivalenceExpander::new(fasta_reader);
     let mut store = Store::<Population>::new();
 
-    let is_bcf = vcf_path.extension().map_or(false, |e| e == "bcf");
-    let mut reader: Box<dyn Iterator<Item = Result<vcf::variant::RecordBuf>>> = if is_bcf {
-        use noodles::bcf;
-        let mut bcf_reader = bcf::io::Reader::new(bgzf::io::Reader::new(std::io::BufReader::new(
-            std::fs::File::open(vcf_path)?,
-        )));
-        let _hdr = bcf_reader.read_header()?;
-        Box::new(
-            bcf_reader
-                .record_bufs(header)
-                .map(|r| r.map_err(anyhow::Error::from)),
-        )
-    } else {
-        let mut vcf_reader =
-            vcf::io::Reader::new(std::io::BufReader::new(std::fs::File::open(vcf_path)?));
-        let _hdr = vcf_reader.read_header()?;
-        Box::new(
-            vcf_reader
-                .record_bufs(header)
-                .map(|r| r.map_err(anyhow::Error::from)),
-        )
-    };
-
+    let header = read_vcf_or_bcf_header(vcf_path)?;
     let mut n_canonical = 0u64;
     let mut n_expanded = 0u64;
-    for rec_result in reader {
-        let mut rec = rec_result?;
-        let chrom_id = rec.reference_sequence_name().to_string();
-        let variants = expander.expand_population(&mut rec, header, &chrom_id)?;
-        n_expanded += variants.len() as u64;
+
+    for_each_vcf_record(vcf_path, &header, |rec| {
         n_canonical += 1;
-        store.insert_expanded(variants);
-    }
+        if let Some((ref_id, variants)) =
+            expander.expand_population_with_refid(rec, &header, name_to_id)?
+        {
+            n_expanded += variants.len() as u64;
+            store.insert_expanded(ref_id, variants);
+        }
+        Ok(())
+    })?;
+
+    store.dedup();
 
     tracing::info!(
-        vcf  = %vcf_path.display(),
+        vcf = %vcf_path.display(),
         n_canonical,
         n_expanded,
-        "Population variant store built with indel equivalence expansion"
+        "Population store built with indel equivalence expansion"
     );
     Ok(store)
+}
+
+// ---------------------------------------------------------------------------
+// Shared VCF/BCF iteration helpers (private)
+// ---------------------------------------------------------------------------
+
+/// Read header from either BCF or plain VCF (determined by extension).
+fn read_vcf_or_bcf_header(path: &Path) -> Result<vcf::Header> {
+    use std::{fs::File, io::BufReader};
+    if path.extension().map_or(false, |e| e == "bcf") {
+        let mut r = bcf::io::Reader::new(bgzf::io::Reader::new(BufReader::new(File::open(path)?)));
+        Ok(r.read_header()?)
+    } else {
+        let mut r = vcf::io::Reader::new(BufReader::new(File::open(path)?));
+        Ok(r.read_header()?)
+    }
+}
+
+/// Iterate over every record in a VCF or BCF file, calling `f` for each.
+fn for_each_vcf_record<F>(path: &Path, header: &vcf::Header, mut f: F) -> Result<()>
+where
+    F: FnMut(&mut vcf::variant::RecordBuf) -> Result<()>,
+{
+    use std::{fs::File, io::BufReader};
+    if path.extension().map_or(false, |e| e == "bcf") {
+        let mut r = bcf::io::Reader::new(bgzf::io::Reader::new(BufReader::new(File::open(path)?)));
+        let _h = r.read_header()?;
+        for result in r.record_bufs(header) {
+            let mut rec = result?;
+            f(&mut rec)?;
+        }
+    } else {
+        let mut r = vcf::io::Reader::new(BufReader::new(File::open(path)?));
+        let _h = r.read_header()?;
+        for result in r.record_bufs(header) {
+            let mut rec = result?;
+            f(&mut rec)?;
+        }
+    }
+    Ok(())
 }

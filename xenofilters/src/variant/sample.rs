@@ -1,13 +1,14 @@
-use crate::Error;
 use crate::variant::Variant;
+use crate::Error;
 use noodles::bcf::record::Record;
+use noodles::vcf::variant::record::samples::{series::Value, Sample as NoodlesSample};
 use noodles::vcf::Header;
-use noodles::vcf::variant::record::samples::{Sample as NoodlesSample, series::Value};
 
 // FIXME, a variant could have multiple ALT alleles, and the GT could be 0/2, so we should ideally
 // have one Sample per ALT allele, and check if each ALT allele is present in the GT. For
 // simplicity, this example assumes only one ALT allele and GT is either 0/1 or 1/1 for the ALT.
 pub(crate) struct Sample {
+    ref_id: usize,
     pos: usize,
     ref_a: Vec<u8>,
     alt_a: Vec<u8>,
@@ -18,6 +19,9 @@ pub(crate) struct Sample {
 }
 
 impl Variant for Sample {
+    fn ref_id(&self) -> usize {
+        self.ref_id
+    }
     fn pos(&self) -> usize {
         self.pos
     }

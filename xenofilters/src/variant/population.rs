@@ -1,9 +1,13 @@
-use crate::Error;
 use crate::variant::Variant;
+use crate::Error;
 use noodles::bcf::record::Record;
-use noodles::vcf::{Header, variant::record::info::field::{Value, value::Array::Float}};
+use noodles::vcf::{
+    variant::record::info::field::{value::Array::Float, Value},
+    Header,
+};
 
 pub(crate) struct Population {
+    ref_id: usize,
     pos: usize,
     ref_a: Vec<u8>,
     alt_a: Vec<u8>,
@@ -12,6 +16,9 @@ pub(crate) struct Population {
 }
 
 impl Variant for Population {
+    fn ref_id(&self) -> usize {
+        self.ref_id
+    }
     fn pos(&self) -> usize {
         self.pos
     }
@@ -31,12 +38,17 @@ pub(crate) fn parse_population_record(
     record: &mut Record,
     header: &Header,
 ) -> Result<Vec<Population>, Error> {
-    let pos    = record.variant_start().transpose()?.map(|p| p.get()).unwrap_or(0);
-    let ref_a  = record.reference_bases().as_ref().to_vec();
+    let pos = record
+        .variant_start()
+        .transpose()?
+        .map(|p| p.get())
+        .unwrap_or(0);
+    let ref_a = record.reference_bases().as_ref().to_vec();
 
     // Collect all ALT alleles (comma-separated in BCF alternate_bases).
     let alt_bytes = record.alternate_bases();
-    let alts: Vec<Vec<u8>> = alt_bytes.as_ref()
+    let alts: Vec<Vec<u8>> = alt_bytes
+        .as_ref()
         .split(|&b| b == b',')
         .filter(|a| !a.is_empty())
         .map(|a| a.to_vec())
@@ -50,12 +62,11 @@ pub(crate) fn parse_population_record(
     // NEEDS VERIFICATION: Array::Float iterator API for noodles 0.111.0.
     let afs: Vec<f64> = match record.info().get(header, "AF").transpose()?.flatten() {
         Some(Value::Float(af)) => vec![af as f64],
-        Some(Value::Array(Float(fs))) => {
-            fs.iter()
-                .filter_map(|r| r.ok().flatten())
-                .map(|f| f as f64)
-                .collect()
-        },
+        Some(Value::Array(Float(fs))) => fs
+            .iter()
+            .filter_map(|r| r.ok().flatten())
+            .map(|f| f as f64)
+            .collect(),
         _ => return Err(Error::MissingOrInvalidAfTag),
     };
 
@@ -64,7 +75,8 @@ pub(crate) fn parse_population_record(
     alts.iter()
         .enumerate()
         .map(|(i, alt_a)| {
-            let af = afs.get(i)
+            let af = afs
+                .get(i)
                 .copied()
                 .or_else(|| afs.first().copied())
                 .ok_or(Error::MissingOrInvalidAfTag)?;
