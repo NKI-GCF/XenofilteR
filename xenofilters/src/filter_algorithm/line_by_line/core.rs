@@ -8,7 +8,7 @@ use crate::{
     alignment::{FragmentState, SimpleRec},
     aln_stream::AlignmentStream,
     config::{Config, StripReadSuffix},
-    penalty::{ErrorModel, Penalty},
+    penalty::Penalty,
     progress::ProgressReporter,
     Error,
 };
@@ -174,7 +174,7 @@ impl<R: SimpleRec> LineByLine<R> {
         let aln_len = aln.len();
         for i in 0..aln_len {
             if let Some(a) = aln.get_mut(i) {
-                a.init_writers(&config, i)?;
+                a.init_writers(config, i)?;
             }
         }
 

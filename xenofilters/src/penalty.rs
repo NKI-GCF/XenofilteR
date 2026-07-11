@@ -1,4 +1,3 @@
-use std::f64::consts::LN_10;
 
 pub(super) const MAX_Q: usize = 93;
 

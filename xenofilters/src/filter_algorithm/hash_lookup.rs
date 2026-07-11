@@ -100,7 +100,7 @@ impl<R: SimpleRec> HashLookup<R> {
             t => (t as f64) * std::f64::consts::LN_10 / 10.0,
         };
         for (i, a) in aln.iter_mut().enumerate() {
-            a.init_writers(&config, i)?;
+            a.init_writers(config, i)?;
         }
         Ok(Self {
             aln,

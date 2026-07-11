@@ -2,7 +2,7 @@ use crate::Error;
 use crate::filter_algorithm::line_by_line::{MAX_STREAMS, core::COUNTER_STRIDE};
 use crate::{
     bam::AlnFormat,
-    penalty::{MAX_Q, Penalty, ErrorModel},
+    penalty::{Penalty, ErrorModel},
 };
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;

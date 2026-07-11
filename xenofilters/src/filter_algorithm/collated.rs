@@ -67,7 +67,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
 
         let aln_len = aln.len();
         for (i, a) in aln.iter_mut().enumerate() {
-            a.init_writers(&config, i)?;
+            a.init_writers(config, i)?;
         }
 
         let mut iter = aln.into_iter();
