@@ -20,7 +20,6 @@ impl AlignmentStream<RecordBuf> for DefaultStream {
     fn header(&self) -> &Header {
         unimplemented!()
     }
-    // Intentionally leaving fetch_by_virtual_offset to its default implementation
 }
 
 pub(crate) struct MockStream {
@@ -44,6 +43,7 @@ impl MockStream {
             ambiguous: None,
             threads: NonZeroUsize::MIN,
             write_discarded: false,
+            positive_regions: None,
         };
         Self {
             reads,
@@ -129,6 +129,7 @@ fn empty_aln_stream() -> AlnStream<RecordBuf> {
         ambiguous: None,
         threads: NonZeroUsize::MIN,
         write_discarded: false,
+        positive_regions: None,
     }
 }
 
@@ -267,7 +268,7 @@ fn test_aln_stream_new_mismatch_strip_suffix_true_instead_of_false() {
         strip_read_suffix: StripReadSuffix::True,
         ..Default::default()
     };
-    assert!(AlnStream::<RecordBuf>::new(&mut config, 0).is_err());
+    assert!(AlnStream::<RecordBuf>::new(&mut config, 0, None).is_err());
 }
 
 #[test]
