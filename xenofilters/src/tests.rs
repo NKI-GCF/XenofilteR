@@ -5,8 +5,6 @@ use super::*;
 #[cfg(test)]
 pub(crate) mod property;
 #[cfg(test)]
-pub(crate) use alignment::tests::*;
-#[cfg(test)]
 pub(crate) use aln_stream::tests::*;
 
 use std::iter::repeat;

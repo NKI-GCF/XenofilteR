@@ -1,7 +1,6 @@
 use crate::alignment::{BaseOp, MdCigFlags, ScoreOpIter};
 use crate::tests::create_record;
 use crate::Error;
-use noodles::sam::alignment::record::{cigar::Op, Flags};
 
 fn op_repr(op: &BaseOp) -> String {
     match op {

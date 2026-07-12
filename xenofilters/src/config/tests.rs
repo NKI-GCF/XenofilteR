@@ -1,5 +1,4 @@
 use super::*;
-use std::path::PathBuf;
 
 fn base_config() -> Config {
     Config {
