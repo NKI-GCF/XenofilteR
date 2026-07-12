@@ -198,13 +198,13 @@ impl ScoredRegions {
 
     /// Returns all regions overlapping [read_start, read_end) on ref_id
     /// whose strand matches read_is_reverse.
-    pub(crate) fn overlapping<'a>(
-        &'a self,
+    pub(crate) fn overlapping(
+        &self,
         ref_id: usize,
         read_start: usize,
         read_end: usize,
         read_is_reverse: bool,
-    ) -> impl Iterator<Item = &'a ScoredRegion> {
+    ) -> impl Iterator<Item = &ScoredRegion> {
         let regions = match self.per_ref.get(ref_id) {
             Some(v) => v.as_slice(),
             None => &[],

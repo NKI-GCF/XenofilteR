@@ -5,7 +5,7 @@ use crate::bam::{
 };
 use crate::config::MatchingAlgorithm;
 use crate::config::{Config, StripReadSuffix};
-use crate::region::{PositiveRegions, ScoreFn, ScoredRegions};
+use crate::region::{PositiveRegions, ScoreFn};
 use crate::variant::{
     parse_population_record, parse_sample_record, Population, Sample, Store, StoreTrait,
 };
@@ -17,7 +17,7 @@ use noodles::sam::Header;
 use std::fs::File;
 use std::io::Read as ioRead;
 use std::num::NonZeroUsize;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub(crate) trait AlignmentStream<R: SimpleRec> {

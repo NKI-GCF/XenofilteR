@@ -13,7 +13,7 @@ pub mod region;
 pub mod stats;
 pub mod variant;
 
-use crate::region::{ScoreFn, ScoredRegions};
+use crate::region::ScoredRegions;
 use aln_stream::{AlignmentStream, AlnStream};
 use config::{Config, MatchingAlgorithm};
 pub use error::Error;
@@ -22,7 +22,7 @@ use filter_algorithm::{
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::Header;
-use region::{AmbiguousRegions, DiagnosticVariants, PositiveRegions};
+use region::{AmbiguousRegions, DiagnosticVariants};
 use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
 use std::path::Path;

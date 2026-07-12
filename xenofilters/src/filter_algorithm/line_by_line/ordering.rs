@@ -321,8 +321,18 @@ pub(super) fn score_bundle(
     let cancel_slot = compute_cancel_slot(best);
     let metrics = compute_metrics(best, cancel_slot, |nr, state, mcfs, cs| {
         let store = stores.get(nr).and_then(|s| s.as_deref());
+        let score_fn = ctx.region_score_fn;
         let positive_regions = ctx.positive_regions[nr].as_deref();
-        let score = score_candidate_owned(state, mcfs, store, positive_regions, ctx, scratch, cs)?;
+        let score = score_candidate_owned(
+            state,
+            mcfs,
+            store,
+            positive_regions,
+            score_fn,
+            ctx,
+            scratch,
+            cs,
+        )?;
         Ok((score, scratch.last_variant_delta))
     })
     .ok()?; // wrap_err converts Option<T> closure to Result<T> inside compute_metrics
@@ -355,6 +365,7 @@ fn score_candidate_owned(
     mcfs: SmallVec<[MdCigFlags<'_>; READ_CT]>,
     store: Option<&dyn StoreTrait>,
     positive_regions: Option<&ScoredRegions>,
+    score_fn: ScoreFn,
     ctx: &ScoringContext,
     scratch: &mut Scratch,
     cancel_slot: [bool; 2],
@@ -364,8 +375,6 @@ fn score_candidate_owned(
 
     let mut segment: SmallVec<[&RecordBuf; READ_CT]> = SmallVec::new();
     let mut seg_mcfs: SmallVec<[MdCigFlags; READ_CT]> = SmallVec::new();
-    let mut mcfs_opt: SmallVec<[Option<MdCigFlags>; READ_CT]> =
-        mcfs.into_iter().map(Some).collect();
 
     // Hoist the variant check out of the per-segment loop.
     // `has_variants` is false for the vast majority of runs.
@@ -373,6 +382,42 @@ fn score_candidate_owned(
 
     let mut dvnt: FragEvalVec<'_> = SmallVec::new();
     let mut supplementary_penalty = 0.0;
+
+    // Positive-region bonus: sum over all primary mapped records.
+    let region_bonus = if let Some(regions) = positive_regions {
+        state
+            .get_records()
+            .iter()
+            .zip(state.flags.iter())
+            .filter(|(_, f)| !f.is_unmapped() && !f.is_secondary() && !f.is_supplementary())
+            .map(|(rec, f)| {
+                let is_rev = f.is_reverse_complemented();
+                let ref_id = rec
+                    .ref_seq_id()
+                    .transpose()
+                    .ok()
+                    .flatten()
+                    .unwrap_or(usize::MAX);
+                let r_start = rec
+                    .alignment_start()
+                    .map(|p| p.get().saturating_sub(1))
+                    .unwrap_or(0);
+                let r_end = r_start + mcfs.first().map(|m| m.get_cigar().len()).unwrap_or(0);
+                regions
+                    .overlapping(ref_id, r_start, r_end, is_rev)
+                    .map(|region| {
+                        let ob = region.overlap_bases(r_start, r_end);
+                        score_fn.apply(region.score, ob, region.len())
+                    })
+                    .sum::<f64>()
+            })
+            .sum::<f64>()
+    } else {
+        0.0
+    };
+
+    let mut mcfs_opt: SmallVec<[Option<MdCigFlags>; READ_CT]> =
+        mcfs.into_iter().map(Some).collect();
 
     for idx in state.order_mates() {
         let flags = state
@@ -449,7 +494,7 @@ fn score_candidate_owned(
                 .collect::<Vec<_>>()
                 .join("\n"),
         })?;
-    Ok(base_score + supplementary_penalty)
+    Ok(base_score + supplementary_penalty + region_bonus)
 }
 
 // -- LineByLine::process — dispatcher -----------------------------------------

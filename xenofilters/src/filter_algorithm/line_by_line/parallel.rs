@@ -11,8 +11,6 @@ use super::chimeric::{
 use super::core::{FragmentBuffer, LineByLine, Scratch};
 use super::ordering::{score_bundle, ScoringContext};
 use crate::config::Config;
-use crate::filter_algorithm::line_by_line::MAX_STREAMS;
-use crate::region::ScoredRegions;
 use crate::{variant::StoreTrait, Error};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use noodles::sam::alignment::record_buf::RecordBuf;

@@ -73,7 +73,7 @@ impl TabixBed {
             .reference_sequence_names()
             .get_index_of(region.name())
             .expect("invalid reference sequence name");
-        Ok(self.overlaps(reference_sequence_id, start, end)?)
+        self.overlaps(reference_sequence_id, start, end)
     }
 
     /// Returns `true` if any BED record overlaps `[start, end)` (0-based).

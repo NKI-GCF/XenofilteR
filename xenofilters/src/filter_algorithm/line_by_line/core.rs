@@ -10,7 +10,7 @@ use crate::{
     aln_stream::AlignmentStream,
     config::{Config, StripReadSuffix},
     header_name_to_id,
-    penalty::{ErrorModel, Penalty},
+    penalty::Penalty,
     progress::ProgressReporter,
     Error,
 };
