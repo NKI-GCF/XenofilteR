@@ -721,4 +721,4 @@ impl<R: SimpleRec> LineByLine<R> {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

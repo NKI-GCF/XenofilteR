@@ -168,12 +168,12 @@ pub struct Config {
     /// Threshold (in phred scale) for considering two alignments equally good and thus ambiguous.
     /// default (auto) selects 10 for pass 1, 0 for pass 2. In pass 2 input RGs contain _xenoambig.
     #[arg(long, default_value_t = u32::MAX, help_heading = "Scoring")]
-    pub(crate) ambiguous_threshold: u32,
+    pub ambiguous_threshold: u32,
 
     /// Warn when ambiguous fraction exceeds this value after scoring.
     /// Default 0.05 (5%). Set 1.0 to disable.
     #[arg(long, default_value = "0.05", value_parser = clap::value_parser!(f64), help_heading = "Scoring")]
-    pub(crate) warn_ambig_fraction: f64,
+    pub warn_ambig_fraction: f64,
 
     /// Base-length constant used in the supplementary-alignment chimeric-junction
     /// penalty:  penalty = gap_open + chimeric_junction_bases × gap_extend.
@@ -215,13 +215,13 @@ pub struct Config {
     /// BED file(s) of regions where overlapping reads receive a positive
     /// score bonus (strand-aware when BED column 6 present). One per stream.
     #[arg(long, num_args = 0..=32, help_heading = "Regions")]
-    pub(crate) positive_regions: Vec<String>,
+    pub positive_regions: Vec<String>,
 
     /// Score function applied to --positive-regions BED score column.
     /// Format: fn[:weight]  where fn ∈ {linear, log, constant, overlap_fraction}
     /// Default: linear:1.0
     #[arg(long, default_value = "linear:1.0", help_heading = "Regions")]
-    pub(crate) region_score_fn: ScoreFn,
+    pub region_score_fn: ScoreFn,
 
     // -- Parallelism -----------------------------------------------------------
 
