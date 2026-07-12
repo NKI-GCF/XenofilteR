@@ -10,10 +10,11 @@
 
 use crate::Error;
 use noodles::bgzf;
-use noodles::core::Region;
+use noodles::core::{region::Interval, Position, Region};
 use noodles::csi::BinningIndex;
 use noodles::{tabix, vcf};
 use std::fs::File;
+use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
 fn read_tabix_index(path: &Path) -> Result<tabix::Index, Error> {
@@ -56,7 +57,7 @@ impl TabixBed {
     }
 
     /// Returns `true` if any BED record overlaps `[start, end)` (0-based).
-    pub(crate) fn overlaps(
+    pub(crate) fn chrom_overlaps(
         &mut self,
         chrom: &str,
         start: usize,
@@ -72,11 +73,37 @@ impl TabixBed {
             .reference_sequence_names()
             .get_index_of(region.name())
             .expect("invalid reference sequence name");
+        Ok(self.overlaps(reference_sequence_id, start, end)?)
+    }
+
+    /// Returns `true` if any BED record overlaps `[start, end)` (0-based).
+    pub(crate) fn overlaps(&self, ref_id: usize, start: usize, end: usize) -> Result<bool, Error> {
+        let start =
+            Position::try_from(start + 1).map_err(|e| Error::InvalidRegion(e.to_string()))?;
+        let end = Position::try_from(end).map_err(|e| Error::InvalidRegion(e.to_string()))?;
+        let interval = Interval::from(RangeInclusive::new(start, end));
         let chunks = self
             .index
-            .query(reference_sequence_id, region.interval())
+            .query(ref_id, interval)
             .map_err(|e| Error::TabixBedQueryFailed(e.to_string()))?;
         Ok(!chunks.is_empty())
+    }
+    /// Strand-aware overlap check for tabix-indexed BED.
+    /// If the BED has no strand column (BED3), all regions are treated as `Any`
+    /// and this is equivalent to `overlaps()`.
+    ///
+    /// NEEDS VERIFICATION: current TabixBed does not parse/store column 6.
+    /// This stub queries strand-agnostically until tabix-side strand storage
+    /// is implemented; documented as a known limitation, not silently wrong,
+    /// since `Strand::Any` always matches.
+    pub(crate) fn any_overlap(
+        &self,
+        ref_id: usize,
+        start: usize,
+        end: usize,
+        _read_is_reverse: bool,
+    ) -> Result<bool, Error> {
+        self.overlaps(ref_id, start, end)
     }
 }
 

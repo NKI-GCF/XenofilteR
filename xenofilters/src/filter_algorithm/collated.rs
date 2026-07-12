@@ -152,50 +152,16 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         frag: &FragmentState<R>,
         aln_idx: usize,
     ) -> Result<bool, Error> {
-        if self.bed[aln_idx].is_none() && self.vcf[aln_idx].is_none() {
-            return Ok(false);
-        }
-        let header = if aln_idx == 0 {
-            self.a.header()
-        } else {
-            self.b.header()
-        };
-        // Build ref_id → name map once per call (headers are small).
-        let ref_names: Vec<String> = header
-            .reference_sequences()
-            .iter()
-            .map(|(name, _)| name.to_string())
-            .collect();
-
-        for rec in frag.get_records() {
-            let flags = rec.flags()?;
-            if flags.is_secondary() || flags.is_unmapped() {
-                continue;
-            }
-            let ref_id = match rec.ref_seq_id().transpose()? {
-                Some(id) => id,
-                None => continue,
-            };
-            let chrom = match ref_names.get(ref_id) {
-                Some(n) => n.as_str(),
-                None => continue,
-            };
-            let start = match rec.alignment_start().transpose()? {
-                Some(p) => p.get().saturating_sub(1), // 0-based for BED
-                None => continue,
-            };
-            let end = start + rec.cigar().len();
-
-            if let Some(bed) = &mut self.bed[aln_idx]
-                && bed.overlaps(chrom, start, end)?
-            {
-                return Ok(true);
-            }
-            if let Some(vcf) = &mut self.vcf[aln_idx]
-                && vcf.overlaps(chrom, start, end)?
-            {
-                return Ok(true);
-            }
+        let bed = match &self.bed[aln_idx] { Some(b) => b, None => return Ok(false) };
+        for (rec, flags) in frag.get_records().iter().zip(frag.flags.iter()) {
+            if flags.is_secondary() || flags.is_unmapped() { continue; }
+            let is_rev  = flags.is_reverse_complemented();
+            let ref_id  = rec.ref_seq_id().transpose()?.ok_or(Error::NoRefSeqId)?;
+            let start   = rec.alignment_start().transpose()?.ok_or(Error::NoAlignmentStart)?
+                             .get().saturating_sub(1);
+            let end     = start + rec.cigar().as_ref().len();
+            // `any_overlap` now strand-aware via BED column 6.
+            if bed.any_overlap(ref_id, start, end, is_rev)? { return Ok(true); }
         }
         Ok(false)
     }
@@ -249,8 +215,8 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         };
 
         // Tier 3: full NW scoring.
-        let s1 = a.score_state_nw(mcfs1, self.a.variant_store().as_deref(), &self.penalties, &mut self.scratch, cancel_slot)?;
-        let s2 = b.score_state_nw(mcfs2, self.b.variant_store().as_deref(), &self.penalties, &mut self.scratch, cancel_slot)?;
+        let s1 = a.score_state_nw(mcfs1, self.a.variant_store().as_deref(), &self.penalties, &mut self.scratch, cancel_slot, self.a.positive_regions())?;
+        let s2 = b.score_state_nw(mcfs2, self.b.variant_store().as_deref(), &self.penalties, &mut self.scratch, cancel_slot, self.b.positive_regions())?;
         let delta = s1 - s2;
 
         if delta > self.ambiguous_log_threshold {

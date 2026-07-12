@@ -5,19 +5,20 @@
 //! (NW DP tables) and calls `score_bundle`. Results drain back to the IO thread
 //! which owns all writers (no Mutex required).
 
-use super::core::{FragmentBuffer, LineByLine, Scratch};
-use super::chimeric::{ChimericDecision, detect_chimeric_event, detect_chimeric_mate_complement, ChimericKind};
-use super::ordering::{score_bundle, ScoringContext};
-use crate::{
-    Error,
-    variant::StoreTrait,
+use super::chimeric::{
+    detect_chimeric_event, detect_chimeric_mate_complement, ChimericDecision, ChimericKind,
 };
-use crossbeam_channel::{Receiver, Sender, bounded};
+use super::core::{FragmentBuffer, LineByLine, Scratch};
+use super::ordering::{score_bundle, ScoringContext};
+use crate::config::Config;
+use crate::filter_algorithm::line_by_line::MAX_STREAMS;
+use crate::region::ScoredRegions;
+use crate::{variant::StoreTrait, Error};
+use crossbeam_channel::{bounded, Receiver, Sender};
 use noodles::sam::alignment::record_buf::RecordBuf;
-use smallvec::{SmallVec, smallvec};
+use smallvec::{smallvec, SmallVec};
 use std::sync::Arc;
 use std::thread;
-use crate::config::Config;
 
 /// Everything a scoring worker needs for one fragment.
 /// All data is owned or `Arc`-wrapped; no lifetime entanglement.
@@ -36,7 +37,7 @@ pub(super) struct FragmentBundle {
 
 /// A scored fragment ready to be written by the IO thread.
 pub(super) struct ScoredFragment {
-    pub(super) best:     FragmentBuffer<RecordBuf>,
+    pub(super) best: FragmentBuffer<RecordBuf>,
     pub(super) decision: Option<super::ordering::Decision>,
 }
 
@@ -69,7 +70,7 @@ impl LineByLine<RecordBuf> {
     /// worker full variant-rescue capability with zero unsafe code and zero
     /// extra allocation.
     pub(crate) fn process_parallel(&mut self, config: &Config) -> Result<(), Error> {
-        let n   = self.score_threads;
+        let n = self.score_threads;
         let cap = n * 2; // bounded channel capacity — natural backpressure
 
         // -- Collect stores (Arc clones, O(1) each) ------------------------
@@ -77,9 +78,11 @@ impl LineByLine<RecordBuf> {
             self.aln.iter().map(|a| a.variant_store()).collect();
 
         let ctx = ScoringContext {
-            penalties:              Arc::new(self.penalties),
+            penalties: Arc::new(self.penalties),
             ambiguous_log_threshold: self.ambiguous_log_threshold,
-            add_decision_tag:        self.add_decision_tag,
+            add_decision_tag: self.add_decision_tag,
+            positive_regions: self.positive_regions.clone(),
+            region_score_fn: self.region_score_fn,
         };
 
         // -- Spawn workers -------------------------------------------------
@@ -121,11 +124,11 @@ impl LineByLine<RecordBuf> {
     /// side flowing while waiting for channel capacity.
     pub(super) fn parallel_io_loop(
         &mut self,
-        config:    &Config,
-        work_tx:   Sender<FragmentBundle>,
+        config: &Config,
+        work_tx: Sender<FragmentBundle>,
         result_rx: Receiver<ScoredFragment>,
-        ctx:       ScoringContext,
-        stores:    SmallVec<[Option<Arc<dyn StoreTrait>>; 2]>,
+        ctx: ScoringContext,
+        stores: SmallVec<[Option<Arc<dyn StoreTrait>>; 2]>,
     ) -> Result<(), Error> {
         let mut best: FragmentBuffer<RecordBuf> = smallvec![];
         let mut i = 0;
@@ -133,11 +136,15 @@ impl LineByLine<RecordBuf> {
 
         while i != aln_len {
             while let Some(rec) = self.aln[i].next_rec()? {
-                if self.ingest_record(i, rec, &mut best)? { break; }
+                if self.ingest_record(i, rec, &mut best)? {
+                    break;
+                }
             }
             i += 1;
             if i == aln_len {
-                if best.is_empty() { break; }
+                if best.is_empty() {
+                    break;
+                }
                 if best.len() == 1 {
                     // Single-stream fragment — no scoring needed.
                     self.write_scored(ScoredFragment {
@@ -151,11 +158,14 @@ impl LineByLine<RecordBuf> {
                         if let Some((ca, cb)) =
                             detect_chimeric_mate_complement(&best, &self.chimeric_pairs)
                         {
-                            self.emit_chimeric(&mut best, ChimericDecision::Chimeric {
-                                stream_a: ca,
-                                stream_b: cb,
-                                kind: ChimericKind::MateSplit,
-                            })?;
+                            self.emit_chimeric(
+                                &mut best,
+                                ChimericDecision::Chimeric {
+                                    stream_a: ca,
+                                    stream_b: cb,
+                                    kind: ChimericKind::MateSplit,
+                                },
+                            )?;
                             i = 0;
                             continue;
                         }
@@ -192,7 +202,9 @@ impl LineByLine<RecordBuf> {
                         Err(_) => return Err(Error::AllScorerWorkersExited),
                     }
                     // Non-blocking drain of any already-finished results.
-                    while let Ok(sf) = result_rx.try_recv() { self.write_scored(sf)?; }
+                    while let Ok(sf) = result_rx.try_recv() {
+                        self.write_scored(sf)?;
+                    }
                 }
                 i = 0;
             }
@@ -201,7 +213,9 @@ impl LineByLine<RecordBuf> {
         drop(work_tx);
         for sf in &result_rx {
             self.write_scored(sf)?;
-            if let Some(ref mut p) = self.progress { p.tick(); }
+            if let Some(ref mut p) = self.progress {
+                p.tick();
+            }
         }
 
         config.print_routing_counters(&self.routing_counters, "namesorted-parallel");
@@ -210,7 +224,9 @@ impl LineByLine<RecordBuf> {
                 return Err(Error::AlignmentStillHasReadsAfterParallelProcessing { j: i });
             }
         }
-        if let Some(p) = self.progress.as_ref() { p.finish() }
+        if let Some(p) = self.progress.as_ref() {
+            p.finish()
+        }
         Ok(())
     }
 
@@ -221,10 +237,12 @@ impl LineByLine<RecordBuf> {
         best.drain(..).try_for_each(|mut b| {
             let nr = b.get_nr();
             b.drain_records().try_for_each(|mut r| {
-                if best_state.is_none() && (self.is_unmapped_skipped)(&r)? { return Ok(()); }
+                if best_state.is_none() && (self.is_unmapped_skipped)(&r)? {
+                    return Ok(());
+                }
                 match decision {
                     Some(Decision::PhredConfidence(d)) => self.add_aux_tags(&mut r, b"XF", d)?,
-                    Some(Decision::VariantRescued(d))  => self.add_aux_tags(&mut r, b"XR", d)?,
+                    Some(Decision::VariantRescued(d)) => self.add_aux_tags(&mut r, b"XR", d)?,
                     _ => {}
                 }
                 self.write_record(nr, r, best_state)

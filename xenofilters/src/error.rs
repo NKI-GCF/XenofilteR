@@ -13,6 +13,9 @@ pub enum Error {
     #[error(transparent)]
     SerdeJson(#[from] serde_json::Error),
 
+    #[error(transparent)]
+    ParseInt(#[from] std::num::ParseIntError),
+
     // ---------------------------------------------------------------------------
     // BAM / SAM / BGZF I/O
     // ---------------------------------------------------------------------------

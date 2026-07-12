@@ -4,6 +4,7 @@ use crate::alignment::MdCigFlags;
 use crate::alignment::SimpleRec;
 use crate::filter_algorithm::line_by_line::{Scratch, READ_CT};
 use crate::penalty::Penalty;
+use crate::region::{PositiveRegions, ScoreFn};
 use crate::variant::{FragEvalVec, StoreTrait};
 use crate::Error;
 use noodles::sam::alignment::record::Cigar;
@@ -13,7 +14,7 @@ use std::cmp::Ordering;
 
 #[derive(PartialEq, Debug)]
 pub(crate) struct FragmentState<R> {
-    flags: SmallVec<[Flags; 8]>,
+    pub(crate) flags: SmallVec<[Flags; 8]>,
     records: SmallVec<[R; 8]>,
     species_nr: usize,
     bisulfite: bool,
@@ -154,14 +155,51 @@ impl<R: SimpleRec> FragmentState<R> {
         penalties: &Penalty,
         scratch: &mut Scratch,
         cancel_slot: [bool; 2],
+        positive_regions: Option<(&PositiveRegions, ScoreFn)>,
     ) -> Result<f64, Error> {
         let mut segment: SmallVec<[&R; READ_CT]> = SmallVec::new();
         let mut seg_mcfs: SmallVec<[MdCigFlags<'_>; READ_CT]> = SmallVec::new();
-        let mut mcfs_opt: SmallVec<[Option<MdCigFlags<'_>>; READ_CT]> =
-            mcfs.into_iter().map(Some).collect();
         let mut dvnt: FragEvalVec<'_> = SmallVec::new();
         let mut supp_penalty = 0.0f64;
         let has_variants = store.is_some();
+
+        // Positive-region bonus: sum over all primary mapped records.
+        let region_bonus = if let Some((regions, score_fn)) = positive_regions {
+            self.get_records()
+                .iter()
+                .zip(self.flags.iter())
+                .filter(|(_, f)| !f.is_unmapped() && !f.is_secondary() && !f.is_supplementary())
+                .map(|(rec, f)| {
+                    let is_rev = f.is_reverse_complemented();
+                    let ref_id = rec
+                        .ref_seq_id()
+                        .transpose()
+                        .ok()
+                        .flatten()
+                        .unwrap_or(usize::MAX);
+                    let r_start = rec
+                        .alignment_start()
+                        .transpose()
+                        .ok()
+                        .flatten()
+                        .map(|p| p.get().saturating_sub(1))
+                        .unwrap_or(0);
+                    let r_end = r_start + mcfs.first().map(|m| m.get_cigar().len()).unwrap_or(0);
+                    regions
+                        .overlapping(ref_id, r_start, r_end, is_rev)
+                        .map(|region| {
+                            let ob = region.overlap_bases(r_start, r_end);
+                            score_fn.apply(region.score, ob, region.len())
+                        })
+                        .sum::<f64>()
+                })
+                .sum::<f64>()
+        } else {
+            0.0
+        };
+
+        let mut mcfs_opt: SmallVec<[Option<MdCigFlags<'_>>; READ_CT]> =
+            mcfs.into_iter().map(Some).collect();
 
         for idx in self.order_mates() {
             let flags = self.flags(idx).ok_or(Error::NoFlagsForRecord { idx })?;
@@ -221,7 +259,8 @@ impl<R: SimpleRec> FragmentState<R> {
         let base = Fragment::new(penalties, segment, seg_mcfs)?
             .score(scratch, &mut dvnt)
             .map_err(|e| Error::NeedlemanWunschError(e.to_string()))?;
-        Ok(base + supp_penalty)
+
+        Ok(base + supp_penalty + region_bonus)
     }
 }
 

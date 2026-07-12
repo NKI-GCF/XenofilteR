@@ -13,15 +13,16 @@ pub mod region;
 pub mod stats;
 pub mod variant;
 
-pub use error::Error;
+use crate::region::{ScoreFn, ScoredRegions};
 use aln_stream::{AlignmentStream, AlnStream};
 use config::{Config, MatchingAlgorithm};
+pub use error::Error;
 use filter_algorithm::{
     collated::CollatedMatcher, hash_lookup::HashLookup, line_by_line::LineByLine,
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::Header;
-use region::{AmbiguousRegions, DiagnosticVariants};
+use region::{AmbiguousRegions, DiagnosticVariants, PositiveRegions};
 use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
 use std::path::Path;
@@ -37,9 +38,9 @@ pub fn run(mut config: Config) -> Result<(), Error> {
     config.validate_and_init()?;
 
     match config.matching_algorithm {
-        MatchingAlgorithm::Namesorted  => run_namesorted(config),
-        MatchingAlgorithm::Hashlookup  => run_hashlookup(config),
-        MatchingAlgorithm::Collated    => run_collated(config),
+        MatchingAlgorithm::Namesorted => run_namesorted(config),
+        MatchingAlgorithm::Hashlookup => run_hashlookup(config),
+        MatchingAlgorithm::Collated => run_collated(config),
     }
 }
 
@@ -110,8 +111,19 @@ fn run_namesorted(mut config: Config) -> Result<(), Error> {
     let mut aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> = smallvec![];
     for i in 0..logical_loops {
         let idx = if config.alignment.len() == 1 { 0 } else { i };
+        let positive_regions = config
+            .positive_regions
+            .get(i)
+            .filter(|s| !s.is_empty())
+            .map(|s| ScoredRegions::from_bed(Path::new(s), &header_name_to_id(aln[idx].header())))
+            .transpose()?
+            .map(|sr| (sr, config.region_score_fn));
         tracing::debug!(stream = i, path = %config.alignment[idx], "Opening stream");
-        aln.push(Box::new(AlnStream::<RecordBuf>::new(&mut config, idx)?));
+        aln.push(Box::new(AlnStream::<RecordBuf>::new(
+            &mut config,
+            idx,
+            positive_regions,
+        )?));
         if aln[i].next_qname() != aln[0].next_qname() {
             return Err(Error::InputAlignmentsMustHaveSameReadOrder);
         }
@@ -147,7 +159,18 @@ fn run_hashlookup(mut config: Config) -> Result<(), Error> {
     let mut aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> = smallvec![];
     for i in 0..2 {
         tracing::debug!(stream = i, path = %config.alignment[i], "Opening stream");
-        aln.push(Box::new(AlnStream::<RecordBuf>::new(&mut config, i)?));
+        let positive_regions = config
+            .positive_regions
+            .get(i)
+            .filter(|s| !s.is_empty())
+            .map(|s| ScoredRegions::from_bed(Path::new(s), &header_name_to_id(aln[i].header())))
+            .transpose()?
+            .map(|sr| (sr, config.region_score_fn));
+        aln.push(Box::new(AlnStream::<RecordBuf>::new(
+            &mut config,
+            i,
+            positive_regions,
+        )?));
     }
 
     // Build contig name → 0-based integer ID from stream-0 header.
@@ -174,7 +197,18 @@ fn run_collated(mut config: Config) -> Result<(), Error> {
     let mut aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> = smallvec![];
     for i in 0..2 {
         tracing::debug!(stream = i, path = %config.alignment[i], "Opening stream");
-        aln.push(Box::new(AlnStream::<RecordBuf>::new(&mut config, i)?));
+        let positive_regions = config
+            .positive_regions
+            .get(i)
+            .filter(|s| !s.is_empty())
+            .map(|s| ScoredRegions::from_bed(Path::new(s), &header_name_to_id(aln[i].header())))
+            .transpose()?
+            .map(|sr| (sr, config.region_score_fn));
+        aln.push(Box::new(AlnStream::<RecordBuf>::new(
+            &mut config,
+            i,
+            positive_regions,
+        )?));
     }
 
     let bed: [Option<TabixBed>; 2] = [
@@ -261,5 +295,3 @@ fn load_diagnostic_variants(
             .transpose()?,
     ])
 }
-
-

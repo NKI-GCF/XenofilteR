@@ -6,6 +6,7 @@ use crate::alignment::{FragmentState, SimpleRec};
 use crate::aln_stream::AlignmentStream;
 use crate::config::Config;
 use crate::config::StripReadSuffix;
+use crate::region::{PositiveRegions, ScoreFn};
 use crate::variant::StoreTrait;
 use crate::Error;
 use noodles::sam::alignment::record_buf::RecordBuf;
@@ -55,6 +56,9 @@ impl<R: SimpleRec> CollatedReader<R> {
             species_nr,
             bisulfite: config.bisulfite,
         }
+    }
+    pub(crate) fn positive_regions(&self) -> Option<(&PositiveRegions, ScoreFn)> {
+        self.inner.positive_regions()
     }
 
     /// Yield the next complete fragment (all records sharing a canonical name),

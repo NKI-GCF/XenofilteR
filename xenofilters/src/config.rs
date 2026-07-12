@@ -6,6 +6,7 @@ use crate::{
 };
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
+use crate::region::ScoreFn;
 
 const ARG_MAX: usize = 4;
 
@@ -196,20 +197,31 @@ pub struct Config {
     #[arg(short, long, num_args = 0..ARG_MAX, help_heading = "Variants")]
     pub population_variants: Vec<String>,
 
-    // -- Regions --------------------------------------------------------------
-
-    /// BED file of ambiguous genomic regions per stream (positional: stream 0, then 1).
-    /// Reads overlapping these regions are forced through full log-likelihood scoring.
-    /// Collated: must be bgzf-compressed and tabix-indexed (.bed.gz + .tbi).
-    /// HashLookup: loaded fully into memory.
-    #[arg(long, num_args = 0..=2, help_heading = "Regions")]
-    pub ambiguous_regions: Vec<String>,
-
     /// VCF/BCF of species-diagnostic positions per stream (positional: stream 0, then 1).
     /// Reads overlapping these positions are forced through full scoring.
     /// Same indexing and compression rules as --ambiguous-regions.
     #[arg(long, num_args = 0..=2, help_heading = "Regions")]
     pub diagnostic_variants: Vec<String>,
+
+    // -- Regions --------------------------------------------------------------
+
+    /// BED file(s) of regions where read overlap forces full NW scoring
+    /// (strand-aware when BED column 6 present). One per stream.
+    /// Reads overlapping these regions are forced through full log-likelihood scoring.
+    /// Collated: must be bgzf-compressed and tabix-indexed (.bed.gz + .tbi).
+    #[arg(long, num_args = 0..=2, help_heading = "Regions")]
+    pub ambiguous_regions: Vec<String>,
+
+    /// BED file(s) of regions where overlapping reads receive a positive
+    /// score bonus (strand-aware when BED column 6 present). One per stream.
+    #[arg(long, num_args = 0..=32, help_heading = "Regions")]
+    pub(crate) positive_regions: Vec<String>,
+
+    /// Score function applied to --positive-regions BED score column.
+    /// Format: fn[:weight]  where fn ∈ {linear, log, constant, overlap_fraction}
+    /// Default: linear:1.0
+    #[arg(long, default_value = "linear:1.0", help_heading = "Regions")]
+    pub(crate) region_score_fn: ScoreFn,
 
     // -- Parallelism -----------------------------------------------------------
 

@@ -47,6 +47,7 @@ use crate::filter_algorithm::line_by_line::{
     chimeric::{detect_chimeric_mate_complement, ChimericKind},
     detect_chimeric_event, ChimericDecision, MAX_STREAMS, READ_CT,
 };
+use crate::region::{ScoreFn, ScoredRegions};
 use crate::variant::StoreTrait;
 use crate::Error;
 use noodles::sam::alignment::RecordBuf;
@@ -281,6 +282,8 @@ pub(super) struct ScoringContext {
     pub(super) penalties: Arc<crate::penalty::Penalty>,
     pub(super) ambiguous_log_threshold: f64,
     pub(super) add_decision_tag: bool,
+    pub(crate) positive_regions: [Option<Arc<ScoredRegions>>; MAX_STREAMS],
+    pub(crate) region_score_fn: ScoreFn,
 }
 
 // -- Worker --------------------------------------------------------------------
@@ -318,7 +321,8 @@ pub(super) fn score_bundle(
     let cancel_slot = compute_cancel_slot(best);
     let metrics = compute_metrics(best, cancel_slot, |nr, state, mcfs, cs| {
         let store = stores.get(nr).and_then(|s| s.as_deref());
-        let score = score_candidate_owned(state, mcfs, store, ctx, scratch, cs)?;
+        let positive_regions = ctx.positive_regions[nr].as_deref();
+        let score = score_candidate_owned(state, mcfs, store, positive_regions, ctx, scratch, cs)?;
         Ok((score, scratch.last_variant_delta))
     })
     .ok()?; // wrap_err converts Option<T> closure to Result<T> inside compute_metrics
@@ -350,6 +354,7 @@ fn score_candidate_owned(
     state: &FragmentState<RecordBuf>,
     mcfs: SmallVec<[MdCigFlags<'_>; READ_CT]>,
     store: Option<&dyn StoreTrait>,
+    positive_regions: Option<&ScoredRegions>,
     ctx: &ScoringContext,
     scratch: &mut Scratch,
     cancel_slot: [bool; 2],
@@ -574,17 +579,19 @@ impl<R: SimpleRec> LineByLine<R> {
 
         let cancel_slot = compute_cancel_slot(best);
         let metrics = compute_metrics(best, cancel_slot, |nr, state, mcfs, cs| {
-            let store = self
+            let aln = self
                 .aln
                 .get(nr)
-                .ok_or(Error::NoAlignmentForIndex { aln_idx: nr })?
-                .variant_store();
+                .ok_or(Error::NoAlignmentForIndex { aln_idx: nr })?;
+            let store = aln.variant_store();
+            let positive_regions = aln.positive_regions();
             let score = state.score_state_nw(
                 mcfs,
                 store.as_deref(),
                 &self.penalties,
                 &mut self.scratch,
                 cs,
+                positive_regions,
             )?;
             Ok((score, self.scratch.last_variant_delta))
         })?;

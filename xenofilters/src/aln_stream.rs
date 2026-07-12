@@ -1,7 +1,11 @@
 use crate::alignment::SimpleRec;
-use crate::bam::{out_from_file, path_unicode_ok, SUFFIX_AMBIGUOUS, SUFFIX_FILTERED, BamOutput, rewrite_rg, expand_header};
+use crate::bam::{
+    expand_header, out_from_file, path_unicode_ok, rewrite_rg, BamOutput, SUFFIX_AMBIGUOUS,
+    SUFFIX_FILTERED,
+};
 use crate::config::MatchingAlgorithm;
 use crate::config::{Config, StripReadSuffix};
+use crate::region::{PositiveRegions, ScoreFn, ScoredRegions};
 use crate::variant::{
     parse_population_record, parse_sample_record, Population, Sample, Store, StoreTrait,
 };
@@ -13,7 +17,7 @@ use noodles::sam::Header;
 use std::fs::File;
 use std::io::Read as ioRead;
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub(crate) trait AlignmentStream<R: SimpleRec> {
@@ -25,6 +29,9 @@ pub(crate) trait AlignmentStream<R: SimpleRec> {
         Ok(())
     }
     fn variant_store(&self) -> Option<Arc<dyn StoreTrait>> {
+        None
+    }
+    fn positive_regions(&self) -> Option<(&PositiveRegions, ScoreFn)> {
         None
     }
     fn header(&self) -> &Header;
@@ -109,13 +116,18 @@ pub(crate) struct AlnStream<R> {
     ambiguous: Option<BamOutput>,
     write_discarded: bool,
     threads: NonZeroUsize,
+    positive_regions: Option<(PositiveRegions, ScoreFn)>,
 }
 
 impl<R> AlnStream<R>
 where
     R: SimpleRec + FromBamRecord,
 {
-    pub(crate) fn new(opt: &mut Config, i: usize) -> Result<Self, Error> {
+    pub(crate) fn new(
+        opt: &mut Config,
+        i: usize,
+        positive_regions: Option<(PositiveRegions, ScoreFn)>,
+    ) -> Result<Self, Error> {
         let path = opt.alignment[i].as_str();
         let seekable_required = opt.matching_algorithm == MatchingAlgorithm::Hashlookup;
 
@@ -141,7 +153,9 @@ where
 
         let header = bam.read_header()?;
 
-        let is_pass2 = header.read_groups().keys()
+        let is_pass2 = header
+            .read_groups()
+            .keys()
             .any(|id| id.ends_with(SUFFIX_AMBIGUOUS.as_bytes()));
 
         if is_pass2 {
@@ -235,6 +249,7 @@ where
             header,
             output: None,
             ambiguous: None,
+            positive_regions,
             write_discarded: opt.write_discarded,
             threads,
         })
@@ -353,6 +368,10 @@ where
                     .as_ref()
                     .map(|p| Arc::clone(p) as Arc<dyn StoreTrait>)
             })
+    }
+
+    fn positive_regions(&self) -> Option<(&PositiveRegions, ScoreFn)> {
+        self.positive_regions.as_ref().map(|(pr, sf)| (pr, *sf))
     }
 
     fn header(&self) -> &Header {

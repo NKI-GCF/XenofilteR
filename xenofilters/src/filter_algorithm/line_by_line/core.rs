@@ -4,16 +4,20 @@
 //   - LineByLine::new() reads score_threads from config
 //   - process() dispatcher added (sequential vs parallel)
 
+use crate::region::{ScoreFn, ScoredRegions};
 use crate::{
     alignment::{FragmentState, SimpleRec},
     aln_stream::AlignmentStream,
     config::{Config, StripReadSuffix},
-    penalty::Penalty,
+    header_name_to_id,
+    penalty::{ErrorModel, Penalty},
     progress::ProgressReporter,
     Error,
 };
 use noodles::sam::alignment::Record;
 use smallvec::SmallVec;
+use std::path::Path;
+use std::sync::Arc;
 
 pub const READ_CT: usize = 8;
 pub(crate) const VNT_LEN: usize = 16;
@@ -126,6 +130,8 @@ pub(crate) struct LineByLine<R> {
     pub(super) stream_labels: Vec<String>,
     pub(super) progress: Option<ProgressReporter>,
     pub(super) bisulfite: bool,
+    pub(super) positive_regions: [Option<Arc<ScoredRegions>>; MAX_STREAMS],
+    pub(super) region_score_fn: ScoreFn,
 }
 
 impl<R: SimpleRec> LineByLine<R> {
@@ -194,6 +200,15 @@ impl<R: SimpleRec> LineByLine<R> {
             false => Some(ProgressReporter::new()),
         };
 
+        let mut positive_regions: [Option<Arc<ScoredRegions>>; MAX_STREAMS] = Default::default();
+        for (i, path) in config.positive_regions.iter().enumerate() {
+            if !path.is_empty() && i < MAX_STREAMS {
+                positive_regions[i] = Some(Arc::new(ScoredRegions::from_bed(
+                    Path::new(path),
+                    &header_name_to_id(aln[i].header()),
+                )?));
+            }
+        }
         Ok(LineByLine {
             aln,
             routing_counters: SmallVec::from_elem(0, aln_len * 4),
@@ -209,6 +224,8 @@ impl<R: SimpleRec> LineByLine<R> {
             score_threads,
             progress,
             bisulfite: config.bisulfite,
+            positive_regions,
+            region_score_fn: config.region_score_fn,
         })
     }
 }
