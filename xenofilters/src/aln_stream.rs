@@ -7,7 +7,15 @@ use crate::config::MatchingAlgorithm;
 use crate::config::{Config, StripReadSuffix};
 use crate::region::{PositiveRegions, ScoreFn};
 use crate::variant::{
-    parse_population_record, parse_sample_record, Population, Sample, Store, StoreTrait,
+    indel_equiv::{
+        build_diagnostic_store_expanded, build_population_store_expanded,
+        build_sample_store_expanded,
+    },
+    name_to_id::header_name_to_id,
+    population::Population,
+    sample::Sample,
+    store::Store,
+    StoreTrait,
 };
 use crate::Error;
 use noodles::bam::{io::Reader as BamReader, record::Record};
@@ -220,18 +228,7 @@ where
             opt.is_paired
         };
 
-        let sample_variants = opt
-            .sample_variants
-            .get(i)
-            .filter(|s| !s.is_empty())
-            .map(|s| Store::new(&PathBuf::from(s), parse_sample_record).map(Arc::new))
-            .transpose()?;
-        let population_variants = opt
-            .population_variants
-            .get(i)
-            .filter(|s| !s.is_empty())
-            .map(|s| Store::new(&PathBuf::from(s), parse_population_record).map(Arc::new))
-            .transpose()?;
+        let (sample_variants, population_variants) = build_variant_stores(opt, &header, i)?;
 
         opt.output.get(i).map(path_unicode_ok).transpose()?;
         opt.ambiguous_output
@@ -377,6 +374,158 @@ where
     fn header(&self) -> &Header {
         &self.header
     }
+}
+
+/// Build all three variant stores for alignment stream `i`, choosing between
+/// plain loading and indel-equivalence-expanded loading based on
+/// `config.expand_indels`.
+///
+/// Called from `AlnStream::new()` after the BAM header has been read.
+///
+/// # Arguments
+/// - `config`    : parsed CLI args (CommonArgs + subcommand-specific fields)
+/// - `header`    : SAM/BAM header of stream `i` (for name→id mapping)
+/// - `stream_idx`: which stream we are building stores for (0-based)
+///
+/// # Returns
+/// `(sample_store, population_store, diagnostic_vcf_path_if_any)`
+///
+/// The diagnostic store for HashLookup is built as an in-memory
+/// `AmbiguousRegions`-style struct; see `build_diagnostic_store_expanded`.
+pub(crate) fn build_variant_stores(
+    config: &CommonArgs,
+    header: &Header,
+    stream_idx: usize,
+) -> Result<(Option<Arc<dyn StoreTrait>>, Option<Arc<dyn StoreTrait>>)> {
+    // Resolve the VCF paths for this stream index.
+    let sample_vcf_path = variant_path_for_stream(&config.sample_variants, stream_idx);
+    let population_vcf_path = variant_path_for_stream(&config.population_variants, stream_idx);
+
+    if !config.expand_indels {
+        // -- Plain path: existing behavior, unchanged -------------------------
+        let sample_store: Option<Arc<dyn StoreTrait>> = sample_vcf_path
+            .map(|p| {
+                Store::<Sample>::from_vcf(p, header).map(|s| Arc::new(s) as Arc<dyn StoreTrait>)
+            })
+            .transpose()?;
+
+        let population_store: Option<Arc<dyn StoreTrait>> = population_vcf_path
+            .map(|p| {
+                Store::<Population>::from_vcf(p, header).map(|s| Arc::new(s) as Arc<dyn StoreTrait>)
+            })
+            .transpose()?;
+
+        return Ok((sample_store, population_store));
+    }
+
+    // -- Expanded path: requires --reference ----------------------------------
+    let fasta_path = config
+        .reference
+        .as_deref()
+        .ok_or(crate::Error::ExpandIndelsRequiresReference)?;
+
+    // Validate that the .fai sidecar exists before opening the expander.
+    let fai_path = fasta_path.with_extension(
+        fasta_path
+            .extension()
+            .map(|e| format!("{}.fai", e.to_string_lossy()))
+            .unwrap_or_else(|| "fai".to_string()),
+    );
+    if !fai_path.exists() {
+        return Err(crate::Error::FastaIndexMissing(fasta_path.to_path_buf()).into());
+    }
+
+    let name_to_id = header_name_to_id(header);
+
+    let sample_store: Option<Arc<dyn StoreTrait>> = sample_vcf_path
+        .map(|p| {
+            build_sample_store_expanded(
+                p,
+                fasta_path,
+                &name_to_id,
+                config.gamete_streams.contains(&stream_idx),
+            )
+            .map(|s| Arc::new(s) as Arc<dyn StoreTrait>)
+        })
+        .transpose()?;
+
+    let population_store: Option<Arc<dyn StoreTrait>> = population_vcf_path
+        .map(|p| {
+            build_population_store_expanded(p, fasta_path, &name_to_id)
+                .map(|s| Arc::new(s) as Arc<dyn StoreTrait>)
+        })
+        .transpose()?;
+
+    Ok((sample_store, population_store))
+}
+
+/// Build the diagnostic variant store for one stream.
+///
+/// Separated from `build_variant_stores` because the diagnostic store has
+/// a different type (`DiagnosticVariants`) and is consumed by different
+/// code paths (HashLookup BED/VCF region check).
+pub(crate) fn build_diagnostic_store_for_stream(
+    config: &CommonArgs,
+    header: &Header,
+    stream_idx: usize,
+) -> Result<Option<crate::region::diagnostic::DiagnosticVariants>> {
+    use crate::region::diagnostic::DiagnosticVariants;
+    use crate::variant::name_to_id::header_name_to_id;
+
+    let diag_vcf_path = variant_path_for_stream(&config.diagnostic_variants, stream_idx);
+    let Some(path) = diag_vcf_path else {
+        return Ok(None);
+    };
+
+    if !config.expand_indels {
+        // Plain diagnostic loading: existing behavior.
+        return DiagnosticVariants::from_vcf(path, &header_name_to_id(header)).map(Some);
+    }
+
+    let fasta_path = config
+        .reference
+        .as_deref()
+        .ok_or(crate::Error::ExpandIndelsRequiresReference)?;
+
+    use crate::variant::indel_equiv::IndelEquivalenceExpander;
+    use noodles::fasta;
+    use std::{fs::File, io::BufReader};
+
+    let fasta_reader = fasta::IndexedReader::new(BufReader::new(File::open(fasta_path)?));
+    let mut expander = IndelEquivalenceExpander::new(fasta_reader);
+    let name_to_id = header_name_to_id(header);
+
+    // Read the VCF header separately so we can pass it by reference.
+    let vcf_header = crate::variant::indel_equiv::read_vcf_or_bcf_header(path)?;
+
+    build_diagnostic_store_expanded(path, &mut expander, &name_to_id, &vcf_header).map(Some)
+}
+
+// -- Private helper ------------------------------------------------------------
+
+/// Resolve the VCF/BCF path for stream `stream_idx` from a list of
+/// `[IDX:]FILE` strings.
+///
+/// Accepts two forms:
+/// - `"FILE"` — positional: stream 0 gets index 0, stream 1 gets index 1, …
+/// - `"IDX:FILE"` — explicit stream index
+fn variant_path_for_stream(specs: &[String], stream_idx: usize) -> Option<&std::path::Path> {
+    for spec in specs {
+        if let Some((idx_str, path_str)) = spec.split_once(':') {
+            if let Ok(idx) = idx_str.trim().parse::<usize>() {
+                if idx == stream_idx {
+                    return Some(std::path::Path::new(path_str.trim()));
+                }
+            }
+        }
+    }
+    // Positional fallback: no IDX: prefix → assign by position in the list.
+    let positional: Vec<&str> = specs
+        .iter()
+        .filter(|s| !s.contains(':') || s.starts_with('/') || s.starts_with('.'))
+        .map(|s| s.as_str())
+        .collect();
+    positional.get(stream_idx).map(|s| std::path::Path::new(s))
 }
 
 #[cfg(test)]

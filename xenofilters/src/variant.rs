@@ -1,7 +1,7 @@
 pub mod eval;
-mod population;
-mod sample;
-mod store;
+pub(crate) mod population;
+pub(crate) mod sample;
+pub(crate) mod store;
 
 pub(crate) use eval::Eval;
 pub(crate) use population::{parse_population_record, Population};

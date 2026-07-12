@@ -422,4 +422,21 @@ pub enum Error {
 
     #[error("More ambiguous output paths ({count}) than input ({max}) specified")]
     TooManyAmbiguousOutputPaths { count: usize, max: usize },
+
+    // -- Indel equivalence expansion ------------------------------------------
+    #[error("--expand-indels requires --reference <fasta>")]
+    ExpandIndelsRequiresReference,
+
+    #[error("FASTA index (.fai) not found alongside {0}; run: samtools faidx {0}")]
+    FastaIndexMissing(PathBuf),
+
+    #[error("FASTA fetch failed for region {region}: {source}")]
+    FastaFetch {
+        region: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("indel expansion position overflow at {chrom}:{pos}")]
+    ExpansionPositionOverflow { chrom: String, pos: usize },
 }

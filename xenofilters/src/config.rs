@@ -2,7 +2,7 @@ use crate::Error;
 use crate::filter_algorithm::line_by_line::{MAX_STREAMS, core::COUNTER_STRIDE};
 use crate::{
     bam::AlnFormat,
-    penalty::{Penalty, ErrorModel},
+    penalty::{MAX_Q, Penalty, ErrorModel},
 };
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
@@ -197,6 +197,37 @@ pub struct Config {
     #[arg(short, long, num_args = 0..ARG_MAX, help_heading = "Variants")]
     pub population_variants: Vec<String>,
 
+    /// Enable indel equivalence expansion for --sample-variants,
+    /// --population-variants, and --diagnostic-variants.
+    ///
+    /// When active, each insertion or deletion in the supplied VCF files is
+    /// expanded into all mathematically equivalent CIGAR/MD representations
+    /// by sliding the indel through the local repeat context.  This fixes
+    /// false-negative variant rescue in un-realigned BAMs.
+    ///
+    /// Requires --reference.  Silent no-op for SNPs and complex alleles.
+    #[arg(
+        long,
+        default_value = "false",
+        requires = "reference",
+        help_heading = "Variants"
+    )]
+    pub(crate) expand_indels: bool,
+
+    /// Padding (bp) added on each side of ambiguous-region BED intervals
+    /// when --expand-indels is active.  Extends the masking window to catch
+    /// reads whose aligner placed an indel up to this many bases outside
+    /// the annotated region boundary.
+    ///
+    /// Default 50.  Set 0 to disable BED padding.
+    #[arg(
+        long,
+        default_value = "50",
+        value_parser = clap::value_parser!(usize),
+        help_heading = "Variants"
+    )]
+    pub(crate) indel_expand_padding: usize,
+
     /// VCF/BCF of species-diagnostic positions per stream (positional: stream 0, then 1).
     /// Reads overlapping these positions are forced through full scoring.
     /// Same indexing and compression rules as --ambiguous-regions.
@@ -209,6 +240,7 @@ pub struct Config {
     /// (strand-aware when BED column 6 present). One per stream.
     /// Reads overlapping these regions are forced through full log-likelihood scoring.
     /// Collated: must be bgzf-compressed and tabix-indexed (.bed.gz + .tbi).
+    /// HashLookup: loaded fully into memory.
     #[arg(long, num_args = 0..=2, help_heading = "Regions")]
     pub ambiguous_regions: Vec<String>,
 
@@ -443,6 +475,29 @@ impl Config {
                         max: MAX_STREAMS,
                     });
                 }
+            }
+        }
+
+        // --expand-indels without --reference: clap `requires` already catches
+        // this at parse time; validate_common provides a friendlier message.
+        if self.expand_indels && self.reference.is_none() {
+            return Err(Error::ExpandIndelsRequiresReference);
+        }
+
+        // If any VCF path is supplied and --expand-indels is off, warn that
+        // un-realigned indels may be missed.  Only warn when the VCF likely
+        // contains indels (we can't know without reading it, so warn always).
+        if !self.expand_indels
+            && !self.sample_variants.is_empty()
+            || !self.population_variants.is_empty()
+            || !self.diagnostic_variants.is_empty()
+        {
+            if self.reference.is_none() {
+                tracing::debug!(
+                    "Variant files supplied without --reference; \
+                     indel equivalence expansion disabled. \
+                     Add --reference and --expand-indels to handle un-realigned indels."
+                );
             }
         }
 
