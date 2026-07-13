@@ -31,6 +31,7 @@ use std::collections::HashMap;
 use ahash::RandomState;
 use crate::region::ScoreFn;
 use crate::config::CollatedArgs;
+use crate::filter_algorithm::line_by_line::COUNTER_STRIDE;
 
 pub(crate) struct CollatedMatcher<R: SimpleRec> {
     a: CollatedReader<R>,

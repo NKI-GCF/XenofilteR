@@ -533,22 +533,11 @@ pub(crate) struct NamesortedArgs {
     )]
     pub(crate) threads: usize,
 
-    /// Parallel fragment-scoring worker threads (0 = all logical CPUs, max 16).
-    #[arg(
-        short = 'S',
-        long,
-        default_value = "1",
-        env = "XENOFILTERS_SCORE_THREADS",
-        help_heading = "Parallelism"
-    )]
-    pub(crate) score_threads: usize,
+    #[command(flatten)]
+    pub(crate) parallel: crate::config::args::ParallelArgs,
 
-    /// Chimeric stream-index pairs (format: A:B).
-    /// Reads spanning species boundaries are tagged XC:Z:<other_label>
-    /// and written to both streams' outputs.
-    #[arg(long, num_args = 0.., value_name = "A:B",
-          help_heading = "Chimeric")]
-    pub(crate) chimeric_pairs: Vec<String>,
+    #[command(flatten)]
+    pub(crate) chimeric: crate::config::args::ChimericArgs,
 
     /// Name encoder for FragmentTable key compression.
     /// illumina (strips machine:run:flowcell prefix) | passthrough

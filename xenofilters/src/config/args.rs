@@ -1,6 +1,7 @@
 // src/config/args.rs
 
 use crate::penalty::ErrorModel;
+use crate::region::ScoreFn;
 use clap::Args;
 use std::path::PathBuf;
 

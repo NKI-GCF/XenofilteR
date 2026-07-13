@@ -16,17 +16,17 @@ pub(crate) enum Strand {
 impl Strand {
     fn from_byte(b: u8) -> Self {
         match b {
-            b'+' => Strand::Plus,
-            b'-' => Strand::Minus,
-            _ => Strand::Any,
+            b'+' => Self::Plus,
+            b'-' => Self::Minus,
+            _ => Self::Any,
         }
     }
     /// True when the BED strand is compatible with `read_is_reverse`.
     pub(crate) fn matches(&self, read_is_reverse: bool) -> bool {
         match self {
-            Strand::Any => true,
-            Strand::Plus => !read_is_reverse,
-            Strand::Minus => read_is_reverse,
+            Self::Any => true,
+            Self::Plus => !read_is_reverse,
+            Self::Minus => read_is_reverse,
         }
     }
 }
@@ -45,20 +45,14 @@ pub(crate) enum ScoreFn {
     OverlapFraction(f64),
 }
 
-impl Default for ScoreFn {
-    fn default() -> Self {
-        ScoreFn::Linear(1.0)
-    }
-}
-
 impl ScoreFn {
     /// Compute the score delta added to the stream's NW score.
     pub(crate) fn apply(&self, bed_score: f64, overlap_bases: usize, region_len: usize) -> f64 {
         match self {
-            ScoreFn::Linear(w) => (bed_score / 1000.0) * w,
-            ScoreFn::Log(w) => (bed_score + 1.0).ln() / (1001.0_f64).ln() * w,
-            ScoreFn::Constant(w) => *w,
-            ScoreFn::OverlapFraction(w) => {
+            Self::Linear(w) => (bed_score / 1000.0) * w,
+            Self::Log(w) => (bed_score + 1.0).ln() / 1001.0_f64.ln() * w,
+            Self::Constant(w) => *w,
+            Self::OverlapFraction(w) => {
                 let frac = if region_len == 0 {
                     0.0
                 } else {
@@ -70,19 +64,25 @@ impl ScoreFn {
     }
 }
 
+impl Default for ScoreFn {
+    fn default() -> Self {
+        Self::Linear(1.0)
+    }
+}
+
 impl std::str::FromStr for ScoreFn {
     type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self, String> {
         // Format: "fn[:weight]", e.g. "linear", "log:2.0", "constant:5.0"
         let (name, weight) = match s.split_once(':') {
             Some((n, w)) => (n, w.parse::<f64>().map_err(|e| e.to_string())?),
-            None => (s, 1.0f64),
+            None => (s, 1.0),
         };
         match name {
-            "linear" => Ok(ScoreFn::Linear(weight)),
-            "log" => Ok(ScoreFn::Log(weight)),
-            "constant" => Ok(ScoreFn::Constant(weight)),
-            "overlap_fraction" => Ok(ScoreFn::OverlapFraction(weight)),
+            "linear" => Ok(Self::Linear(weight)),
+            "log" => Ok(Self::Log(weight)),
+            "constant" => Ok(Self::Constant(weight)),
+            "overlap_fraction" => Ok(Self::OverlapFraction(weight)),
             other => Err(format!("unknown score fn '{other}'")),
         }
     }

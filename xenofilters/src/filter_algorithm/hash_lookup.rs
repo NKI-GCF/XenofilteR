@@ -25,6 +25,7 @@ use crate::aln_stream::AlignmentStream;
 use crate::config::HashlookupArgs;
 use crate::config::{Config, StripReadSuffix};
 use crate::filter_algorithm::collated::reader::canonical_name;
+use crate::filter_algorithm::line_by_line::COUNTER_STRIDE;
 use crate::filter_algorithm::line_by_line::{ordering::Decision, Scratch, READ_CT};
 use crate::penalty::Penalty;
 use crate::region::{AmbiguousRegions, DiagnosticVariants};

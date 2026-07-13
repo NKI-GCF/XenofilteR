@@ -7,15 +7,15 @@
 
 pub(crate) mod ambiguous;
 pub(crate) mod diagnostic;
-pub(crate) mod scored;
 pub(crate) mod load;
+pub(crate) mod scored;
 pub(crate) mod tabix_load;
 pub(crate) mod tabix_query;
 
 // AmbiguousRegions is now an alias; strand-awareness comes for free.
 pub(crate) use ambiguous::AmbiguousRegions;
 pub(crate) use diagnostic::DiagnosticVariants;
-pub(crate) use scored::{ScoreFn, ScoredRegions};
+pub(crate) use scored::{ScoreFn, ScoredRegion, ScoredRegions, Strand};
 
 /// Ambiguous regions force Tier-2 fast-paths off when a read overlaps.
 /// Strand field respected when present in BED column 6.

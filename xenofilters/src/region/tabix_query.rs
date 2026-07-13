@@ -8,6 +8,7 @@
 //! - BED query: use tabix index chunks to check overlap; parse overlapping records.
 //! - VCF indexed reader: `vcf::io::IndexedReader` provides `.query(&header, &region)`.
 
+use super::{ScoredRegion, Strand};
 use crate::Error;
 use noodles::bgzf;
 use noodles::core::{region::Interval, Position, Region};
@@ -16,6 +17,37 @@ use noodles::{tabix, vcf};
 use std::fs::File;
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
+
+pub(crate) struct TabixScored {
+    inner: TabixBed,
+} // reuses index + adds column parsing
+
+impl TabixScored {
+    pub(crate) fn open(path: &std::path::Path) -> Result<Self, Error> {
+        Ok(Self {
+            inner: TabixBed::open(path)?,
+        })
+    }
+    /// NEEDS FOLLOW-UP: currently returns overlap existence + a constant score;
+    /// full per-record score/strand parsing from tabix chunks requires reading
+    /// the matched byte ranges, not just checking chunk non-emptiness.
+    /// Tracked in ROADMAP — this unblocks compilation with correct semantics
+    /// for the constant/linear default case only.
+    pub(crate) fn overlapping_bonus(
+        &self,
+        ref_id: usize,
+        s: usize,
+        e: usize,
+        rev: bool,
+        score_fn: ScoreFn,
+    ) -> Result<f64, Error> {
+        if self.inner.overlaps(ref_id, s, e)? {
+            Ok(score_fn.apply(1000.0, e - s, e - s))
+        } else {
+            Ok(0.0)
+        }
+    }
+}
 
 fn read_tabix_index(path: &Path) -> Result<tabix::Index, Error> {
     // Try <file>.tbi, then <file>.<ext>.tbi
