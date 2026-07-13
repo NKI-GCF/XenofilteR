@@ -1,0 +1,270 @@
+// ============================================================================
+// src/variant/variant_window_test_hook.rs
+//
+// Thin test-only wrapper around align_alt_to_read so integration tests can
+// invoke the NW scoring path without threading a full FragmentState through.
+//
+// Gated behind cfg(any(test, feature = "bench-internals")) so it compiles
+// away in production builds with zero overhead.
+// ============================================================================
+
+#![cfg(any(test, feature = "bench-internals"))]
+
+use crate::{
+    penalty::Penalty,
+    variant::{variant_window::align_alt_to_read, Variant},
+};
+
+/// Compute the rescue delta for a single variant against a read sequence.
+///
+/// Returns `alt_score - ref_incurred`; positive when the variant's alt
+/// allele is better supported than the reference at that position.
+///
+/// Used only in tests; not on the hot path.
+pub fn compute_rescue_delta(
+    variant:       &dyn Variant,
+    read_seq:      &[u8],
+    read_qscores:  &[u8],
+    ref_start:     usize,   // 0-based start of the read's alignment on the reference
+    pen:           &Penalty,
+) -> f64 {
+    let p = variant.p_variant();
+    if p <= 0.5 {
+        // Structural invariant: rescue delta cannot be positive below 0.5.
+        return 0.0;
+    }
+    align_alt_to_read(
+        variant.ref_allele(),
+        variant.alt_allele(),
+        read_seq,
+        read_qscores,
+        variant.pos(),
+        ref_start,
+        p,
+        pen,
+    )
+}
+
+
+// ============================================================================
+// src/variant/store.rs  — complete overlapping_multi implementation
+//
+// Shown as a standalone impl block; merge with existing Store<V> definition.
+//
+// Internal layout:
+//   per_ref: HashMap<usize, Vec<V>, RandomState>
+//     key = chromosome index (tid, 0-based)
+//     value = Vec<V> sorted ascending by pos()
+//
+// Overlap condition for a variant at [var.pos(), var.pos() + ref_len):
+//   var.pos() < query_end  AND  var.pos() + ref_len > query_start
+// ============================================================================
+
+use ahash::RandomState;
+use smallvec::SmallVec;
+use std::collections::HashMap;
+
+use crate::variant::Variant;
+
+pub(crate) struct Store<V: Variant> {
+    /// Per-chromosome sorted variant buckets.
+    pub(crate) per_ref: HashMap<usize, Vec<V>, RandomState>,
+}
+
+impl<V: Variant> Store<V> {
+    pub(crate) fn new() -> Self {
+        Self { per_ref: HashMap::with_hasher(RandomState::new()) }
+    }
+
+    /// Return all variants whose reference span overlaps `[query_start, query_end)`.
+    ///
+    /// Uses binary search to find the first candidate (O(log n)) and then
+    /// scans forward while the variant's start is less than `query_end` (O(k)
+    /// where k is the number of results).
+    ///
+    /// Returns a SmallVec of references; capacity 4 keeps typical variant-per-
+    /// window counts on the stack.
+    ///
+    /// This method is on the hot path and must not allocate beyond the
+    /// SmallVec inline capacity for typical inputs.
+    pub(crate) fn overlapping_multi(
+        &self,
+        tid:         usize,
+        query_start: usize,
+        query_end:   usize,
+    ) -> SmallVec<[&V; 4]> {
+        let mut out: SmallVec<[&V; 4]> = SmallVec::new();
+        let Some(bucket) = self.per_ref.get(&tid) else { return out };
+
+        // Binary search: first variant whose pos might overlap (pos < query_end).
+        // partition_point gives us the first index where pos >= query_end.
+        let upper = bucket.partition_point(|v| v.pos() < query_end);
+
+        // Scan backwards from upper: collect variants where
+        //   v.pos() + v.ref_allele().len() > query_start
+        // Because the bucket is sorted by pos(), once v.pos() < query_start
+        // and the ref span also ends before query_start, we can stop.
+        // However, large deletions could start well before query_start but
+        // still overlap.  We therefore scan back at most MAX_DEL_LEN entries.
+        const MAX_SCAN_BACK: usize = 256; // generous upper bound for ref span
+        let lo = upper.saturating_sub(MAX_SCAN_BACK);
+
+        for v in &bucket[lo..upper] {
+            let ref_end = v.pos() + v.ref_allele().len();
+            if ref_end > query_start {
+                out.push(v);
+            }
+        }
+        out
+    }
+
+    /// Number of variants across all chromosomes.
+    pub(crate) fn total_count(&self) -> usize {
+        self.per_ref.values().map(|v| v.len()).sum()
+    }
+}
+
+
+// ============================================================================
+// src/variant/mod.rs  — add ref_id() to Variant trait
+//
+// Add one method to the existing Variant trait definition.
+// All existing impl blocks gain `fn ref_id(&self) -> usize { self.ref_id }`.
+// ============================================================================
+
+// pub(crate) trait Variant {
+//     fn ref_id(&self)      -> usize;   // ← ADD
+//     fn pos(&self)         -> usize;
+//     fn ref_allele(&self)  -> &[u8];
+//     fn alt_allele(&self)  -> &[u8];
+//     fn p_variant(&self)   -> f64;
+// }
+
+
+// ============================================================================
+// src/region/diagnostic.rs  — updated DiagnosticVariants with overlaps()
+//
+// Minor addition: `is_reverse` parameter forwarded for strand-aware overlap.
+// The body is otherwise unchanged from the existing implementation.
+// ============================================================================
+
+#[derive(Debug, Clone)]
+pub(crate) struct DiagnosticSite {
+    pub(crate) pos:     usize,   // 0-based
+    pub(crate) ref_len: usize,
+}
+
+impl DiagnosticSite {
+    #[inline]
+    pub(crate) fn end(&self) -> usize {
+        self.pos + self.ref_len
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct DiagnosticVariants {
+    /// per_ref[ref_id] = sorted-by-pos Vec<DiagnosticSite>
+    pub(crate) per_ref: Vec<Vec<DiagnosticSite>>,
+}
+
+impl DiagnosticVariants {
+    /// True when any site on chromosome `ref_id` overlaps `[start, end)`.
+    ///
+    /// `is_reverse` is accepted for API consistency with `ScoredRegions`
+    /// but diagnostic sites are strand-agnostic (no BED column 6).
+    #[inline]
+    pub(crate) fn overlaps(
+        &self,
+        ref_id:       usize,
+        start:        usize,
+        end:          usize,
+        _is_reverse:  bool,
+    ) -> bool {
+        let Some(bucket) = self.per_ref.get(ref_id) else { return false };
+        // Binary search to the first site whose end might be > start.
+        let lo = bucket.partition_point(|s| s.end() <= start);
+        bucket[lo..].iter().take_while(|s| s.pos < end).any(|s| s.end() > start)
+    }
+
+    /// Build from a pre-computed per_ref structure (used by tests and
+    /// diagnostic_equiv.rs).
+    pub(crate) fn from_per_ref(per_ref: Vec<Vec<DiagnosticSite>>) -> Self {
+        Self { per_ref }
+    }
+
+    /// Load from a plain (non-expanded) VCF/BCF file.
+    /// Called when --expand-indels is off.
+    pub(crate) fn from_vcf(
+        path:       &std::path::Path,
+        name_to_id: &std::collections::HashMap<String, usize>,
+    ) -> anyhow::Result<Self> {
+        use std::{fs::File, io::BufReader};
+        use noodles::vcf;
+        use anyhow::Context;
+
+        let mut reader = vcf::io::Reader::new(BufReader::new(File::open(path)?));
+        let header     = reader.read_header()?;
+        let mut per_ref: Vec<Vec<DiagnosticSite>> = Vec::new();
+
+        for result in reader.record_bufs(&header) {
+            let rec     = result?;
+            let chrom   = rec.reference_sequence_name().to_string();
+            let ref_id  = match name_to_id.get(&chrom) {
+                Some(&id) => id,
+                None      => continue,
+            };
+            let pos_0 = rec
+                .variant_start()
+                .transpose()
+                .context("variant_start")?
+                .map(|p| p.get() - 1)
+                .unwrap_or(0);
+            let ref_len = rec.reference_bases().len();
+
+            if per_ref.len() <= ref_id {
+                per_ref.resize_with(ref_id + 1, Vec::new);
+            }
+            per_ref[ref_id].push(DiagnosticSite { pos: pos_0, ref_len });
+        }
+
+        for bucket in &mut per_ref {
+            bucket.sort_unstable_by_key(|s| s.pos);
+        }
+        Ok(Self { per_ref })
+    }
+}
+
+
+// ============================================================================
+// ROADMAP.md additions
+// ============================================================================
+//
+// Add under ## v0.5 — Internal Architecture:
+//
+// ### Indel equivalence expansion — known limitations
+//
+// **MNP / complex allele expansion deferred.**
+// Multi-nucleotide polymorphisms where both REF and ALT are > 1 bp cannot
+// be slid through repeat context because the sliding condition breaks down.
+// These are stored as-is with a tracing::warn.  A future implementation
+// could left-align complex alleles using the `vt decompose` / `bcftools norm
+// --atomize` approach before expansion.
+//
+// **BED padding is position-based, not sequence-based.**
+// `with_indel_padding(n)` extends every BED interval by n bp on each side
+// without inspecting the reference sequence.  This may include false-positive
+// masking of bases outside the actual repeat.  A sequence-aware version would
+// identify the repeat boundary from the FASTA and expand only to that boundary.
+//
+// **Store scan-back constant MAX_SCAN_BACK = 256.**
+// `overlapping_multi` scans back at most 256 entries from the binary-search
+// upper bound to find large deletions that start before query_start but still
+// overlap.  Deletions > 256 bp (rare in SNP/indel VCFs; common in SV VCFs)
+// may be missed.  Replace with a proper interval-tree (e.g., `bio::data_structures::
+// interval_tree`) when SV support is added.
+//
+// **Strand-aware diagnostic overlap not implemented.**
+// DiagnosticVariants::overlaps() accepts `is_reverse` but ignores it.
+// VCF records carry no strand information; if a future workflow creates
+// strand-specific diagnostic VCFs, extend DiagnosticSite with an
+// optional `Strand` field and filter in overlaps().

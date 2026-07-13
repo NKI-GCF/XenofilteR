@@ -1,0 +1,394 @@
+// ============================================================================
+// src/variant/name_to_id.rs
+//
+// Build a reference-sequence name → 0-based index map from a SAM header.
+// Used by the indel equivalence expander and the diagnostic variant builder
+// to resolve VCF CHROM strings to the integer IDs stored on variants.
+// ============================================================================
+
+use std::collections::HashMap;
+use noodles::sam::Header;
+
+/// Build a `String → usize` map from the `@SQ` lines of a SAM/BAM header.
+///
+/// The index is 0-based and matches the reference-sequence ID that noodles
+/// returns from `Record::reference_sequence_id()`.
+///
+/// # Example
+/// ```
+/// // Header has @SQ SN:chr1 LN:... , @SQ SN:chr2 LN:... , ...
+/// let m = header_name_to_id(&header);
+/// assert_eq!(m["chr1"], 0);
+/// assert_eq!(m["chr2"], 1);
+/// ```
+pub(crate) fn header_name_to_id(header: &Header) -> HashMap<String, usize> {
+    header
+        .reference_sequences()
+        .iter()
+        .enumerate()
+        .map(|(i, (name, _))| (name.to_string(), i))
+        .collect()
+}
+
+/// Build a `name → id` map directly from an indexed FASTA `.fai` file.
+///
+/// Used when no BAM header is available yet (e.g., during hashlookup
+/// pre-scan before the first BAM record is read).
+///
+/// # Format
+/// Each line of the .fai:  `name\tlength\toffset\tbpl\tbpl_with_nl`
+pub(crate) fn fai_name_to_id(fai_path: &std::path::Path) -> std::io::Result<HashMap<String, usize>> {
+    use std::io::{BufRead, BufReader};
+    let f   = std::fs::File::open(fai_path)?;
+    let mut map = HashMap::new();
+    for (i, line) in BufReader::new(f).lines().enumerate() {
+        let line  = line?;
+        let name  = line.split('\t').next().unwrap_or("").to_string();
+        if !name.is_empty() {
+            map.insert(name, i);
+        }
+    }
+    Ok(map)
+}
+
+
+// ============================================================================
+// src/error.rs  — new variants (add to the existing flat Error enum)
+// ============================================================================
+
+// Add inside the existing `#[derive(thiserror::Error, Debug)]` enum:
+
+//  // ── Indel equivalence expansion ──────────────────────────────────────────
+//  #[error("--expand-indels requires --reference <fasta>")]
+//  ExpandIndelsRequiresReference,
+//
+//  #[error("FASTA index (.fai) not found alongside {0}; run: samtools faidx {0}")]
+//  FastaIndexMissing(PathBuf),
+//
+//  #[error("FASTA fetch failed for region {region}: {source}")]
+//  FastaFetch {
+//      region: String,
+//      #[source]
+//      source: std::io::Error,
+//  },
+//
+//  #[error("indel expansion position overflow at {chrom}:{pos}")]
+//  ExpansionPositionOverflow { chrom: String, pos: usize },
+
+
+// ============================================================================
+// src/aln_stream.rs  — variant store initialization patch
+//
+// Replace the existing sample_variants / population_variants / diagnostic
+// store construction block inside AlnStream::new() with the logic below.
+//
+// The existing block (schematically):
+//
+//   let sample_variants = config.sample_variants.get(i).map(|p| {
+//       Store::<Sample>::from_vcf(p, header).map(Arc::new)
+//   }).transpose()?;
+//
+// becomes the match on config.expand_indels shown here.
+// ============================================================================
+
+use std::sync::Arc;
+use anyhow::Result;
+
+use crate::{
+    config::CommonArgs,
+    variant::{
+        indel_equiv::{
+            build_diagnostic_store_expanded,
+            build_population_store_expanded,
+            build_sample_store_expanded,
+        },
+        name_to_id::header_name_to_id,
+        population::Population,
+        sample::Sample,
+        store::Store,
+        StoreTrait,
+    },
+};
+use noodles::sam::Header;
+
+/// Build all three variant stores for alignment stream `i`, choosing between
+/// plain loading and indel-equivalence-expanded loading based on
+/// `config.expand_indels`.
+///
+/// Called from `AlnStream::new()` after the BAM header has been read.
+///
+/// # Arguments
+/// - `config`    : parsed CLI args (CommonArgs + subcommand-specific fields)
+/// - `header`    : SAM/BAM header of stream `i` (for name→id mapping)
+/// - `stream_idx`: which stream we are building stores for (0-based)
+///
+/// # Returns
+/// `(sample_store, population_store, diagnostic_vcf_path_if_any)`
+///
+/// The diagnostic store for HashLookup is built as an in-memory
+/// `AmbiguousRegions`-style struct; see `build_diagnostic_store_expanded`.
+pub(crate) fn build_variant_stores(
+    config:      &CommonArgs,
+    header:      &Header,
+    stream_idx:  usize,
+) -> Result<(
+    Option<Arc<dyn StoreTrait>>,
+    Option<Arc<dyn StoreTrait>>,
+)> {
+    // Resolve the VCF paths for this stream index.
+    let sample_vcf_path     = variant_path_for_stream(&config.sample_variants,     stream_idx);
+    let population_vcf_path = variant_path_for_stream(&config.population_variants, stream_idx);
+
+    if !config.expand_indels {
+        // ── Plain path: existing behavior, unchanged ─────────────────────────
+        let sample_store: Option<Arc<dyn StoreTrait>> = sample_vcf_path
+            .map(|p| Store::<Sample>::from_vcf(p, header).map(|s| Arc::new(s) as Arc<dyn StoreTrait>))
+            .transpose()?;
+
+        let population_store: Option<Arc<dyn StoreTrait>> = population_vcf_path
+            .map(|p| Store::<Population>::from_vcf(p, header).map(|s| Arc::new(s) as Arc<dyn StoreTrait>))
+            .transpose()?;
+
+        return Ok((sample_store, population_store));
+    }
+
+    // ── Expanded path: requires --reference ──────────────────────────────────
+    let fasta_path = config
+        .reference
+        .as_deref()
+        .ok_or(crate::Error::ExpandIndelsRequiresReference)?;
+
+    // Validate that the .fai sidecar exists before opening the expander.
+    let fai_path = fasta_path.with_extension(
+        fasta_path
+            .extension()
+            .map(|e| format!("{}.fai", e.to_string_lossy()))
+            .unwrap_or_else(|| "fai".to_string()),
+    );
+    if !fai_path.exists() {
+        return Err(crate::Error::FastaIndexMissing(fasta_path.to_path_buf()).into());
+    }
+
+    let name_to_id = header_name_to_id(header);
+
+    let sample_store: Option<Arc<dyn StoreTrait>> = sample_vcf_path
+        .map(|p| {
+            build_sample_store_expanded(p, fasta_path, &name_to_id, config.gamete_streams.contains(&stream_idx))
+                .map(|s| Arc::new(s) as Arc<dyn StoreTrait>)
+        })
+        .transpose()?;
+
+    let population_store: Option<Arc<dyn StoreTrait>> = population_vcf_path
+        .map(|p| {
+            build_population_store_expanded(p, fasta_path, &name_to_id)
+                .map(|s| Arc::new(s) as Arc<dyn StoreTrait>)
+        })
+        .transpose()?;
+
+    Ok((sample_store, population_store))
+}
+
+/// Build the diagnostic variant store for one stream.
+///
+/// Separated from `build_variant_stores` because the diagnostic store has
+/// a different type (`DiagnosticVariants`) and is consumed by different
+/// code paths (HashLookup BED/VCF region check).
+pub(crate) fn build_diagnostic_store_for_stream(
+    config:      &CommonArgs,
+    header:      &Header,
+    stream_idx:  usize,
+) -> Result<Option<crate::region::diagnostic::DiagnosticVariants>> {
+    use crate::variant::name_to_id::header_name_to_id;
+    use crate::region::diagnostic::DiagnosticVariants;
+
+    let diag_vcf_path = variant_path_for_stream(&config.diagnostic_variants, stream_idx);
+    let Some(path) = diag_vcf_path else { return Ok(None) };
+
+    if !config.expand_indels {
+        // Plain diagnostic loading: existing behavior.
+        return DiagnosticVariants::from_vcf(path, &header_name_to_id(header))
+            .map(Some);
+    }
+
+    let fasta_path = config
+        .reference
+        .as_deref()
+        .ok_or(crate::Error::ExpandIndelsRequiresReference)?;
+
+    use std::{fs::File, io::BufReader};
+    use noodles::fasta;
+    use crate::variant::indel_equiv::IndelEquivalenceExpander;
+
+    let fasta_reader = fasta::IndexedReader::new(BufReader::new(File::open(fasta_path)?));
+    let mut expander = IndelEquivalenceExpander::new(fasta_reader);
+    let name_to_id   = header_name_to_id(header);
+
+    // Read the VCF header separately so we can pass it by reference.
+    let vcf_header = crate::variant::indel_equiv::read_vcf_or_bcf_header(path)?;
+
+    build_diagnostic_store_expanded(path, &mut expander, &name_to_id, &vcf_header)
+        .map(Some)
+}
+
+// ── Private helper ────────────────────────────────────────────────────────────
+
+/// Resolve the VCF/BCF path for stream `stream_idx` from a list of
+/// `[IDX:]FILE` strings.
+///
+/// Accepts two forms:
+/// - `"FILE"` — positional: stream 0 gets index 0, stream 1 gets index 1, …
+/// - `"IDX:FILE"` — explicit stream index
+fn variant_path_for_stream(
+    specs:      &[String],
+    stream_idx: usize,
+) -> Option<&std::path::Path> {
+    for spec in specs {
+        if let Some((idx_str, path_str)) = spec.split_once(':') {
+            if let Ok(idx) = idx_str.trim().parse::<usize>() {
+                if idx == stream_idx {
+                    return Some(std::path::Path::new(path_str.trim()));
+                }
+            }
+        }
+    }
+    // Positional fallback: no IDX: prefix → assign by position in the list.
+    let positional: Vec<&str> = specs
+        .iter()
+        .filter(|s| !s.contains(':') || s.starts_with('/') || s.starts_with('.'))
+        .map(|s| s.as_str())
+        .collect();
+    positional.get(stream_idx).map(|s| std::path::Path::new(s))
+}
+
+
+// ============================================================================
+// src/aln_stream.rs  — AlnStream::new() integration point
+//
+// Replace the existing variant-store construction lines with a call to
+// build_variant_stores().  Shown as a before/after diff.
+// ============================================================================
+
+// BEFORE (schematic — actual field names may differ):
+//
+//   let sample_variants = /* existing logic */;
+//   let population_variants = /* existing logic */;
+//
+//   Ok(AlnStream { bam, next, header, output_mode,
+//                  sample_variants, population_variants, ... })
+
+// AFTER:
+//
+//   let (sample_variants, population_variants) =
+//       build_variant_stores(opt, &header, i)?;
+//
+//   Ok(AlnStream { bam, next, header, output_mode,
+//                  sample_variants, population_variants, ... })
+//
+// For the diagnostic store (HashLookup / Collated only):
+//
+//   let diagnostic = build_diagnostic_store_for_stream(opt, &header, i)?;
+
+
+// ============================================================================
+// src/main.rs  — complete variant-store initialization sequence
+//
+// Shown for run_hashlookup; run_namesorted and run_collated follow the
+// same pattern since `build_variant_stores` is called inside AlnStream::new().
+// ============================================================================
+
+// fn run_hashlookup(mut args: HashlookupArgs) -> Result<(), Error> {
+//     let n = args.common.alignment.len();
+//     ensure!(n == 2, "hashlookup requires exactly 2 alignment streams");
+//
+//     // Open both streams; each call to AlnStream::new() internally calls
+//     // build_variant_stores() and build_diagnostic_store_for_stream().
+//     let mut aln = open_streams_raw_bam(&mut args.common)?;
+//
+//     // For HashLookup, also build in-memory region stores.
+//     let header      = aln[0].header().clone();
+//     let name_to_id  = header_name_to_id(&header);
+//
+//     // Ambiguous regions: BED (plain or expanded with padding).
+//     let bed = load_ambiguous_regions_with_padding(
+//         &args.ambiguous_regions,
+//         &name_to_id,
+//         if args.common.expand_indels { args.common.indel_expand_padding } else { 0 },
+//     )?;
+//
+//     // Diagnostic VCFs: built with expansion when --expand-indels.
+//     let vcf = [
+//         build_diagnostic_store_for_stream(&args.common, &header, 0)?,
+//         build_diagnostic_store_for_stream(&args.common, &header, 1)?,
+//     ];
+//
+//     // Positive regions (unchanged by expansion — purely positional).
+//     let pos = load_positive_regions_memory(
+//         &args.positive_regions, &name_to_id, args.region_score_fn,
+//     )?;
+//
+//     let counters = HashLookup::new_from_hashlookup(&args, aln, bed, vcf, pos)?
+//         .process()?;
+//
+//     print_routing_counters(&counters, "hashlookup", &args.common);
+//     write_stats_if_configured(&counters, &args.common, n, "hashlookup")
+// }
+
+
+// ============================================================================
+// src/region/ambiguous.rs  — BED padding for indel expansion
+// ============================================================================
+
+use crate::region::scored::ScoredRegions;
+
+impl ScoredRegions {
+    /// Return a copy of these regions with each interval expanded by
+    /// `padding` bases on both sides (clamped at 0).
+    ///
+    /// Used when `--expand-indels` is active to ensure that reads whose
+    /// aligner placed an indel outside the annotated BED boundary are still
+    /// caught and forced through full NW scoring.
+    pub(crate) fn with_indel_padding(&self, padding: usize) -> ScoredRegions {
+        let per_ref = self
+            .per_ref
+            .iter()
+            .map(|bucket| {
+                bucket
+                    .iter()
+                    .map(|r| crate::region::scored::ScoredRegion {
+                        ref_id: r.ref_id,
+                        start:  r.start.saturating_sub(padding),
+                        end:    r.end.saturating_add(padding),
+                        score:  r.score,
+                        strand: r.strand,
+                    })
+                    .collect()
+            })
+            .collect();
+        ScoredRegions { per_ref }
+    }
+}
+
+/// Load ambiguous-region BED files with optional indel-expansion padding.
+pub(crate) fn load_ambiguous_regions_with_padding(
+    specs:      &[String],
+    name_to_id: &std::collections::HashMap<String, usize>,
+    padding:    usize,
+) -> Result<[Option<ScoredRegions>; 2]> {
+    let raw: [Option<ScoredRegions>; 2] = [
+        specs.get(0)
+            .filter(|s| !s.is_empty())
+            .map(|s| ScoredRegions::from_bed(std::path::Path::new(s), name_to_id))
+            .transpose()?,
+        specs.get(1)
+            .filter(|s| !s.is_empty())
+            .map(|s| ScoredRegions::from_bed(std::path::Path::new(s), name_to_id))
+            .transpose()?,
+    ];
+    if padding == 0 {
+        return Ok(raw);
+    }
+    Ok([
+        raw[0].as_ref().map(|r| r.with_indel_padding(padding)),
+        raw[1].as_ref().map(|r| r.with_indel_padding(padding)),
+    ])
+}

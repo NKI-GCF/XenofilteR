@@ -1,0 +1,169 @@
+## Findings
+
+`noodles_util::alignment::io::reader::Builder::build_from_path` exists and selects SAM/BAM/CRAM by extension then magic bytes. **Needs verification:** whether it exists in exactly 0.111.0 — the `noodles-util` crate versioning is independent of the meta crate.
+
+Dynamic dispatch cost: one vtable call per record. Acceptable given bgzf decompression dominates.
+
+---
+
+## `Cargo.toml`
+
+```toml
+noodles = { version = "0.111.0", features = [
+    "bam", "bgzf", "core", "cram", "fasta", "sam", "util",
+    "bcf", "bed", "tabix", "vcf",
+] }
+```
+
+---
+
+## `src/config.rs` — remove `InputFormat`, keep only what stdin needs
+
+```rust
+// DELETE: InputFormat enum entirely
+// DELETE: input_format field
+
+// KEEP:
+/// Reference FASTA for CRAM decoding. Required when any input is CRAM.
+#[arg(long, help_heading = "Input")]
+pub(crate) reference: Option<PathBuf>,
+
+// stdin is BAM (e.g. piped from `bwa mem ... | samtools view -b`).
+// Detected by path == "-"; no format flag needed.
+```
+
+In `validate_and_init`:
+
+```rust
+        // CRAM requires --reference; BAM and SAM do not.
+        let any_cram = self.alignment.iter()
+            .any(|p| p.ends_with(".cram"));
+        if any_cram {
+            ensure!(self.reference.is_some(),
+                "CRAM input requires --reference <fasta>");
+        }
+        if self.alignment.iter().any(|p| p == "-") {
+            ensure!(
+                self.matching_algorithm == MatchingAlgorithm::Namesorted,
+                "stdin (BAM) is only supported with --matching-algorithm namesorted"
+            );
+            ensure!(
+                self.alignment.iter().filter(|p| p.as_str() == "-").count() == 1,
+                "at most one stream may be read from stdin"
+            );
+        }
+```
+
+---
+
+## `src/aln_stream.rs` — replace `BgzfBamReader` dispatch
+
+```rust
+use noodles::util::alignment::io::reader::Builder as AlignmentReaderBuilder;
+use noodles::fasta;
+
+// Unified reader type returned by noodles-util.
+// Box<dyn> is required; noodles-util erases the format-specific reader.
+type UnifiedReader = noodles::util::alignment::io::Reader;
+
+pub(crate) struct AlnStream<R> {
+    // For namesorted / collated: unified reader (SAM, BAM, CRAM, stdin BAM).
+    unified:  Option<UnifiedReader>,
+    // For HashLookup only: raw BGZF BAM reader needed for seek_vpos.
+    // None when not in hashlookup mode. Mutually exclusive with `unified`.
+    raw_bam:  Option<BamReader<bgzf::io::Reader<File>>>,
+    next:     Option<R>,
+    header:   Header,
+    // ...rest unchanged
+}
+
+impl<R> AlnStream<R>
+where R: SimpleRec + FromBamRecord,
+{
+    pub(crate) fn new(opt: &mut Config, i: usize) -> Result<Self, Error> {
+        let path = opt.alignment[i].as_str();
+        let seekable_required = opt.matching_algorithm == MatchingAlgorithm::Hashlookup;
+
+        // HashLookup: must use raw BGZF reader for seek_vpos in pass 2.
+        if seekable_required {
+            // Assumption: HashLookup only accepts BAM (not SAM or CRAM).
+            // CRAM seeking via crai is a roadmap item.
+            let file = File::open(path)?;
+            let threads = NonZeroUsize::new(opt.threads).unwrap_or(NonZeroUsize::MIN);
+            let mut raw = BamReader::new(bgzf::io::Reader::new(file));
+            let header  = raw.read_header()?;
+            // sort-order check, strip detection, etc. unchanged
+            return Ok(AlnStream {
+                unified: None, raw_bam: Some(raw),
+                header, next: None, /* ... */
+            });
+        }
+
+        // All other modes: noodles-util unified reader.
+        // Handles SAM/BAM/CRAM by extension+magic; stdin is BAM.
+        let fasta_repo = opt.reference.as_deref()
+            .map(build_fasta_repo)
+            .transpose()?;
+
+        let mut builder = AlignmentReaderBuilder::default();
+        if let Some(repo) = fasta_repo {
+            builder = builder.set_reference_sequence_repository(repo);
+        }
+
+        let mut reader = if path == "-" {
+            // stdin: BAM stream, e.g. `bwa mem ... | samtools view -b | xenofilters -`
+            // noodles-util can detect BAM magic from stdin.
+            // NEEDS VERIFICATION: build_from_reader vs build_from_path for stdin.
+            builder.build_from_reader(std::io::stdin())?
+        } else {
+            builder.build_from_path(path)?
+        };
+
+        let header = reader.read_header()?;
+
+        Ok(AlnStream {
+            unified: Some(reader), raw_bam: None,
+            header, next: None, /* ... */
+        })
+    }
+}
+```
+
+`next_rec` dispatches on which arm is populated:
+
+```rust
+fn next_rec(&mut self) -> Result<Option<R>, Error> {
+    if let Some(peeked) = self.next.take() { return Ok(Some(peeked)); }
+    let header = &self.header;
+    if let Some(r) = &mut self.unified {
+        return match r.read_alignment_record(header)? {
+            Some(rec) => Ok(Some(R::from_alignment_record(header, &*rec)?)),
+            None      => Ok(None),
+        };
+    }
+    if let Some(r) = &mut self.raw_bam {
+        return match r.records().next() {
+            Some(Ok(rec))  => Ok(Some(R::from_bam_record(header, rec)?)),
+            Some(Err(e))   => Err(e.into()),
+            None           => Ok(None),
+        };
+    }
+    Err(Error::NoReaderAvailable)
+}
+```
+
+`fetch_by_virtual_offset` unchanged — only called on `raw_bam` arm, errors if called on `unified`.
+
+---
+
+## stdin usage
+
+```bash
+# Correct: pipe BAM directly
+bwa mem -t 16 human.fa R1.fq R2.fq \
+  | samtools view -b \
+  | xenofilters - mouse.bam \
+      --output human_best.bam --output mouse_best.bam
+```
+
+`samtools view -b` is required; plain SAM pipes are not supported.

@@ -1,0 +1,386 @@
+## Assumptions
+
+- "Exact overlap" = any intersection (BED intersection semantics). **State if you mean full containment.**
+- BED6 format: chrom, start, end, name, score (0–1000), strand (+/-/.).  Columns 4–6 optional; strand `.` = any.
+- Strand of a read = fragment strand (first-in-template flag for paired-end; `is_reverse_complemented` for single-end).
+- Positive-region bonus is added to the stream's NW score **after** Tier-2.5 (it is a scoring bias, not a pre-filter). Applying it earlier would break Tier-1/2 semantics.
+- Score function operates on the BED score column value (0–1000, treated as raw float). A missing score column defaults to 1000.
+- Both BED files are per-stream (positional, same as `--ambiguous-regions`).
+
+---
+
+### `src/region/scored.rs` — new file
+
+```rust
+//! Scored genomic regions: positive-score BED and strand-aware ambiguous BED.
+//!
+//! BED format: chrom, start(0-based), end, name, score(0-1000), strand(+/-/.)
+//! Columns 4-6 are optional. Missing strand = any. Missing score = 1000.
+
+use std::path::Path;
+use anyhow::Result;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Strand { Plus, Minus, Any }
+
+impl Strand {
+    fn from_byte(b: u8) -> Self {
+        match b {
+            b'+' => Strand::Plus,
+            b'-' => Strand::Minus,
+            _    => Strand::Any,
+        }
+    }
+    /// True when the BED strand is compatible with `read_is_reverse`.
+    pub(crate) fn matches(&self, read_is_reverse: bool) -> bool {
+        match self {
+            Strand::Any   => true,
+            Strand::Plus  => !read_is_reverse,
+            Strand::Minus =>  read_is_reverse,
+        }
+    }
+}
+
+/// How the BED score column is converted to a log-likelihood delta.
+/// Variants are intentionally simple; add via PR after empirical evaluation.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum ScoreFn {
+    /// `bed_score / 1000 × weight`  — linear scale (default weight = 1.0)
+    Linear(f64),
+    /// `ln(bed_score + 1) / ln(1001) × weight`
+    Log(f64),
+    /// Constant `weight` regardless of bed_score
+    Constant(f64),
+    /// `(overlap_bases / region_len) × (bed_score / 1000) × weight`
+    OverlapFraction(f64),
+}
+
+impl ScoreFn {
+    /// Compute the score delta added to the stream's NW score.
+    pub(crate) fn apply(&self, bed_score: f64, overlap_bases: usize, region_len: usize) -> f64 {
+        match self {
+            ScoreFn::Linear(w)          => (bed_score / 1000.0) * w,
+            ScoreFn::Log(w)             => (bed_score + 1.0).ln() / (1001.0_f64).ln() * w,
+            ScoreFn::Constant(w)        => *w,
+            ScoreFn::OverlapFraction(w) => {
+                let frac = if region_len == 0 { 0.0 }
+                           else { overlap_bases as f64 / region_len as f64 };
+                frac * (bed_score / 1000.0) * w
+            }
+        }
+    }
+}
+
+impl std::str::FromStr for ScoreFn {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Format: "fn[:weight]", e.g. "linear", "log:2.0", "constant:5.0"
+        let (name, weight) = match s.split_once(':') {
+            Some((n, w)) => (n, w.parse::<f64>().map_err(|e| e.to_string())?),
+            None         => (s, 1.0f64),
+        };
+        match name {
+            "linear"           => Ok(ScoreFn::Linear(weight)),
+            "log"              => Ok(ScoreFn::Log(weight)),
+            "constant"         => Ok(ScoreFn::Constant(weight)),
+            "overlap_fraction" => Ok(ScoreFn::OverlapFraction(weight)),
+            other              => Err(format!("unknown score fn '{other}'")),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ScoredRegion {
+    pub(crate) ref_id:    usize,    // 0-based reference sequence index
+    pub(crate) start:     usize,    // 0-based
+    pub(crate) end:       usize,    // exclusive
+    pub(crate) score:     f64,      // BED score column (0-1000)
+    pub(crate) strand:    Strand,
+}
+
+impl ScoredRegion {
+    pub(crate) fn len(&self) -> usize { self.end.saturating_sub(self.start) }
+
+    pub(crate) fn overlap_bases(&self, read_start: usize, read_end: usize) -> usize {
+        let s = self.start.max(read_start);
+        let e = self.end.min(read_end);
+        e.saturating_sub(s)
+    }
+}
+
+/// In-memory collection of strand-aware, scored BED regions.
+/// Sorted per ref_id by start for binary-search lookups.
+pub(crate) struct ScoredRegions {
+    /// per_ref[ref_id] = sorted Vec of ScoredRegion
+    per_ref: Vec<Vec<ScoredRegion>>,
+}
+
+impl ScoredRegions {
+    pub(crate) fn empty() -> Self { Self { per_ref: Vec::new() } }
+
+    pub(crate) fn from_bed(
+        path:        &Path,
+        name_to_id:  &std::collections::HashMap<String, usize>,
+    ) -> Result<Self> {
+        use std::io::{BufRead, BufReader};
+        let f = std::fs::File::open(path)?;
+        let mut per_ref: Vec<Vec<ScoredRegion>> = Vec::new();
+        for line in BufReader::new(f).lines() {
+            let line = line?;
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') || line.starts_with("track") {
+                continue;
+            }
+            let cols: Vec<&str> = line.split('\t').collect();
+            if cols.len() < 3 { continue; }
+            let chrom  = cols[0];
+            let start: usize = cols[1].parse()?;
+            let end:   usize = cols[2].parse()?;
+            let score  = cols.get(4).and_then(|s| s.parse::<f64>().ok()).unwrap_or(1000.0);
+            let strand = cols.get(5)
+                .and_then(|s| s.as_bytes().first().copied())
+                .map(Strand::from_byte)
+                .unwrap_or(Strand::Any);
+            let ref_id = match name_to_id.get(chrom) {
+                Some(&id) => id,
+                None => {
+                    tracing::debug!("BED chrom '{chrom}' not in reference; skipped");
+                    continue;
+                }
+            };
+            if per_ref.len() <= ref_id { per_ref.resize_with(ref_id + 1, Vec::new); }
+            per_ref[ref_id].push(ScoredRegion { ref_id, start, end, score, strand });
+        }
+        for v in &mut per_ref { v.sort_unstable_by_key(|r| r.start); }
+        Ok(Self { per_ref })
+    }
+
+    pub(crate) fn is_empty(&self) -> bool { self.per_ref.is_empty() }
+
+    /// Returns all regions overlapping [read_start, read_end) on ref_id
+    /// whose strand matches read_is_reverse.
+    pub(crate) fn overlapping<'a>(
+        &'a self,
+        ref_id:          usize,
+        read_start:      usize,
+        read_end:        usize,
+        read_is_reverse: bool,
+    ) -> impl Iterator<Item = &'a ScoredRegion> {
+        let regions = match self.per_ref.get(ref_id) {
+            Some(v) => v.as_slice(),
+            None    => &[],
+        };
+        // Binary search for first region whose end > read_start.
+        let lo = regions.partition_point(|r| r.end <= read_start);
+        regions[lo..].iter()
+            .take_while(move |r| r.start < read_end)
+            .filter(move |r| r.strand.matches(read_is_reverse))
+    }
+
+    /// True if any strand-compatible region overlaps [read_start, read_end).
+    /// Used by ambiguous-region forcing.
+    pub(crate) fn any_overlap(
+        &self,
+        ref_id:          usize,
+        read_start:      usize,
+        read_end:        usize,
+        read_is_reverse: bool,
+    ) -> bool {
+        self.overlapping(ref_id, read_start, read_end, read_is_reverse).next().is_some()
+    }
+}
+```
+
+---
+
+### `src/region/mod.rs` — replace `AmbiguousRegions` with `ScoredRegions`
+
+```rust
+pub(crate) mod diagnostic;
+pub(crate) mod scored;
+pub(crate) mod tabix_query;
+
+// AmbiguousRegions is now an alias; strand-awareness comes for free.
+pub(crate) use scored::{ScoreFn, ScoredRegion, ScoredRegions, Strand};
+pub(crate) use diagnostic::DiagnosticVariants;
+
+/// Ambiguous regions force Tier-2 fast-paths off when a read overlaps.
+/// Strand field respected when present in BED column 6.
+pub(crate) type AmbiguousRegions = ScoredRegions;
+
+/// Positive-score regions add a log-likelihood bonus to the stream's NW score.
+/// Strand field respected when present in BED column 6.
+pub(crate) type PositiveRegions  = ScoredRegions;
+```
+
+---
+
+### `src/config.rs` — new flags
+
+```rust
+    /// BED file(s) of regions where read overlap forces full NW scoring
+    /// (strand-aware when BED column 6 present). One per stream.
+    #[arg(long, num_args = 0..=32, help_heading = "Regions")]
+    pub(crate) ambiguous_regions: Vec<String>,
+
+    /// BED file(s) of regions where overlapping reads receive a positive
+    /// score bonus (strand-aware when BED column 6 present). One per stream.
+    #[arg(long, num_args = 0..=32, help_heading = "Regions")]
+    pub(crate) positive_regions: Vec<String>,
+
+    /// Score function applied to --positive-regions BED score column.
+    /// Format: fn[:weight]  where fn ∈ {linear, log, constant, overlap_fraction}
+    /// Default: linear:1.0
+    #[arg(long, default_value = "linear:1.0", help_heading = "Regions")]
+    pub(crate) region_score_fn: ScoreFn,
+```
+
+---
+
+### `src/alignment/fragment/mod.rs` — apply positive-region bonus in `score_state_nw`
+
+```rust
+// Add parameter to score_state_nw:
+pub(crate) fn score_state_nw<R: SimpleRec>(
+    state:           &FragmentState<R>,
+    mcfs:            SmallVec<[MdCigFlags<'_>; READ_CT]>,
+    store:           Option<&dyn StoreTrait>,
+    penalties:       &Penalty,
+    scratch:         &mut Scratch,
+    cancel_slot:     [bool; 2],
+    positive_regions: Option<(&PositiveRegions, ScoreFn)>, // ← new
+) -> Result<f64> {
+    // ... existing loop unchanged until after segment.push ...
+
+    // After building the NW score:
+    let base = Fragment::new(penalties, segment, seg_mcfs)?
+        .score(scratch, &mut dvnt)?;
+
+    // Positive-region bonus: sum over all primary mapped records.
+    let region_bonus = if let Some((regions, score_fn)) = positive_regions {
+        state.get_records().iter()
+            .zip(state.flags_iter())
+            .filter(|(_, f)| !f.is_unmapped() && !f.is_secondary() && !f.is_supplementary())
+            .map(|(rec, f)| {
+                let is_rev   = f.is_reverse_complemented();
+                let ref_id   = rec.ref_seq_id().transpose()
+                    .ok().flatten().unwrap_or(usize::MAX);
+                let r_start  = rec.alignment_start().transpose()
+                    .ok().flatten().map(|p| p.get().saturating_sub(1)).unwrap_or(0);
+                let r_end    = r_start + mcfs.first().map(|m| m.get_cigar().len()).unwrap_or(0);
+                regions
+                    .overlapping(ref_id, r_start, r_end, is_rev)
+                    .map(|region| {
+                        let ob = region.overlap_bases(r_start, r_end);
+                        score_fn.apply(region.score, ob, region.len())
+                    })
+                    .sum::<f64>()
+            })
+            .sum::<f64>()
+    } else {
+        0.0
+    };
+
+    Ok(base + supp_penalty + region_bonus)
+}
+```
+
+---
+
+### Strand-aware overlap in `CollatedMatcher::fragment_overlaps_region`
+
+```rust
+fn fragment_overlaps_region(&self, frag: &FragmentState<R>, aln_idx: usize) -> Result<bool> {
+    let bed = match &self.bed[aln_idx] { Some(b) => b, None => return Ok(false) };
+    for (rec, flags) in frag.get_records().iter().zip(frag.flags_iter()) {
+        if flags.is_secondary() || flags.is_unmapped() { continue; }
+        let is_rev  = flags.is_reverse_complemented();
+        let ref_id  = rec.ref_seq_id().transpose()?.ok_or(Error::MissingRefSeqId)?;
+        let start   = rec.alignment_start().transpose()?.ok_or(Error::MissingAlignStart)?
+                         .get().saturating_sub(1);
+        let end     = start + rec.cigar().as_ref().len();
+        // `any_overlap` now strand-aware via BED column 6.
+        if bed.any_overlap(ref_id, start, end, is_rev) { return Ok(true); }
+    }
+    Ok(false)
+}
+```
+
+Apply the same `is_rev` argument to every existing `bed.overlaps(...)` and `vcf.overlaps(...)` call site in `HashLookup` and `assemble/stream.rs`.
+
+---
+
+### `src/main.rs` — load positive regions
+
+```rust
+// Alongside existing AmbiguousRegions loading:
+let positive: [Option<PositiveRegions>; 2] = [
+    config.positive_regions.get(0).filter(|s| !s.is_empty())
+        .map(|s| ScoredRegions::from_bed(Path::new(s), &name_to_id))
+        .transpose()?,
+    config.positive_regions.get(1).filter(|s| !s.is_empty())
+        .map(|s| ScoredRegions::from_bed(Path::new(s), &name_to_id))
+        .transpose()?,
+];
+let score_fn = config.region_score_fn;
+// Pass (positive[nr].as_ref(), score_fn) into score_state_nw via AlnStream metadata
+// or ScoringContext. Recommended: add to ScoringContext.
+```
+
+---
+
+### `src/filter_algorithm/line_by_line/ordering.rs` — `ScoringContext`
+
+```rust
+pub(crate) struct ScoringContext {
+    pub(crate) penalties:               Arc<Penalty>,
+    pub(crate) ambiguous_log_threshold: f64,
+    pub(crate) add_decision_tag:        bool,
+    pub(crate) positive_regions:        [Option<Arc<ScoredRegions>>; MAX_STREAMS], // ← new
+    pub(crate) region_score_fn:         ScoreFn,                                   // ← new
+}
+```
+
+In `score_candidate` and `score_candidate_owned`, pass `positive_regions[aln_idx].as_deref()` alongside `store`.
+
+---
+
+### Tests
+
+```rust
+#[test]
+fn strand_aware_overlap_table() {
+    use crate::region::scored::{ScoredRegion, ScoredRegions, Strand};
+
+    struct Row { read_rev: bool, strand: Strand, want: bool }
+    let region = ScoredRegion { ref_id: 0, start: 100, end: 200, score: 500.0, strand: Strand::Plus };
+    let cases = [
+        Row { read_rev: false, strand: Strand::Plus,  want: true  },
+        Row { read_rev: true,  strand: Strand::Plus,  want: false },
+        Row { read_rev: false, strand: Strand::Minus, want: false },
+        Row { read_rev: true,  strand: Strand::Minus, want: true  },
+        Row { read_rev: false, strand: Strand::Any,   want: true  },
+        Row { read_rev: true,  strand: Strand::Any,   want: true  },
+    ];
+    for c in &cases {
+        let r = ScoredRegion { strand: c.strand, ..region.clone() };
+        assert_eq!(r.strand.matches(c.read_rev), c.want);
+    }
+}
+
+#[test]
+fn score_fn_table() {
+    use crate::region::scored::ScoreFn;
+    struct Row { fn_: ScoreFn, bed: f64, ob: usize, rlen: usize, lo: f64, hi: f64 }
+    let cases = [
+        Row { fn_: ScoreFn::Linear(1.0),          bed: 1000., ob: 50, rlen: 100, lo: 0.999, hi: 1.001 },
+        Row { fn_: ScoreFn::Constant(5.0),         bed:    0., ob:  0, rlen:   1, lo: 4.999, hi: 5.001 },
+        Row { fn_: ScoreFn::Log(1.0),              bed: 1000., ob:  0, rlen:   1, lo: 0.999, hi: 1.001 },
+        Row { fn_: ScoreFn::OverlapFraction(10.0), bed: 1000., ob: 50, rlen: 100, lo: 4.999, hi: 5.001 },
+    ];
+    for c in &cases {
+        let got = c.fn_.apply(c.bed, c.ob, c.rlen);
+        assert!(got >= c.lo && got <= c.hi, "{got} not in [{}, {}]", c.lo, c.hi);
+    }
+}
+```

@@ -1,0 +1,458 @@
+## Evaluation
+
+**Current pain points the flat interface creates:**
+
+- `--matching-algorithm` is buried; a new user does not know it exists without reading full `--help`
+- Flags only valid for one algorithm appear in all three contexts: `--score-threads` is meaningless for `hashlookup`; `--ambiguous-regions` is meaningless for `namesorted`; `--threads 1` is forced for `hashlookup` but silently accepted in the CLI
+- Validation errors appear at runtime rather than at parse time
+- Shell completion for e.g. `zsh` / `fish` works far better with subcommands (each subcommand gets its own completion context)
+
+**Arguments against subcommands:**
+
+- Breaking change: all existing scripts using `--matching-algorithm` break
+- The three algorithms are meant to be *equivalent* in output — subcommands imply more fundamental semantic differences than exist
+- Shared flags (`--gap-open`, `--sample-variants`, `--output`, etc.) must be duplicated or hoisted into a parent struct, adding indirection
+
+**Verdict:** Subcommands are the right structure. The algorithm differences are real enough (sort order requirements, thread constraints, region-file formats) to warrant first-class CLI visibility. Breaking change is acceptable with a transition period.
+
+Migration strategy: keep `--matching-algorithm` as a deprecated hidden alias that internally constructs the equivalent subcommand.
+
+---
+
+### `src/config.rs` — full restructure
+
+```rust
+use clap::{Args, Parser, Subcommand};
+use crate::penalty::ErrorModel;
+use std::path::PathBuf;
+
+// ── Top-level CLI ─────────────────────────────────────────────────────────────
+
+/// Fast multi-stream read classifier for xenograft, PDX, viral integration,
+/// and cross-species sequencing experiments.
+#[derive(Parser, Debug)]
+#[command(
+    author, version,
+    about = "Disambiguate reads from multi-species sequencing experiments",
+    long_about = None,
+    subcommand_required = true,
+    arg_required_else_help = true,
+)]
+pub(crate) struct Cli {
+    #[command(subcommand)]
+    pub(crate) command: AlgorithmCommand,
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum AlgorithmCommand {
+    /// Disambiguate name-sorted BAM/CRAM streams (default for most pipelines).
+    ///
+    /// All input files must be sorted by query name in identical order.
+    /// Supports up to 32 simultaneous alignment streams, parallel scoring,
+    /// chimeric-pair detection, and stdin BAM input.
+    Namesorted(NamesortedArgs),
+
+    /// Disambiguate coordinate-sorted BAMs without re-sorting.
+    ///
+    /// Two-pass algorithm: pass 1 indexes fragment names via BGZF virtual
+    /// offsets; pass 2 retrieves and emits records in driving-stream order.
+    /// Requires exactly 2 BAM streams. Single-threaded. In-memory BED/VCF
+    /// region files force full NW scoring on overlapping reads.
+    Hashlookup(HashlookupArgs),
+
+    /// Disambiguate collated BAM streams (records grouped by name, any order).
+    ///
+    /// Each input BAM must be collated (all records for a fragment contiguous)
+    /// but the two streams need not present fragments in the same order.
+    /// Requires exactly 2 streams. Supports tabix-indexed BED/VCF regions.
+    Collated(CollatedArgs),
+}
+
+impl AlgorithmCommand {
+    /// Extract the common args regardless of which subcommand was chosen.
+    pub(crate) fn common(&self) -> &CommonArgs {
+        match self {
+            AlgorithmCommand::Namesorted(a) => &a.common,
+            AlgorithmCommand::Hashlookup(a) => &a.common,
+            AlgorithmCommand::Collated(a)   => &a.common,
+        }
+    }
+    pub(crate) fn common_mut(&mut self) -> &mut CommonArgs {
+        match self {
+            AlgorithmCommand::Namesorted(a) => &mut a.common,
+            AlgorithmCommand::Hashlookup(a) => &mut a.common,
+            AlgorithmCommand::Collated(a)   => &mut a.common,
+        }
+    }
+}
+
+// ── Shared argument groups (flattened into each subcommand) ──────────────────
+
+/// Arguments shared by all three algorithms.
+#[derive(Args, Debug, Clone, Default)]
+pub(crate) struct CommonArgs {
+    // ── Input ────────────────────────────────────────────────────────────────
+    /// Input alignment files (BAM, CRAM, or - for stdin BAM).
+    #[arg(required = true, num_args = 1..=32, help_heading = "Input")]
+    pub(crate) alignment: Vec<String>,
+
+    /// Reference FASTA for CRAM decoding. Required when any input is CRAM.
+    #[arg(long, help_heading = "Input")]
+    pub(crate) reference: Option<PathBuf>,
+
+    /// Strip read-name suffix (/1, /2). auto | true | false | variable
+    #[arg(short = 'R', long, default_value = "auto", help_heading = "Input")]
+    pub(crate) strip_read_suffix: StripReadSuffix,
+
+    // ── Output ───────────────────────────────────────────────────────────────
+    /// Winner output, one file per stream.
+    #[arg(short = 'o', long, num_args = 1..=32, help_heading = "Output")]
+    pub(crate) output: Vec<PathBuf>,
+
+    /// Ambiguous and discarded output, one file per stream.
+    /// Both ambiguous and discarded reads go here; tagged _xenoambig /
+    /// _xenodiscard in RG:Z when configured.
+    #[arg(short = 'a', long, num_args = 0..=32, help_heading = "Output")]
+    pub(crate) ambiguous_output: Vec<PathBuf>,
+
+    /// Human-readable labels for each stream (positional: stream 0, 1, …).
+    /// Used in XC:Z chimeric tags and JSON stats output.
+    #[arg(long, num_args = 0..=32, help_heading = "Output")]
+    pub(crate) stream_labels: Vec<String>,
+
+    /// Write JSON summary statistics (MultiQC-compatible).
+    #[arg(long, help_heading = "Output")]
+    pub(crate) stats_output: Option<PathBuf>,
+
+    /// Add XF:C (confidence) or XR:C (variant-rescued) aux tags to records.
+    #[arg(short = 'A', long, default_value = "false", help_heading = "Output")]
+    pub(crate) add_decision_tag: bool,
+
+    /// Suppress @PG header line in output BAMs.
+    #[arg(short = 'P', long, default_value = "false", help_heading = "Output")]
+    pub(crate) no_program_line: bool,
+
+    /// Write JSON summary to this path (MultiQC generalstats format).
+    #[arg(long, env = "XENOFILTERS_STATS_OUTPUT", help_heading = "Output")]
+    pub(crate) stats_path: Option<PathBuf>,
+
+    // ── Scoring ───────────────────────────────────────────────────────────────
+    /// Platform error model. Sets gap/quality defaults.
+    /// illumina (default) | hifi | ont
+    #[arg(long, default_value = "illumina", help_heading = "Scoring")]
+    pub(crate) error_model: ErrorModel,
+
+    /// Mismatch penalty (positive; internally negated).
+    #[arg(short = 'm', long, default_value = "4.0", help_heading = "Scoring")]
+    pub(crate) mismatch_penalty: f64,
+
+    /// Gap-open penalty (positive; internally negated).
+    #[arg(short = 'g', long, default_value = "6.0", help_heading = "Scoring")]
+    pub(crate) gap_open: f64,
+
+    /// Gap-extend penalty (positive; internally negated).
+    #[arg(short = 'e', long, default_value = "1.0", help_heading = "Scoring")]
+    pub(crate) gap_extend: f64,
+
+    /// Chimeric-junction structural penalty constant (bases).
+    #[arg(short = 'J', long, default_value = "20",
+          value_parser = clap::value_parser!(u32).range(0..=10000),
+          help_heading = "Scoring")]
+    pub(crate) chimeric_junction_bases: u32,
+
+    /// Ambiguous threshold (Phred). u32::MAX = auto (10 for pass 1, 0 for pass 2).
+    #[arg(long, default_value_t = u32::MAX, value_name = "PHRED|auto",
+          help_heading = "Scoring")]
+    pub(crate) ambiguous_threshold: u32,
+
+    /// Warn when ambiguous fraction exceeds this fraction. Default 0.05 (5%).
+    #[arg(long, default_value = "0.05", help_heading = "Scoring")]
+    pub(crate) warn_ambig_fraction: f64,
+
+    /// Enable bisulfite/WGBS scoring: C→T (forward) and G→A (reverse)
+    /// mismatches scored as zero-penalty conversions.
+    #[arg(long, default_value = "false", help_heading = "Scoring")]
+    pub(crate) bisulfite: bool,
+
+    // ── Variants ──────────────────────────────────────────────────────────────
+    /// Sample VCF/BCF per stream ([IDX:]FILE). FORMAT/GT + FORMAT/GQ required.
+    #[arg(short = 's', long, num_args = 0..=32,
+          value_name = "[IDX:]FILE", help_heading = "Variants")]
+    pub(crate) sample_variants: Vec<String>,
+
+    /// Population VCF/BCF per stream ([IDX:]FILE). INFO/AF required.
+    #[arg(short = 'p', long, num_args = 0..=32,
+          value_name = "[IDX:]FILE", help_heading = "Variants")]
+    pub(crate) population_variants: Vec<String>,
+
+    // ── Misc ──────────────────────────────────────────────────────────────────
+    /// Suppress progress output to stderr.
+    #[arg(long, default_value = "false", help_heading = "Misc")]
+    pub(crate) quiet: bool,
+
+    /// Verbosity: -v = INFO, -vv = DEBUG. Respects RUST_LOG.
+    #[arg(short, long, action = clap::ArgAction::Count, help_heading = "Misc")]
+    pub(crate) verbose: u8,
+
+    /// Write unmapped reads to output. For testing only.
+    #[arg(long, default_value = "false", hide = true)]
+    pub(crate) write_unmapped: bool,
+
+    // ── Internal (skip) ───────────────────────────────────────────────────────
+    #[arg(skip)]
+    pub(crate) is_pass2: bool,
+
+    #[arg(skip)]
+    pub(crate) parsed_chimeric_pairs: Vec<[usize; 2]>,
+}
+
+// ── Per-algorithm arg structs ─────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub(crate) struct NamesortedArgs {
+    #[command(flatten)]
+    pub(crate) common: CommonArgs,
+
+    /// bgzf decompression worker threads.
+    #[arg(short = 't', long, default_value = "4",
+          env = "XENOFILTERS_THREADS", help_heading = "Parallelism")]
+    pub(crate) threads: usize,
+
+    /// Parallel fragment-scoring worker threads (0 = all logical CPUs, max 16).
+    #[arg(short = 'S', long, default_value = "1",
+          env = "XENOFILTERS_SCORE_THREADS", help_heading = "Parallelism")]
+    pub(crate) score_threads: usize,
+
+    /// Chimeric stream-index pairs (format: A:B).
+    /// Reads spanning species boundaries are tagged XC:Z:<other_label>
+    /// and written to both streams' outputs.
+    #[arg(long, num_args = 0.., value_name = "A:B",
+          help_heading = "Chimeric")]
+    pub(crate) chimeric_pairs: Vec<String>,
+
+    /// Name encoder for FragmentTable key compression.
+    /// illumina (strips machine:run:flowcell prefix) | passthrough
+    #[arg(long, default_value = "illumina", help_heading = "Advanced")]
+    pub(crate) name_encoder: NameEncoderKind,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct HashlookupArgs {
+    #[command(flatten)]
+    pub(crate) common: CommonArgs,
+
+    /// In-memory BED file(s) forcing full NW scoring on overlap.
+    /// One per stream (positional: stream 0, then 1).
+    /// Strand-aware when BED column 6 present.
+    #[arg(long, num_args = 0..=2, value_name = "FILE",
+          help_heading = "Regions")]
+    pub(crate) ambiguous_regions: Vec<String>,
+
+    /// In-memory VCF/BCF of diagnostic positions per stream.
+    #[arg(long, num_args = 0..=2, value_name = "FILE",
+          help_heading = "Regions")]
+    pub(crate) diagnostic_variants: Vec<String>,
+
+    /// BED file(s) of regions giving reads a positive score bonus.
+    #[arg(long, num_args = 0..=2, value_name = "FILE",
+          help_heading = "Regions")]
+    pub(crate) positive_regions: Vec<String>,
+
+    /// Score function for --positive-regions BED score column.
+    /// Format: fn[:weight]  fn ∈ {linear, log, constant, overlap_fraction}
+    #[arg(long, default_value = "linear:1.0", help_heading = "Regions")]
+    pub(crate) region_score_fn: ScoreFn,
+
+    /// Name encoder for key compression.
+    #[arg(long, default_value = "illumina", help_heading = "Advanced")]
+    pub(crate) name_encoder: NameEncoderKind,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct CollatedArgs {
+    #[command(flatten)]
+    pub(crate) common: CommonArgs,
+
+    /// Tabix-indexed BED.gz file(s) forcing full NW on overlap.
+    /// One per stream. Strand-aware when BED column 6 present.
+    #[arg(long, num_args = 0..=2, value_name = "FILE",
+          help_heading = "Regions")]
+    pub(crate) ambiguous_regions: Vec<String>,
+
+    /// Tabix-indexed VCF/BCF of diagnostic positions per stream.
+    #[arg(long, num_args = 0..=2, value_name = "FILE",
+          help_heading = "Regions")]
+    pub(crate) diagnostic_variants: Vec<String>,
+
+    /// BED.gz file(s) of positive-score regions. Tabix-indexed.
+    #[arg(long, num_args = 0..=2, value_name = "FILE",
+          help_heading = "Regions")]
+    pub(crate) positive_regions: Vec<String>,
+
+    #[arg(long, default_value = "linear:1.0", help_heading = "Regions")]
+    pub(crate) region_score_fn: ScoreFn,
+}
+```
+
+---
+
+### `src/main.rs` — dispatch on subcommand
+
+```rust
+fn main() -> Result<(), Error> {
+    let mut cli = Cli::parse();
+    init_tracing(cli.command.common().verbose, cli.command.common().quiet);
+
+    // Validate common args, detect pass 2, resolve thresholds.
+    validate_common(cli.command.common_mut())?;
+
+    match cli.command {
+        AlgorithmCommand::Namesorted(args) => run_namesorted(args),
+        AlgorithmCommand::Hashlookup(args) => run_hashlookup(args),
+        AlgorithmCommand::Collated(args)   => run_collated(args),
+    }
+}
+
+fn run_namesorted(mut args: NamesortedArgs) -> Result<(), Error> {
+    let n = args.common.alignment.len();
+    ensure!(n >= 1, "namesorted requires at least 1 alignment stream");
+    ensure!(n <= MAX_STREAMS,
+        "namesorted supports at most {MAX_STREAMS} streams (got {n})");
+
+    // Parse chimeric pairs
+    args.common.parsed_chimeric_pairs =
+        parse_chimeric_pairs(&args.chimeric_pairs, n)?;
+
+    let aln = open_streams_unified(&mut args.common, args.threads)?;
+    let counters = if args.score_threads > 1 {
+        LineByLine::new_from_namesorted(&args, aln)?.process_parallel()?
+    } else {
+        LineByLine::new_from_namesorted(&args, aln)?.process_sequential()?
+    };
+    print_routing_counters(&counters, "namesorted", &args.common);
+    write_stats_if_configured(&counters, &args.common, n, "namesorted")
+}
+
+fn run_hashlookup(mut args: HashlookupArgs) -> Result<(), Error> {
+    let n = args.common.alignment.len();
+    ensure!(n == 2, "hashlookup requires exactly 2 alignment streams (got {n})");
+
+    let header_name_to_id = open_first_header_name_to_id(&args.common)?;
+    let bed = load_ambiguous_regions_memory(&args.ambiguous_regions, &header_name_to_id)?;
+    let vcf = load_diagnostic_variants_memory(&args.diagnostic_variants, &header_name_to_id)?;
+    let pos = load_positive_regions_memory(&args.positive_regions, &header_name_to_id,
+                                           args.region_score_fn)?;
+    let aln = open_streams_raw_bam(&mut args.common)?;
+    let counters = HashLookup::new_from_hashlookup(&args, aln, bed, vcf, pos)?.process()?;
+    print_routing_counters(&counters, "hashlookup", &args.common);
+    write_stats_if_configured(&counters, &args.common, n, "hashlookup")
+}
+
+fn run_collated(mut args: CollatedArgs) -> Result<(), Error> {
+    let n = args.common.alignment.len();
+    ensure!(n == 2, "collated requires exactly 2 alignment streams (got {n})");
+
+    let bed = open_tabix_bed(&args.ambiguous_regions)?;
+    let vcf = open_tabix_vcf(&args.diagnostic_variants)?;
+    let pos = open_tabix_scored(&args.positive_regions, args.region_score_fn)?;
+    let aln = open_streams_unified(&mut args.common, 1)?;
+    let counters = CollatedMatcher::new_from_collated(&args, aln, bed, vcf, pos)?.process()?;
+    print_routing_counters(&counters, "collated", &args.common);
+    write_stats_if_configured(&counters, &args.common, n, "collated")
+}
+```
+
+---
+
+### Deprecation shim (backward compatibility)
+
+```rust
+// At the very top of main(), before Cli::parse():
+// Rewrite legacy flat invocation to subcommand form.
+fn maybe_rewrite_args() -> Vec<std::ffi::OsString> {
+    let mut args: Vec<_> = std::env::args_os().collect();
+    // Detect legacy: no subcommand as first non-flag argument.
+    let first_positional = args.iter().skip(1)
+        .find(|a| !a.to_string_lossy().starts_with('-'));
+    let is_subcommand = first_positional.map(|a| {
+        matches!(a.to_string_lossy().as_ref(),
+            "namesorted" | "hashlookup" | "collated")
+    }).unwrap_or(false);
+
+    if !is_subcommand {
+        // Extract --matching-algorithm value and inject as subcommand.
+        let algo = args.windows(2)
+            .find(|w| w[0] == "--matching-algorithm")
+            .map(|w| w[1].to_string_lossy().into_owned())
+            .unwrap_or_else(|| "namesorted".to_string());
+        // Remove --matching-algorithm and its value from args.
+        args.retain(|a| a != "--matching-algorithm");
+        // Insert subcommand after argv[0].
+        let sub = match algo.as_str() {
+            "hashlookup" | "hash-lookup" => "hashlookup",
+            "collated"                    => "collated",
+            _                             => "namesorted",
+        };
+        tracing::warn!(
+            "Legacy --matching-algorithm flag detected. \
+             Please use 'xenofilters {sub} ...' instead. \
+             The --matching-algorithm flag will be removed in v1.0."
+        );
+        args.insert(1, std::ffi::OsString::from(sub));
+    }
+    args
+}
+```
+
+---
+
+### `--help` output (illustrative)
+
+```
+xenofilters 0.3.0
+Disambiguate reads from multi-species sequencing experiments
+
+Usage: xenofilters <COMMAND>
+
+Commands:
+  namesorted  Disambiguate name-sorted BAM/CRAM streams (default for most pipelines)
+  hashlookup  Disambiguate coordinate-sorted BAMs without re-sorting
+  collated    Disambiguate collated BAM streams (any inter-stream order)
+  help        Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Use 'xenofilters <COMMAND> --help' for per-algorithm flag documentation.
+
+---
+
+xenofilters-hashlookup
+Disambiguate coordinate-sorted BAMs without re-sorting.
+
+Requires exactly 2 BAM streams. Single-threaded. BED and VCF region
+files are loaded into memory at startup. Pass files via --ambiguous-regions
+and --diagnostic-variants (plain BED/VCF; not tabix-indexed).
+
+Usage: xenofilters hashlookup [OPTIONS] <ALIGNMENT>...
+
+Input:
+  <ALIGNMENT>...           Input BAM files (exactly 2 required)
+      --reference <FILE>   Reference FASTA for CRAM decoding
+  -R, --strip-read-suffix  auto | true | false | variable [default: auto]
+
+Output:
+  -o, --output <FILE>...              Winner output per stream
+  -a, --ambiguous-output <FILE>...    Ambiguous + discarded output per stream
+  ...
+
+Scoring:
+  ...
+
+Regions:
+      --ambiguous-regions <FILE>...   In-memory BED forcing full NW on overlap
+      --diagnostic-variants <FILE>... In-memory VCF of diagnostic positions
+      --positive-regions <FILE>...    In-memory BED for positive score bonus
+      --region-score-fn <FN>          Score function [default: linear:1.0]
+```
