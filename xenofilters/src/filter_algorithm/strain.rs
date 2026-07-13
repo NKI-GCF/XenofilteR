@@ -1,3 +1,11 @@
+use clap::Args;
+use crate::{
+    config::args::{IoArgs, ScoringArgs, VariantArgs, OutputArgsPair},
+    config::run_config::RunConfig,
+    config::MatchingAlgorithm,
+    Error,
+};
+
 /// Within-species strain disambiguation: single alignment, two variant
 /// profiles (one per strain). No chimeric pairs, no multi-stream regions,
 /// no parallelism flags beyond bgzf threads (NW scoring is inherently
@@ -33,11 +41,12 @@ pub(crate) struct StrainArgs {
 
 impl StrainArgs {
     pub(crate) fn into_run_config(self) -> Result<RunConfig, Error> {
-        ensure!(
-            has_profile_for(&self.variants, 0) && has_profile_for(&self.variants, 1),
-            "strain: requires a variant profile for both strain 0 and strain 1 \
-             (via --sample-variants or --population-variants, e.g. '0:a.vcf 1:b.vcf')"
-        );
+        if !has_profile_for(&self.variants, 0) {
+            return Err(Error::MissingVariantProfile(0));
+        }
+        if !has_profile_for(&self.variants, 1) {
+            return Err(Error::MissingVariantProfile(1));
+        }
         Ok(RunConfig {
             algorithm: MatchingAlgorithm::Namesorted,
             alignment: vec![self.alignment.clone(), self.alignment], // duplicated stream

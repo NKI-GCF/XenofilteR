@@ -1,4 +1,11 @@
 // src/aln_stream/open.rs
+use smallvec::{smallvec, SmallVec};
+use noodles::sam::alignment::record_buf::RecordBuf;
+use crate::{
+    aln_stream::{AlignmentStream, AlnStream},
+    config::run_config::RunConfig,
+    Error,
+};
 
 /// Open all streams for namesorted/collated (unified reader path).
 /// `bgzf_threads` applies to BAM decompression; ignored for SAM/CRAM.
@@ -16,11 +23,15 @@ pub(crate) fn open_streams_unified(
         )?;
         aln.push(Box::new(stream));
         if i > 0 {
-            ensure!(
-                aln[i].next_qname() == aln[0].next_qname(),
-                "Input alignments must present the same first read name \
-                 (namesorted requires identical query-name order)."
-            );
+            if aln[i].next_qname() != aln[0].next_qname() {
+                return Err(Error::InvalidInput(format!(
+                    "HashLookup requires all input streams to be namesorted/collated. \
+                     Stream 0 next_qname: {:?}, stream {} next_qname: {:?}",
+                    aln[0].next_qname(),
+                    i,
+                    aln[i].next_qname()
+                )));
+            }
         }
     }
     Ok(aln)
@@ -31,9 +42,13 @@ pub(crate) fn open_streams_unified(
 pub(crate) fn open_streams_raw_bam(
     run: &mut RunConfig,
 ) -> Result<SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>, Error> {
-    ensure!(run.alignment.iter().all(|p| p.ends_with(".bam")),
-        "hashlookup requires BAM input (CRAM/SAM seeking not yet supported; \
-         see ROADMAP: CRAM index seeking)");
+    if !run.alignment.iter().all(|p| p.ends_with(".bam")) {
+        return Err(Error::InvalidInput(format!(
+            "hashlookup requires BAM input (CRAM/SAM seeking not yet supported; \
+             see ROADMAP: CRAM index seeking): {:?}",
+            run.alignment
+        )));
+    }
     let mut aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> = smallvec![];
     for i in 0..2 {
         let stream = AlnStream::<RecordBuf>::new_raw_bam(&run.alignment[i], i, run)?;

@@ -1,3 +1,11 @@
+use clap::Args;
+use crate::{
+    config::args::{IoArgs, ScoringArgs, VariantArgs, OutputArgsMulti},
+    config::run_config::RunConfig,
+    config::MatchingAlgorithm,
+    Error,
+};
+
 /// Preconfigured chimeric-pair detection for viral integration studies.
 /// Requires exactly 2 or 3 alignment streams: host, virus, [optional xenograft host].
 #[derive(Args, Debug)]

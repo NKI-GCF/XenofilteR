@@ -80,6 +80,9 @@ pub enum Error {
     #[error("No stream {nr}")]
     NoStream { nr: usize },
 
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
     // ---------------------------------------------------------------------------
     // CLI / Configuration
     // ---------------------------------------------------------------------------
@@ -212,6 +215,9 @@ pub enum Error {
 
     #[error("Invalid position {0}")]
     InvalidPosition(usize),
+
+    #[error("Missing variant profile for strain {0}")]
+    MissingVariantProfile(usize),
 
     // ---------------------------------------------------------------------------
     // CIGAR / MD alignment parsing
