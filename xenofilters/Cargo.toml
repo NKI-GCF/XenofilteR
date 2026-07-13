@@ -56,3 +56,4 @@ harness = false
 [features]
 default         = []
 bench-internals = []
+nu-completion = [] #"clap/nu-completion"

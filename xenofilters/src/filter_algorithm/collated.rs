@@ -60,11 +60,10 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         let mut it = aln.into_iter();
         let a0 = it.next().unwrap();
         let a1 = it.next().unwrap();
-        let strip = args.common.io.strip_read_suffix;
         let bisulfite = args.common.scoring.bisulfite; 
         Ok(Self {
-            a: CollatedReader::new(a0, strip, bisulfite, 0),
-            b: CollatedReader::new(a1, strip, bisulfite, 1),
+            a: CollatedReader::new(a0, bisulfite, 0),
+            b: CollatedReader::new(a1, bisulfite, 1),
             waiting_a: HashMap::with_hasher(RandomState::new()),
             waiting_b: HashMap::with_hasher(RandomState::new()),
             penalties: args.common.scoring.to_penalty(),
@@ -74,6 +73,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             ambiguous_log_threshold,
             bed,
             vcf,
+            strip: args.common.io.strip_read_suffix,
         })
     }
     pub(crate) fn new(
@@ -91,13 +91,12 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             0 => 0.0,
             t => (t as f64) * std::f64::consts::LN_10 / 10.0,
         };
-        let penalties = config.to_penalties();
-        let strip = config.io.strip_read_suffix;
+        let penalties = config.scoring.to_penalties();
         let add_decision_tag = config.io.add_decision_tag;
 
         let aln_len = aln.len();
         for (i, a) in aln.iter_mut().enumerate() {
-            a.init_writers(config, i)?;
+            a.init_writers(&config.io, i)?;
         }
 
         let mut iter = aln.into_iter();
@@ -107,8 +106,8 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         let bisulfite = config.scoring.bisulfite; 
 
         Ok(Self {
-            a: CollatedReader::new(stream0, strip, bisulfite, 0),
-            b: CollatedReader::new(stream1, strip, bisulfite, 1),
+            a: CollatedReader::new(stream0, bisulfite, 0),
+            b: CollatedReader::new(stream1, bisulfite, 1),
             waiting_a: HashMap::with_hasher(RandomState::new()),
             waiting_b: HashMap::with_hasher(RandomState::new()),
             penalties,
@@ -116,7 +115,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             routing_counters: SmallVec::from_elem(0, aln_len * 4),
             add_decision_tag,
             ambiguous_log_threshold,
-            strip,
+            strip: config.io.strip_read_suffix,
             bed,
             vcf,
         })

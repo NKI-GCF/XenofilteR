@@ -17,7 +17,7 @@ pub(crate) mod tabix_query;
 /// Strand field respected when present in BED column 6.
 pub(crate) use ambiguous::AmbiguousRegions;
 pub(crate) use diagnostic::DiagnosticVariants;
-pub(crate) use scored::{ScoreFn, ScoredRegion, ScoredRegions, Strand};
+pub(crate) use scored::{ScoreFn, ScoredRegions};
 
 /// Positive-score regions add a log-likelihood bonus to the stream's NW score.
 /// Strand field respected when present in BED column 6.

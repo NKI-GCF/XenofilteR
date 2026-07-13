@@ -37,7 +37,6 @@ pub(crate) fn canonical_name(raw: &[u8], mode: StripReadSuffix) -> Box<[u8]> {
 pub(crate) struct CollatedReader<R> {
     pub(super) inner: Box<dyn AlignmentStream<R>>,
     peeked: Option<R>,
-    strip: StripReadSuffix,
     species_nr: usize,
     bisulfite: bool,
 }
@@ -45,14 +44,12 @@ pub(crate) struct CollatedReader<R> {
 impl<R: SimpleRec> CollatedReader<R> {
     pub(crate) fn new(
         inner: Box<dyn AlignmentStream<R>>,
-        strip: StripReadSuffix,
         bisulfite: bool,
         species_nr: usize,
     ) -> Self {
         Self {
             inner,
             peeked: None,
-            strip,
             species_nr,
             bisulfite,
         }
@@ -63,7 +60,7 @@ impl<R: SimpleRec> CollatedReader<R> {
 
     /// Yield the next complete fragment (all records sharing a canonical name),
     /// or `None` when the stream is exhausted.
-    pub(crate) fn next_fragment(&mut self) -> Result<Option<FragmentState<R>>, Error> {
+    pub(crate) fn next_fragment(&mut self, strip: StripReadSuffix) -> Result<Option<FragmentState<R>>, Error> {
         let first = match self.peeked.take() {
             Some(r) => r,
             None => match self.inner.next_rec()? {
@@ -73,7 +70,7 @@ impl<R: SimpleRec> CollatedReader<R> {
         };
 
         let first_key = match first.name() {
-            Some(n) => canonical_name(n.as_ref(), self.strip),
+            Some(n) => canonical_name(n.as_ref(), strip),
             None => {
                 return Ok(Some(FragmentState::from_record(
                     first,
@@ -90,7 +87,7 @@ impl<R: SimpleRec> CollatedReader<R> {
                 None => break,
                 Some(r) => {
                     let key = match r.name() {
-                        Some(n) => canonical_name(n.as_ref(), self.strip),
+                        Some(n) => canonical_name(n.as_ref(), strip),
                         None => {
                             self.peeked = Some(r);
                             break;

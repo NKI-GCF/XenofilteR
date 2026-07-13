@@ -46,6 +46,7 @@ use noodles::sam::alignment::record_buf::{
 use smallvec::SmallVec;
 use stage::StagedOutput;
 use std::cmp::Ordering;
+use crate::config::args::resolve_threshold;
 
 // ---------------------------------------------------------------------------
 // ScoredFragment
@@ -85,6 +86,8 @@ pub(crate) struct HashLookup<R: SimpleRec> {
     bed: [Option<AmbiguousRegions>; 2],
     vcf: [Option<DiagnosticVariants>; 2],
     bisulfite: bool,
+    positive: [Option<(ScoredRegions, ScoreFn)>; 2],
+    codec_prefix: Vec<u8>,
 }
 
 impl<R: SimpleRec> HashLookup<R> {
@@ -112,8 +115,8 @@ impl<R: SimpleRec> HashLookup<R> {
             bed,
             vcf,
             positive: pos,
-            codec: ReadNameCodec::new(),
             codec_prefix: Vec::new(),
+            bisulfite: args.common.scoring.bisulfite,
         })
     }
     pub(crate) fn new(
@@ -126,12 +129,12 @@ impl<R: SimpleRec> HashLookup<R> {
         if aln_len != 2 {
             return Err(Error::AlgoRequiresTwoStreams);
         }
-        let ambiguous_log_threshold = match config.ambiguous_threshold {
+        let ambiguous_log_threshold = match config.common.scoring.ambiguous_threshold {
             0 => 0.0,
             t => (t as f64) * std::f64::consts::LN_10 / 10.0,
         };
         for (i, a) in aln.iter_mut().enumerate() {
-            a.init_writers(config, i)?;
+            a.init_writers(&config.common.io, i)?;
         }
         Ok(Self {
             aln,
@@ -139,15 +142,17 @@ impl<R: SimpleRec> HashLookup<R> {
             staged: StagedOutput::new(),
             seq_counter: 0,
             record_counters: [0, 0],
-            penalties: config.to_penalties(),
+            penalties: config.common.scoring.to_penalties(),
             scratch: Scratch::new(),
             routing_counters: SmallVec::from_elem(0, aln_len * 4),
-            add_decision_tag: config.add_decision_tag,
+            add_decision_tag: config.common.io.add_decision_tag,
             ambiguous_log_threshold,
-            strip: config.strip_read_suffix,
+            strip: config.common.io.strip_read_suffix,
             bed,
             vcf,
-            bisulfite: config.bisulfite,
+            bisulfite: config.common.scoring.bisulfite,
+            codec_prefix: Vec::new(),
+            positive: [None, None],
         })
     }
 
