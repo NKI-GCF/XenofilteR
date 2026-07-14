@@ -1,11 +1,12 @@
 // src/variant/store.rs  (diff: StoreTrait gains Send + Sync supertraits)
 use crate::Error;
 use crate::variant::{Eval, Variant};
-use noodles::bcf::{io::reader::Builder, record::Record};
+use noodles::bcf::io::reader::Builder;
 use noodles::vcf::Header;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::path::Path;
+use noodles::vcf::variant::record_buf::RecordBuf;
 
 pub(crate) const VNT_CT: usize = 4;
 
@@ -48,7 +49,7 @@ impl<V: Variant> Store<V> {
     }
     pub(crate) fn new_from_path(
         f: &Path,
-        parser: impl Fn(&mut Record, &Header) -> Result<Vec<V>, Error>,
+        parser: impl Fn(&mut RecordBuf, &Header) -> Result<Vec<V>, Error>,
     ) -> Result<Store<V>, Error> {
         let mut bcf_reader =
             Builder::default()
@@ -64,9 +65,11 @@ impl<V: Variant> Store<V> {
         let header = bcf_reader.read_header()?;
 
         for record_result in bcf_reader.records() {
-            let mut record = record_result?;
+            let record = record_result?;
+            let mut record_buf = RecordBuf::try_from_variant_record(&header, &record)?;
+
             let id = record.reference_sequence_id()?;
-            let variants = parser(&mut record, &header)?;
+            let variants = parser(&mut record_buf, &header)?;
 
             let mut last_pos = None;
 

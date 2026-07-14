@@ -408,7 +408,7 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
         };
 
         let mut out: Vec<SampleVariant> = Vec::new();
-        for &canon in &canonicals {
+        for canon in &canonicals {
             let kind = classify(canon.ref_allele(), canon.alt_allele());
             if matches!(kind, IndelKind::Snp) {
                 out.push(canon.clone());
@@ -466,7 +466,7 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
         };
 
         let mut out: Vec<Population> = Vec::new();
-        for &canon in &canonicals {
+        for canon in &canonicals {
             let kind = classify(canon.ref_allele(), canon.alt_allele());
             if matches!(kind, IndelKind::Snp) {
                 out.push(canon.clone());

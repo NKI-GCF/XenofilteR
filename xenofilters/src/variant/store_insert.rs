@@ -45,7 +45,6 @@ impl<V: Variant + Clone> Store<V> {
         // Reserve capacity for the whole batch upfront.
         let bucket = self.per_chr.entry(ref_id).or_insert_with(Vec::new);
         bucket.reserve(variants.len());
-        drop(bucket); // release mutable borrow before calling insert in loop
 
         for v in variants {
             self.insert(ref_id, v);
