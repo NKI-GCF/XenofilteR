@@ -1,13 +1,13 @@
+pub(crate) mod diagnostic_equiv;
 pub mod eval;
+pub(crate) mod indel_equiv;
+pub(crate) mod indel_equiv_corrected;
+pub(crate) mod indel_equiv_impls; // WithAlleles impls + Store::insert_expanded
+pub(crate) mod name_to_id;
 pub(crate) mod population;
 pub(crate) mod sample;
 pub(crate) mod store;
-pub(crate) mod indel_equiv;
-pub(crate) mod indel_equiv_impls; // WithAlleles impls + Store::insert_expanded
-pub(crate) mod indel_equiv_corrected;
-pub(crate) mod diagnostic_equiv;
 pub(crate) mod store_insert;
-pub(crate) mod name_to_id;
 
 pub(crate) use eval::Eval;
 
@@ -23,7 +23,9 @@ pub(super) type FragEvalVec<'v> = SmallVec<[EvalVec<'v>; READ_CT]>;
 /// Trait for any object that can be scored against an alignment.
 pub trait Variant: Sync + Send {
     /// The reference ID of the variant.
-    fn ref_id(&self) -> usize;
+    fn ref_id(&self) -> usize {
+        0
+    }
 
     /// The 1-based reference position of the variant.
     fn pos(&self) -> usize;

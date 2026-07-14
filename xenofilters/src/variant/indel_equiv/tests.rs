@@ -45,11 +45,11 @@ mod tests {
     /// Assert semantic equivalence: every expanded entry produces the same
     /// sequence after application to `reference`.
     fn assert_all_equivalent(
-        reference:  &[u8],
+        reference: &[u8],
         pos_0based: usize,
-        ref_a:      &[u8],
-        alt_a:      &[u8],
-        ctx_start:  usize,
+        ref_a: &[u8],
+        alt_a: &[u8],
+        ctx_start: usize,
     ) {
         let equivalents = enumerate_equivalents(pos_0based, ref_a, alt_a, reference, ctx_start);
         assert!(!equivalents.is_empty(), "must return at least one entry");
@@ -70,17 +70,18 @@ mod tests {
     /// Assert positions are strictly monotonically increasing.
     fn assert_positions_increasing(
         pos_0based: usize,
-        ref_a:      &[u8],
-        alt_a:      &[u8],
-        reference:  &[u8],
-        ctx_start:  usize,
+        ref_a: &[u8],
+        alt_a: &[u8],
+        reference: &[u8],
+        ctx_start: usize,
     ) {
         let equivalents = enumerate_equivalents(pos_0based, ref_a, alt_a, reference, ctx_start);
         for w in equivalents.windows(2) {
             assert!(
                 w[1].pos > w[0].pos,
                 "positions must be strictly increasing: {} then {}",
-                w[0].pos, w[1].pos
+                w[0].pos,
+                w[1].pos
             );
         }
     }
@@ -88,15 +89,15 @@ mod tests {
     // ── Table-driven test cases ───────────────────────────────────────────────
 
     struct Case {
-        label:      &'static str,
-        reference:  &'static [u8],
+        label: &'static str,
+        reference: &'static [u8],
         pos_0based: usize,
-        ref_a:      &'static [u8],
-        alt_a:      &'static [u8],
+        ref_a: &'static [u8],
+        alt_a: &'static [u8],
         /// Expected number of equivalents (None = do not check count).
-        n:          Option<usize>,
+        n: Option<usize>,
         /// Expected 0-based positions of all equivalents (None = do not check).
-        positions:  Option<&'static [usize]>,
+        positions: Option<&'static [usize]>,
     }
 
     fn run_cases(cases: &[Case]) {
@@ -111,16 +112,20 @@ mod tests {
 
             if let Some(n) = c.n {
                 assert_eq!(
-                    equivalents.len(), n,
+                    equivalents.len(),
+                    n,
                     "[{}] expected {} equivalents, got {}",
-                    c.label, n, equivalents.len()
+                    c.label,
+                    n,
+                    equivalents.len()
                 );
             }
             if let Some(expected_positions) = c.positions {
                 let got_positions: Vec<usize> = equivalents.iter().map(|e| e.pos).collect();
                 assert_eq!(
                     got_positions, expected_positions,
-                    "[{}] position mismatch", c.label
+                    "[{}] position mismatch",
+                    c.label
                 );
             }
         }
@@ -134,13 +139,13 @@ mod tests {
         //   → slides right 3 times: anchors at 1,2,3
         // Final representation: pos=3, ref=AG, alt=A → no more A after pos 4
         let cases = [Case {
-            label:      "homopolymer A×4 deletion",
-            reference:  b"GAAAAG",
+            label: "homopolymer A×4 deletion",
+            reference: b"GAAAAG",
             pos_0based: 0,
-            ref_a:      b"GA",  // pos=0, anchor G, delete A
-            alt_a:      b"G",
-            n:          Some(4),
-            positions:  Some(&[0, 1, 2, 3]),
+            ref_a: b"GA", // pos=0, anchor G, delete A
+            alt_a: b"G",
+            n: Some(4),
+            positions: Some(&[0, 1, 2, 3]),
         }];
         run_cases(&cases);
     }
@@ -152,13 +157,13 @@ mod tests {
         // Left-normalized: pos=0, ref=G, alt=GA
         // Slides right as long as next ref base == 'A'.
         let cases = [Case {
-            label:      "homopolymer A×3 insertion",
-            reference:  b"GAAAG",
+            label: "homopolymer A×3 insertion",
+            reference: b"GAAAG",
             pos_0based: 0,
-            ref_a:      b"G",
-            alt_a:      b"GA",
-            n:          Some(3),  // anchors at 0, 1, 2
-            positions:  Some(&[0, 1, 2]),
+            ref_a: b"G",
+            alt_a: b"GA",
+            n: Some(3), // anchors at 0, 1, 2
+            positions: Some(&[0, 1, 2]),
         }];
         run_cases(&cases);
     }
@@ -175,13 +180,13 @@ mod tests {
         //   → slides again to pos=4: ref=CAG, alt=C?
         //   No: ref[4..7] = 'CAG'; next after del: ref[6]='G' ≠ 'C' = cur_ref[1]
         let cases = [Case {
-            label:      "dinucleotide AC repeat deletion",
-            reference:  b"CACACACAG",
+            label: "dinucleotide AC repeat deletion",
+            reference: b"CACACACAG",
             pos_0based: 0,
-            ref_a:      b"CAC",  // anchor C, delete AC
-            alt_a:      b"C",
-            n:          Some(3), // slides twice through CACAC
-            positions:  Some(&[0, 2, 4]),
+            ref_a: b"CAC", // anchor C, delete AC
+            alt_a: b"C",
+            n: Some(3), // slides twice through CACAC
+            positions: Some(&[0, 2, 4]),
         }];
         run_cases(&cases);
     }
@@ -191,13 +196,13 @@ mod tests {
         // Reference: ACGTACGT
         // Delete G at position 2; no repeat → 1 entry only.
         let cases = [Case {
-            label:      "non-repeat single-base deletion",
-            reference:  b"ACGTACGT",
-            pos_0based: 1,  // anchor C, delete G
-            ref_a:      b"CG",
-            alt_a:      b"C",
-            n:          Some(1),
-            positions:  Some(&[1]),
+            label: "non-repeat single-base deletion",
+            reference: b"ACGTACGT",
+            pos_0based: 1, // anchor C, delete G
+            ref_a: b"CG",
+            alt_a: b"C",
+            n: Some(1),
+            positions: Some(&[1]),
         }];
         run_cases(&cases);
     }
@@ -205,13 +210,13 @@ mod tests {
     #[test]
     fn snp_returns_single_entry() {
         let cases = [Case {
-            label:      "SNP no expansion",
-            reference:  b"ACGT",
+            label: "SNP no expansion",
+            reference: b"ACGT",
             pos_0based: 1,
-            ref_a:      b"C",
-            alt_a:      b"T",
-            n:          Some(1),
-            positions:  Some(&[1]),
+            ref_a: b"C",
+            alt_a: b"T",
+            n: Some(1),
+            positions: Some(&[1]),
         }];
         run_cases(&cases);
     }
@@ -220,13 +225,13 @@ mod tests {
     fn complex_allele_returns_single_entry() {
         // MNP: ref=ACG alt=TTT — complex, cannot slide.
         let cases = [Case {
-            label:      "complex MNP no expansion",
-            reference:  b"ACGTACGT",
+            label: "complex MNP no expansion",
+            reference: b"ACGTACGT",
             pos_0based: 0,
-            ref_a:      b"ACG",
-            alt_a:      b"TTT",
-            n:          Some(1),
-            positions:  Some(&[0]),
+            ref_a: b"ACG",
+            alt_a: b"TTT",
+            n: Some(1),
+            positions: Some(&[0]),
         }];
         run_cases(&cases);
     }
@@ -236,18 +241,16 @@ mod tests {
         // Reference: GAAAAG; provide a right-shifted (non-left-normalized) input.
         // pos=2, ref=AA, alt=A (anchor A at pos 2, delete A at pos 3)
         // Left-normalized result: pos=0, ref=GA, alt=G
-        let (pos_out, ref_out, alt_out) =
-            left_normalize(2, b"AA", b"A", b"GAAAAG", 0);
+        let (pos_out, ref_out, alt_out) = left_normalize(2, b"AA", b"A", b"GAAAAG", 0);
         assert_eq!(pos_out, 0, "left normalize should shift to pos 0");
         assert_eq!(ref_out, b"GA", "left normalized REF");
-        assert_eq!(alt_out, b"G",  "left normalized ALT");
+        assert_eq!(alt_out, b"G", "left normalized ALT");
     }
 
     #[test]
     fn left_normalize_at_chromosome_start_is_noop() {
         // Anchor at position 0; cannot shift further left.
-        let (pos_out, ref_out, alt_out) =
-            left_normalize(0, b"GA", b"G", b"GAAAAG", 0);
+        let (pos_out, ref_out, alt_out) = left_normalize(0, b"GA", b"G", b"GAAAAG", 0);
         assert_eq!(pos_out, 0, "cannot left-shift past position 0");
         assert_eq!(ref_out, b"GA");
         assert_eq!(alt_out, b"G");
@@ -264,8 +267,7 @@ mod tests {
         reference.extend(std::iter::repeat(b'A').take(200));
         reference.push(b'G');
         // pos=0, ref=GA, alt=G: can slide 200 times but MAX_SHIFT caps it.
-        let equivalents =
-            enumerate_equivalents(0, b"GA", b"G", &reference, 0);
+        let equivalents = enumerate_equivalents(0, b"GA", b"G", &reference, 0);
         assert_eq!(
             equivalents.len(),
             MAX_SHIFT + 1,
@@ -277,7 +279,11 @@ mod tests {
         let canonical = apply_variant(&reference, 0, b"GA", b"G");
         for eq in &equivalents {
             let result = apply_variant(&reference, eq.pos, &eq.ref_a, &eq.alt_a);
-            assert_eq!(result, canonical, "max-shift entry at pos={} invalid", eq.pos);
+            assert_eq!(
+                result, canonical,
+                "max-shift entry at pos={} invalid",
+                eq.pos
+            );
         }
     }
 
@@ -322,7 +328,8 @@ mod tests {
         for eq in &equivalents {
             assert!(
                 eq.pos + eq.ref_a.len() <= reference.len(),
-                "equivalent at pos={} overruns reference", eq.pos
+                "equivalent at pos={} overruns reference",
+                eq.pos
             );
         }
     }
@@ -338,7 +345,7 @@ mod tests {
         //   ref_ctx = b"AAAAG"
         // Indel: pos=1 (0-based), anchor A, delete A → left-norm stays at 1
         // because ctx_start=1 means we have no context before pos 1 to shift further.
-        let ref_ctx:  &[u8] = b"AAAAG";
+        let ref_ctx: &[u8] = b"AAAAG";
         let ctx_start = 1usize;
         let equivalents = enumerate_equivalents(1, b"AA", b"A", ref_ctx, ctx_start);
         // All positions must be ≥ ctx_start for the context to cover them.
@@ -346,7 +353,8 @@ mod tests {
             let ctx_idx = eq.pos.saturating_sub(ctx_start);
             assert!(
                 ctx_idx + eq.ref_a.len() <= ref_ctx.len(),
-                "entry at pos={} out of ref_ctx bounds", eq.pos
+                "entry at pos={} out of ref_ctx bounds",
+                eq.pos
             );
         }
     }
@@ -359,8 +367,9 @@ mod tests {
         for eq in &equivalents {
             assert_eq!(
                 eq.ref_a.len().saturating_sub(eq.alt_a.len()),
-                1,  // deletion of 1 base
-                "del_len changed at pos={}", eq.pos
+                1, // deletion of 1 base
+                "del_len changed at pos={}",
+                eq.pos
             );
         }
     }
@@ -373,7 +382,8 @@ mod tests {
             assert_eq!(
                 eq.alt_a.len().saturating_sub(eq.ref_a.len()),
                 1, // insertion of 1 base
-                "ins_len changed at pos={}", eq.pos
+                "ins_len changed at pos={}",
+                eq.pos
             );
         }
     }
@@ -389,7 +399,8 @@ mod tests {
         // Confirmed: enumerate_equivalents left-normalizes before expanding.
         assert_eq!(
             equivalents[0].pos, 0,
-            "first entry must be left-normalized; got pos={}", equivalents[0].pos
+            "first entry must be left-normalized; got pos={}",
+            equivalents[0].pos
         );
     }
 
@@ -491,25 +502,26 @@ mod tests {
 
     #[test]
     fn store_insert_expanded_count() {
-        use crate::variant::{
-            population::Population,
-            store::Store,
-        };
+        use super::super::WithAlleles;
+        use crate::variant::store::StoreTrait;
+        use crate::variant::{population::Population, store::Store};
 
         // Build a minimal Store<Population> with two indels, one of which
         // expands to 4 equivalents and one (SNP) that stays at 1.
         // Total entries expected: 4 + 1 = 5.
         let del = Population {
-            pos:               0,
-            ref_a:             b"GA".to_vec(),
-            alt_a:             b"G".to_vec(),
-            allele_frequency:  0.3,
+            ref_id: 0,
+            pos: 0,
+            ref_a: b"GA".to_vec(),
+            alt_a: b"G".to_vec(),
+            allele_frequency: 0.3,
         };
         let snp = Population {
-            pos:               10,
-            ref_a:             b"C".to_vec(),
-            alt_a:             b"T".to_vec(),
-            allele_frequency:  0.5,
+            ref_id: 0,
+            pos: 10,
+            ref_a: b"C".to_vec(),
+            alt_a: b"T".to_vec(),
+            allele_frequency: 0.5,
         };
 
         // Manually create the expanded set as the expander would:
@@ -530,12 +542,16 @@ mod tests {
         assert_eq!(snp_expanded.len(), 1);
 
         let mut store = Store::<Population>::new();
-        store.insert_expanded(del_expanded);
-        store.insert_expanded(snp_expanded);
+        store.insert_expanded(0, del_expanded);
+        store.insert_expanded(0, snp_expanded);
         store.dedup();
 
         // overlapping_multi should find all 4 deletion equivalents in [0, 4).
         let hits = store.overlapping_multi(0, 0, 4);
-        assert_eq!(hits.len(), 4, "all 4 deletion equivalents must be queryable");
+        assert_eq!(
+            hits.len(),
+            4,
+            "all 4 deletion equivalents must be queryable"
+        );
     }
 }

@@ -114,19 +114,14 @@ mod tests {
     }
 
     fn store(sites: &[(usize, usize, usize)]) -> DiagnosticVariants {
-        let mut per_ref: Vec<Vec<DiagnosticSite>> = HashMap::new();
+        let mut per_ref: Vec<Vec<DiagnosticSite>> = Vec::new();
         let mut max_ref_len = 1;
         for &(rid, pos, ref_len) in sites {
-            if ref_len > max_ref_len {
-                max_ref_len = ref_len;
+            max_ref_len = max_ref_len.max(ref_len);
+            while per_ref.len() <= rid {
+                per_ref.push(Vec::new());
             }
-            if let Some(v) = per_ref.get_mut(&rid) {
-                v.push(site(pos, ref_len));
-            } else {
-                while per_ref.len() <= rid {
-                    per_ref.push(Vec::new());
-                }
-            }
+            per_ref[rid].push(site(pos, ref_len));
         }
         for v in per_ref.iter_mut() {
             v.sort_unstable_by_key(|s| s.pos);
