@@ -434,7 +434,7 @@ fn build_variant_stores(
             .unwrap_or_else(|| "fai".to_string()),
     );
     if !fai_path.exists() {
-        return Err(crate::Error::FastaIndexMissing(fasta_path.to_path_buf()).into());
+        return Err(crate::Error::FastaIndexMissing(fasta_path.to_path_buf()));
     }
 
     let sample_store: Option<Arc<dyn StoreTrait>> = sample_vcf_path
@@ -505,13 +505,11 @@ pub(crate) fn build_diagnostic_store_for_stream(
 /// - `"IDX:FILE"` — explicit stream index
 fn variant_path_for_stream(specs: &[String], stream_idx: usize) -> Option<&Path> {
     for spec in specs {
-        if let Some((idx_str, path_str)) = spec.split_once(':') {
-            if let Ok(idx) = idx_str.trim().parse::<usize>() {
-                if idx == stream_idx {
+        if let Some((idx_str, path_str)) = spec.split_once(':')
+            && let Ok(idx) = idx_str.trim().parse::<usize>()
+                && idx == stream_idx {
                     return Some(Path::new(path_str.trim()));
                 }
-            }
-        }
     }
 
     // Positional fallback: Use .nth() instead of collecting into a Vec
@@ -519,7 +517,7 @@ fn variant_path_for_stream(specs: &[String], stream_idx: usize) -> Option<&Path>
         .iter()
         .filter(|s| !s.contains(':') || s.starts_with('/') || s.starts_with('.'))
         .nth(stream_idx)
-        .map(|s| Path::new(s))
+        .map(Path::new)
 }
 
 

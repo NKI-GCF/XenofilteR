@@ -2,7 +2,7 @@ use crate::Error;
 use crate::filter_algorithm::line_by_line::{MAX_STREAMS, core::COUNTER_STRIDE};
 use crate::{
     bam::AlnFormat,
-    penalty::{MAX_Q, Penalty, ErrorModel},
+    penalty::{Penalty, ErrorModel},
 };
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
@@ -487,19 +487,17 @@ impl Config {
         // If any VCF path is supplied and --expand-indels is off, warn that
         // un-realigned indels may be missed.  Only warn when the VCF likely
         // contains indels (we can't know without reading it, so warn always).
-        if !self.expand_indels
+        if (!self.expand_indels
             && !self.sample_variants.is_empty()
             || !self.population_variants.is_empty()
-            || !self.diagnostic_variants.is_empty()
-        {
-            if self.reference.is_none() {
+            || !self.diagnostic_variants.is_empty())
+            && self.reference.is_none() {
                 tracing::debug!(
                     "Variant files supplied without --reference; \
                      indel equivalence expansion disabled. \
                      Add --reference and --expand-indels to handle un-realigned indels."
                 );
             }
-        }
 
         if self.ambiguous_regions.len() > 2 {
             return Err(Error::TooManyAmbiguousRegionsFiles {

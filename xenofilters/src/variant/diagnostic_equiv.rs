@@ -85,7 +85,7 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
 ) -> Result<DiagnosticVariants, Error> {
     use std::{fs::File, io::BufReader};
 
-    let is_bcf = vcf_path.extension().map_or(false, |e| e == "bcf");
+    let is_bcf = vcf_path.extension().is_some_and(|e| e == "bcf");
 
     // Hoist the readers to the outer scope
     let mut bcf_reader;

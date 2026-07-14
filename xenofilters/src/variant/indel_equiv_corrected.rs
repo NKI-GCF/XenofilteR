@@ -15,13 +15,12 @@ use std::{
 };
 
 use noodles::{bcf, bgzf, fasta, vcf};
-use smallvec::SmallVec;
 use tracing::{debug, warn};
 
 use crate::variant::{population::Population, sample::Sample, store::Store, Variant};
 
 pub(crate) use super::indel_equiv::{
-    classify, enumerate_equivalents, IndelEquivalenceExpander, IndelKind, WithAlleles, MAX_SHIFT,
+    classify, enumerate_equivalents, IndelEquivalenceExpander, IndelKind,
 };
 use crate::Error;
 
@@ -39,7 +38,7 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
         rec: &mut vcf::variant::RecordBuf,
         header: &vcf::Header,
         name_to_id: &HashMap<String, usize>,
-        gamete: bool,
+        _gamete: bool,
     ) -> Result<Option<(usize, Vec<Sample>)>, Error> {
         let chrom = rec.reference_sequence_name().to_string();
         let ref_id = match name_to_id.get(&chrom) {
@@ -326,7 +325,7 @@ pub(crate) fn build_population_store_expanded(
 /// Read header from either BCF or plain VCF (determined by extension).
 pub(crate) fn read_vcf_or_bcf_header(path: &Path) -> Result<vcf::Header, Error> {
     use std::{fs::File, io::BufReader};
-    if path.extension().map_or(false, |e| e == "bcf") {
+    if path.extension().is_some_and(|e| e == "bcf") {
         let mut r = bcf::io::Reader::new(bgzf::io::Reader::new(BufReader::new(File::open(path)?)));
         Ok(r.read_header()?)
     } else {
@@ -341,7 +340,7 @@ where
     F: FnMut(&mut vcf::variant::RecordBuf) -> Result<(), Error>,
 {
     use std::{fs::File, io::BufReader};
-    if path.extension().map_or(false, |e| e == "bcf") {
+    if path.extension().is_some_and(|e| e == "bcf") {
         let mut r = bcf::io::Reader::new(bgzf::io::Reader::new(BufReader::new(File::open(path)?)));
         let _h = r.read_header()?;
         for result in r.record_bufs(header) {

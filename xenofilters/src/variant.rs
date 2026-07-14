@@ -10,15 +10,9 @@ pub(crate) mod store_insert;
 pub(crate) mod name_to_id;
 
 pub(crate) use eval::Eval;
-pub(crate) use population::{parse_population_record, Population};
-pub(crate) use sample::{parse_sample_record, Sample};
 
-pub(crate) use indel_equiv::{
-    build_population_store_expanded, build_sample_store_expanded,
-    enumerate_equivalents, IndelEquivalenceExpander, WithAlleles,
-};
 pub(crate) use diagnostic_equiv::build_diagnostic_store_expanded;
-pub(super) use store::{Store, StoreTrait, VNT_CT};
+pub(super) use store::{StoreTrait, VNT_CT};
 
 use crate::filter_algorithm::line_by_line::READ_CT;
 use smallvec::SmallVec;

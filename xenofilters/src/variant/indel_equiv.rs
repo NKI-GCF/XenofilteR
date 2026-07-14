@@ -11,7 +11,6 @@
 //   VCF input  — 1-based, inclusive (noodles Variant::variant_start()).
 //   All output — 0-based (pos = vcf_pos - 1).
 
-use crate::variant::name_to_id::header_name_to_id;
 use crate::variant::Variant;
 use crate::{
     variant::{
@@ -23,10 +22,8 @@ use crate::{
 };
 use fasta::io::IndexedReader;
 use noodles::{
-    bgzf,
-    core::{Position, Region},
+    core::Region,
     fasta,
-    fasta::record::Sequence,
     vcf,
     vcf::variant::record::{
         samples::{Sample, Series},
@@ -36,8 +33,7 @@ use noodles::{
 };
 use smallvec::SmallVec;
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufRead, BufReader, Seek};
+use std::io::{BufRead, Seek};
 use std::path::Path;
 use std::str::FromStr;
 use tracing::{debug, warn};
@@ -556,7 +552,7 @@ pub(crate) fn build_sample_store_expanded(
     let mut store = Store::<SampleVariant>::new();
 
     // BCF (bgzf) or plain VCF — determine from extension.
-    let is_bcf = vcf_path.extension().map_or(false, |e| e == "bcf");
+    let is_bcf = vcf_path.extension().is_some_and(|e| e == "bcf");
     let hdr;
 
     // Declare uninitialized readers here so they live through the whole function
@@ -623,7 +619,7 @@ pub(crate) fn build_population_store_expanded(
     let mut expander = IndelEquivalenceExpander::new(fasta_reader);
     let mut store = Store::<Population>::new();
 
-    let is_bcf = vcf_path.extension().map_or(false, |e| e == "bcf");
+    let is_bcf = vcf_path.extension().is_some_and(|e| e == "bcf");
     let hdr;
 
     // Declare uninitialized readers here so they live through the whole function

@@ -13,8 +13,6 @@
 //   2. Ensure Store<V> has a `per_ref: HashMap<usize, Vec<V>, RandomState>` field.
 //   3. Ensure Variant trait gains `fn ref_id(&self) -> usize`.
 
-use ahash::RandomState;
-use std::collections::HashMap;
 
 use crate::variant::{store::Store, Variant};
 
@@ -30,7 +28,7 @@ impl<V: Variant + Clone> Store<V> {
     /// O(log n + n) per call — acceptable at startup, never called on the
     /// hot path.
     pub(crate) fn insert(&mut self, ref_id: usize, v: V) {
-        let bucket = self.per_chr.entry(ref_id).or_insert_with(Vec::new);
+        let bucket = self.per_chr.entry(ref_id).or_default();
         let pos = v.pos();
         // Stable sort: existing entries with the same pos keep their order;
         // new entry inserted after them.
@@ -43,7 +41,7 @@ impl<V: Variant + Clone> Store<V> {
     /// because each insert maintains the sorted invariant.
     pub(crate) fn insert_expanded(&mut self, ref_id: usize, variants: Vec<V>) {
         // Reserve capacity for the whole batch upfront.
-        let bucket = self.per_chr.entry(ref_id).or_insert_with(Vec::new);
+        let bucket = self.per_chr.entry(ref_id).or_default();
         bucket.reserve(variants.len());
 
         for v in variants {
