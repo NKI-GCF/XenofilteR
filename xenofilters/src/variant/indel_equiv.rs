@@ -11,34 +11,36 @@
 //   VCF input  — 1-based, inclusive (noodles Variant::variant_start()).
 //   All output — 0-based (pos = vcf_pos - 1).
 
-use std::io::{BufRead, Seek, BufReader};
+use crate::variant::name_to_id::header_name_to_id;
+use crate::variant::Variant;
+use crate::{
+    variant::{
+        population::{parse_population_record, Population},
+        sample::{parse_sample_record, Sample as SampleVariant},
+        store::Store,
+    },
+    Error,
+};
+use fasta::io::IndexedReader;
 use noodles::{
     bgzf,
     core::{Position, Region},
     fasta,
     fasta::record::Sequence,
     vcf,
-    vcf::variant::RecordBuf,
     vcf::variant::record::{
-        AlternateBases, ReferenceBases,
         samples::{Sample, Series},
+        AlternateBases, ReferenceBases,
     },
+    vcf::variant::RecordBuf,
 };
 use smallvec::SmallVec;
-use tracing::{debug, warn};
-use crate::{
-    Error,
-    variant::{
-        population::{Population, parse_population_record},
-        sample::{Sample as SampleVariant, parse_sample_record},
-        store::Store,
-    },
-};
-use crate::variant::Variant;
-use fasta::io::IndexedReader;
+use std::collections::HashMap;
 use std::fs::File;
+use std::io::{BufRead, BufReader, Seek};
+use std::path::Path;
 use std::str::FromStr;
-use crate::variant::name_to_id::header_name_to_id;
+use tracing::{debug, warn};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -61,11 +63,11 @@ const CTX_WINDOW: usize = MAX_SHIFT + 16;
 #[derive(Debug, Clone)]
 pub(crate) struct EquivalentAlleles {
     /// 0-based anchor position (VCF POS − 1).
-    pub(crate) pos:    usize,
+    pub(crate) pos: usize,
     /// REF allele bytes, ASCII uppercase, including anchor at index 0.
-    pub(crate) ref_a:  Vec<u8>,
+    pub(crate) ref_a: Vec<u8>,
     /// ALT allele bytes, ASCII uppercase, including anchor at index 0.
-    pub(crate) alt_a:  Vec<u8>,
+    pub(crate) alt_a: Vec<u8>,
 }
 
 // ---------------------------------------------------------------------------
@@ -116,10 +118,10 @@ pub(crate) fn classify(ref_a: &[u8], alt_a: &[u8]) -> IndelKind {
 /// exactly 1 entry.
 pub(crate) fn enumerate_equivalents(
     pos_0based: usize,
-    ref_a:      &[u8],
-    alt_a:      &[u8],
-    ref_ctx:    &[u8],
-    ctx_start:  usize,
+    ref_a: &[u8],
+    alt_a: &[u8],
+    ref_ctx: &[u8],
+    ctx_start: usize,
 ) -> SmallVec<[EquivalentAlleles; 8]> {
     let mut out: SmallVec<[EquivalentAlleles; 8]> = SmallVec::new();
     let kind = classify(ref_a, alt_a);
@@ -127,7 +129,7 @@ pub(crate) fn enumerate_equivalents(
     if matches!(kind, IndelKind::Snp | IndelKind::Complex) {
         // SNPs need no expansion; complex alleles cannot be safely slid.
         out.push(EquivalentAlleles {
-            pos:   pos_0based,
+            pos: pos_0based,
             ref_a: ref_a.to_vec(),
             alt_a: alt_a.to_vec(),
         });
@@ -139,7 +141,7 @@ pub(crate) fn enumerate_equivalents(
         left_normalize(pos_0based, ref_a, alt_a, ref_ctx, ctx_start);
 
     out.push(EquivalentAlleles {
-        pos:   cur_pos,
+        pos: cur_pos,
         ref_a: cur_ref.clone(),
         alt_a: cur_alt.clone(),
     });
@@ -147,14 +149,18 @@ pub(crate) fn enumerate_equivalents(
     // -- Right-shift enumeration ---------------------------------------------
     for _ in 0..MAX_SHIFT {
         let next = match kind {
-            IndelKind::Deletion  => right_shift_deletion (cur_pos, &cur_ref, &cur_alt, ref_ctx, ctx_start),
-            IndelKind::Insertion => right_shift_insertion(cur_pos, &cur_ref, &cur_alt, ref_ctx, ctx_start),
+            IndelKind::Deletion => {
+                right_shift_deletion(cur_pos, &cur_ref, &cur_alt, ref_ctx, ctx_start)
+            }
+            IndelKind::Insertion => {
+                right_shift_insertion(cur_pos, &cur_ref, &cur_alt, ref_ctx, ctx_start)
+            }
             _ => unreachable!("Snp/Complex handled above"),
         };
         match next {
             Some((new_pos, new_ref, new_alt)) => {
                 out.push(EquivalentAlleles {
-                    pos:   new_pos,
+                    pos: new_pos,
                     ref_a: new_ref.clone(),
                     alt_a: new_alt.clone(),
                 });
@@ -176,21 +182,23 @@ pub(crate) fn enumerate_equivalents(
 /// reference base immediately before the current anchor.
 fn left_normalize(
     pos_0based: usize,
-    ref_a:      &[u8],
-    alt_a:      &[u8],
-    ref_ctx:    &[u8],
-    ctx_start:  usize,
+    ref_a: &[u8],
+    alt_a: &[u8],
+    ref_ctx: &[u8],
+    ctx_start: usize,
 ) -> (usize, Vec<u8>, Vec<u8>) {
     let mut pos = pos_0based;
-    let mut r   = ref_a.to_vec();
-    let mut a   = alt_a.to_vec();
+    let mut r = ref_a.to_vec();
+    let mut a = alt_a.to_vec();
 
     loop {
-        if pos == 0 { break; }
+        if pos == 0 {
+            break;
+        }
 
         // Chromosome index of the base preceding the current anchor.
         let prev_chrom = pos - 1;
-        let prev_ctx   = match prev_chrom.checked_sub(ctx_start) {
+        let prev_ctx = match prev_chrom.checked_sub(ctx_start) {
             Some(i) if i < ref_ctx.len() => ref_ctx[i],
             _ => break,
         };
@@ -203,7 +211,9 @@ fn left_normalize(
             *a.last().expect("alt non-empty")
         };
 
-        if last_payload != prev_chrom_base_to_u8(prev_ctx) { break; }
+        if last_payload != prev_chrom_base_to_u8(prev_ctx) {
+            break;
+        }
 
         // Perform shift: prepend preceding base, drop the last base.
         r.insert(0, prev_ctx);
@@ -216,7 +226,9 @@ fn left_normalize(
 }
 
 #[inline(always)]
-const fn prev_chrom_base_to_u8(b: u8) -> u8 { b }   // identity; name for clarity
+const fn prev_chrom_base_to_u8(b: u8) -> u8 {
+    b
+} // identity; name for clarity
 
 /// Attempt one right-shift of a deletion.
 ///
@@ -231,15 +243,17 @@ const fn prev_chrom_base_to_u8(b: u8) -> u8 { b }   // identity; name for clarit
 ///   new_alt      = [new_anchor]
 /// ```
 fn right_shift_deletion(
-    cur_pos:  usize,
-    cur_ref:  &[u8],   // anchor + deleted sequence
-    cur_alt:  &[u8],   // anchor only (len == 1)
-    ref_ctx:  &[u8],
+    cur_pos: usize,
+    cur_ref: &[u8], // anchor + deleted sequence
+    cur_alt: &[u8], // anchor only (len == 1)
+    ref_ctx: &[u8],
     ctx_start: usize,
 ) -> Option<(usize, Vec<u8>, Vec<u8>)> {
     debug_assert_eq!(cur_alt.len(), 1, "deletion alt must be single anchor");
-    let del_len = cur_ref.len().checked_sub(1)?;  // number of deleted bases
-    if del_len == 0 { return None; }
+    let del_len = cur_ref.len().checked_sub(1)?; // number of deleted bases
+    if del_len == 0 {
+        return None;
+    }
 
     // Chromosome coordinates (0-based):
     let first_del_chrom = cur_pos + 1;
@@ -259,12 +273,12 @@ fn right_shift_deletion(
         return None;
     }
 
-    let new_anchor = cur_ref[1];   // == ref_ctx[first_del_idx]
+    let new_anchor = cur_ref[1]; // == ref_ctx[first_del_idx]
 
     let mut new_ref = Vec::with_capacity(cur_ref.len());
     new_ref.push(new_anchor);
-    new_ref.extend_from_slice(&cur_ref[2..]);      // remaining deleted bases
-    new_ref.push(ref_ctx[after_del_idx]);           // base that cycles in
+    new_ref.extend_from_slice(&cur_ref[2..]); // remaining deleted bases
+    new_ref.push(ref_ctx[after_del_idx]); // base that cycles in
 
     let new_alt = vec![new_anchor];
 
@@ -283,32 +297,38 @@ fn right_shift_deletion(
 ///   new_ref     = [new_anchor]
 /// ```
 fn right_shift_insertion(
-    cur_pos:   usize,
-    cur_ref:   &[u8],   // anchor only (len == 1)
-    cur_alt:   &[u8],   // anchor + inserted sequence
-    ref_ctx:   &[u8],
+    cur_pos: usize,
+    cur_ref: &[u8], // anchor only (len == 1)
+    cur_alt: &[u8], // anchor + inserted sequence
+    ref_ctx: &[u8],
     ctx_start: usize,
 ) -> Option<(usize, Vec<u8>, Vec<u8>)> {
     debug_assert_eq!(cur_ref.len(), 1, "insertion ref must be single anchor");
     let ins_len = cur_alt.len().checked_sub(1)?;
-    if ins_len == 0 { return None; }
+    if ins_len == 0 {
+        return None;
+    }
 
-    let next_chrom   = cur_pos + 1;
+    let next_chrom = cur_pos + 1;
     let next_ctx_idx = next_chrom.checked_sub(ctx_start)?;
-    if next_ctx_idx >= ref_ctx.len() { return None; }
+    if next_ctx_idx >= ref_ctx.len() {
+        return None;
+    }
 
-    let first_ins  = cur_alt[1];                 // first inserted base (index 0 is anchor)
-    let next_ref   = ref_ctx[next_ctx_idx];
+    let first_ins = cur_alt[1]; // first inserted base (index 0 is anchor)
+    let next_ref = ref_ctx[next_ctx_idx];
 
     // Shift valid iff first inserted base == next reference base.
-    if first_ins != next_ref { return None; }
+    if first_ins != next_ref {
+        return None;
+    }
 
     let new_anchor = next_ref;
 
     let mut new_alt = Vec::with_capacity(cur_alt.len());
     new_alt.push(new_anchor);
-    new_alt.extend_from_slice(&cur_alt[2..]);    // ins_seq[1:]
-    new_alt.push(cur_alt[1]);                     // ins_seq[0] rotated to end
+    new_alt.extend_from_slice(&cur_alt[2..]); // ins_seq[1:]
+    new_alt.push(cur_alt[1]); // ins_seq[0] rotated to end
 
     let new_ref = vec![new_anchor];
 
@@ -340,21 +360,22 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
     /// to chromosome position `ctx_start_0based` (0-based).
     pub(crate) fn fetch_context(
         &mut self,
-        chrom:      &str,
+        chrom: &str,
         pos_0based: usize,
-        ref_len:    usize,
+        ref_len: usize,
     ) -> Result<(usize, Vec<u8>), Error> {
         // Start: ctx_start = max(0, pos_0based - CTX_WINDOW)
         let ctx_start = pos_0based.saturating_sub(CTX_WINDOW);
         // End: cover pos + ref_len + MAX_SHIFT (exclusive, 0-based).
-        let ctx_end   = pos_0based + ref_len + MAX_SHIFT + 1;
+        let ctx_end = pos_0based + ref_len + MAX_SHIFT + 1;
 
         let region_str = format!("{chrom}:{}-{}", ctx_start + 1, ctx_end);
-        let region: Region = Region::from_str(&region_str).map_err(|e| Error::InvalidRegion(format!("{region_str}: {e}")))?;
-        let record  = self
-            .fasta
-            .query(&region)
-            .map_err(|e| Error::FastaFetch { region: region_str, source: e })?;
+        let region: Region = Region::from_str(&region_str)
+            .map_err(|e| Error::InvalidRegion(format!("{region_str}: {e}")))?;
+        let record = self.fasta.query(&region).map_err(|e| Error::FastaFetch {
+            region: region_str,
+            source: e,
+        })?;
 
         let bytes: Vec<u8> = record
             .sequence()
@@ -373,9 +394,9 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
     /// equivalent representations; only `pos`, `ref_a`, and `alt_a` change.
     pub(crate) fn expand_sample(
         &mut self,
-        record:  &mut RecordBuf,
-        header:  &vcf::Header,
-        chrom:   &str,
+        record: &mut RecordBuf,
+        header: &vcf::Header,
+        chrom: &str,
     ) -> Result<Vec<SampleVariant>, Error> {
         // Parse the canonical variant first (existing function; unchanged).
         let canonicals = match parse_sample_record(record, header) {
@@ -396,7 +417,7 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
             if matches!(kind, IndelKind::Complex) {
                 warn!(
                     chrom,
-                    pos = canon.pos() + 1,  // report 1-based in warning
+                    pos = canon.pos() + 1, // report 1-based in warning
                     "Complex allele skipped for indel equivalence expansion"
                 );
                 out.push(canon.clone());
@@ -404,8 +425,7 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
             }
 
             let ref_len = canon.ref_allele().len();
-            let (ctx_start, ctx) = self
-                .fetch_context(chrom, canon.pos(), ref_len)?;
+            let (ctx_start, ctx) = self.fetch_context(chrom, canon.pos(), ref_len)?;
 
             let equivalents = enumerate_equivalents(
                 canon.pos(),
@@ -435,7 +455,7 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
         &mut self,
         record: &mut RecordBuf,
         header: &vcf::Header,
-        chrom:  &str,
+        chrom: &str,
     ) -> Result<Vec<Population>, Error> {
         let canonicals = match parse_population_record(record, header) {
             Ok(v) => v,
@@ -463,8 +483,7 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
             }
 
             let ref_len = canon.ref_allele().len();
-            let (ctx_start, ctx) = self
-                .fetch_context(chrom, canon.pos(), ref_len)?;
+            let (ctx_start, ctx) = self.fetch_context(chrom, canon.pos(), ref_len)?;
 
             let equivalents = enumerate_equivalents(
                 canon.pos(),
@@ -509,7 +528,13 @@ pub(crate) trait WithAlleles: Sized {
 // initialization block in main.rs where Store<Sample> / Store<Population>
 // are currently constructed.
 
-use std::path::Path;
+fn build_name_to_id(hdr: &vcf::Header) -> HashMap<String, usize> {
+    hdr.contigs()
+        .iter()
+        .enumerate()
+        .map(|(i, (name, _))| (name.to_string(), i))
+        .collect()
+}
 
 /// Build a `Store<SampleVariant>` with indel equivalence expansion.
 ///
@@ -521,23 +546,22 @@ use std::path::Path;
 /// `store.overlapping_multi(tid, read_start, read_end)` hot path operates
 /// on 0-based half-open intervals and is unchanged.
 pub(crate) fn build_sample_store_expanded(
-    vcf_path:   &Path,
+    vcf_path: &Path,
     fasta_path: &Path,
 ) -> Result<Store<SampleVariant>, Error> {
     use noodles::bgzf;
     use std::{fs::File, io::BufReader};
     let fasta_reader = fasta::io::indexed_reader::Builder::default().build_from_path(fasta_path)?;
-    let mut expander  = IndelEquivalenceExpander::new(fasta_reader);
-    let mut store     = Store::<SampleVariant>::new();
+    let mut expander = IndelEquivalenceExpander::new(fasta_reader);
+    let mut store = Store::<SampleVariant>::new();
 
     // BCF (bgzf) or plain VCF — determine from extension.
     let is_bcf = vcf_path.extension().map_or(false, |e| e == "bcf");
     let hdr;
     let mut reader: Box<dyn Iterator<Item = Result<RecordBuf, Error>>> = if is_bcf {
         use noodles::bcf;
-        let mut bcf_reader = bcf::io::Reader::new(
-            bgzf::io::Reader::new(BufReader::new(File::open(vcf_path)?))
-        );
+        let mut bcf_reader =
+            bcf::io::Reader::new(bgzf::io::Reader::new(BufReader::new(File::open(vcf_path)?)));
         hdr = bcf_reader.read_header()?;
         Box::new(bcf_reader.record_bufs(&hdr).into())
     } else {
@@ -545,18 +569,23 @@ pub(crate) fn build_sample_store_expanded(
         hdr = vcf_reader.read_header()?;
         Box::new(vcf_reader.record_bufs(&hdr).into())
     };
+    let name_to_id = build_name_to_id(&hdr);
 
     let mut n_canonical = 0u64;
-    let mut n_expanded  = 0u64;
+    let mut n_expanded = 0u64;
 
     for rec_result in reader {
-        let mut rec  = rec_result?;
+        let mut rec = rec_result?;
         // Derive chromosome name for FASTA fetch.
-        let chrom_id = rec.reference_sequence_name().to_string();
-        let variants = expander.expand_sample(&mut rec, &hdr, &chrom_id)?;
-        n_expanded  += variants.len() as u64;
+        let chrom = rec.reference_sequence_name().to_string();
+        let ref_id = match name_to_id.get(&chrom) {
+            Some(&id) => id,
+            None => return Err(Error::NoReferenceSequenceId),
+        };
+        let variants = expander.expand_sample(&mut rec, &hdr, &chrom)?;
+        n_expanded += variants.len() as u64;
         n_canonical += 1;
-        store.insert_expanded(chrom_id, variants);
+        store.insert_expanded(ref_id, variants);
     }
 
     tracing::info!(
@@ -570,7 +599,7 @@ pub(crate) fn build_sample_store_expanded(
 
 /// Build a `Store<Population>` with indel equivalence expansion.
 pub(crate) fn build_population_store_expanded(
-    vcf_path:   &Path,
+    vcf_path: &Path,
     fasta_path: &Path,
 ) -> Result<Store<Population>, Error> {
     use noodles::bgzf;
@@ -579,15 +608,14 @@ pub(crate) fn build_population_store_expanded(
     // Validate that the .fai sidecar exists before opening the expander.
     let fasta_reader = fasta::io::indexed_reader::Builder::default().build_from_path(fasta_path)?;
     let mut expander = IndelEquivalenceExpander::new(fasta_reader);
-    let mut store    = Store::<Population>::new();
+    let mut store = Store::<Population>::new();
 
     let is_bcf = vcf_path.extension().map_or(false, |e| e == "bcf");
     let hdr;
     let mut reader: Box<dyn Iterator<Item = Result<RecordBuf, Error>>> = if is_bcf {
         use noodles::bcf;
-        let mut bcf_reader = bcf::io::Reader::new(
-            bgzf::io::Reader::new(BufReader::new(File::open(vcf_path)?))
-        );
+        let mut bcf_reader =
+            bcf::io::Reader::new(bgzf::io::Reader::new(BufReader::new(File::open(vcf_path)?)));
         hdr = bcf_reader.read_header()?;
         Box::new(bcf_reader.record_bufs(&hdr).into())
     } else {
@@ -595,16 +623,21 @@ pub(crate) fn build_population_store_expanded(
         hdr = vcf_reader.read_header()?;
         Box::new(vcf_reader.record_bufs(&hdr).into())
     };
+    let name_to_id = build_name_to_id(&hdr);
 
     let mut n_canonical = 0u64;
-    let mut n_expanded  = 0u64;
+    let mut n_expanded = 0u64;
     for rec_result in reader {
-        let mut rec     = rec_result?;
-        let chrom_id    = rec.reference_sequence_name().to_string();
-        let variants    = expander.expand_population(&mut rec, &hdr, &chrom_id.to_string())?;
-        n_expanded  += variants.len() as u64;
+        let mut rec = rec_result?;
+        let chrom = rec.reference_sequence_name().to_string();
+        let ref_id = match name_to_id.get(&chrom) {
+            Some(&id) => id,
+            None => return Err(Error::NoReferenceSequenceId),
+        };
+        let variants = expander.expand_population(&mut rec, &hdr, &chrom)?;
+        n_expanded += variants.len() as u64;
         n_canonical += 1;
-        store.insert_expanded(chrom_id, variants);
+        store.insert_expanded(ref_id, variants);
     }
 
     tracing::info!(

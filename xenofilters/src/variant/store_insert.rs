@@ -30,7 +30,7 @@ impl<V: Variant + Clone> Store<V> {
     /// O(log n + n) per call — acceptable at startup, never called on the
     /// hot path.
     pub(crate) fn insert(&mut self, ref_id: usize, v: V) {
-        let bucket = self.per_ref.entry(ref_id).or_insert_with(Vec::new);
+        let bucket = self.per_chr.entry(ref_id).or_insert_with(Vec::new);
         let pos = v.pos();
         // Stable sort: existing entries with the same pos keep their order;
         // new entry inserted after them.
@@ -43,7 +43,7 @@ impl<V: Variant + Clone> Store<V> {
     /// because each insert maintains the sorted invariant.
     pub(crate) fn insert_expanded(&mut self, ref_id: usize, variants: Vec<V>) {
         // Reserve capacity for the whole batch upfront.
-        let bucket = self.per_ref.entry(ref_id).or_insert_with(Vec::new);
+        let bucket = self.per_chr.entry(ref_id).or_insert_with(Vec::new);
         bucket.reserve(variants.len());
         drop(bucket); // release mutable borrow before calling insert in loop
 
@@ -59,10 +59,10 @@ impl<V: Variant + Clone> Store<V> {
     /// ensures adjacent equal elements are the candidates; `dedup_by` is
     /// O(n) after sorting.
     pub(crate) fn dedup(&mut self) {
-        for bucket in self.per_ref.values_mut() {
+        for bucket in self.per_chr.values_mut() {
             bucket.dedup_by(|a, b| {
                 // b comes first in sorted order; dedup_by retains b.
-                a.pos()         == b.pos()
+                a.pos() == b.pos()
                     && a.ref_allele() == b.ref_allele()
                     && a.alt_allele() == b.alt_allele()
             });

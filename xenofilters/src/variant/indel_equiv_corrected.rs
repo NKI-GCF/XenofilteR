@@ -215,6 +215,7 @@ impl WithAllelesRefId for Sample {
             ref_a: ref_a.to_vec(),
             alt_a: alt_a.to_vec(),
             genotype_quality: self.genotype_quality,
+            is_called: self.is_called,
         }
     }
 }
@@ -247,7 +248,6 @@ pub(crate) fn build_sample_store_expanded(
     name_to_id: &HashMap<String, usize>,
     gamete: bool,
 ) -> Result<Store<Sample>, Error> {
-
     let fasta_reader = fasta::io::indexed_reader::Builder::default().build_from_path(fasta_path)?;
 
     let mut expander = IndelEquivalenceExpander::new(fasta_reader);
@@ -288,7 +288,6 @@ pub(crate) fn build_population_store_expanded(
     fasta_path: &Path,
     name_to_id: &HashMap<String, usize>,
 ) -> Result<Store<Population>, Error> {
-
     let fasta_reader = fasta::io::indexed_reader::Builder::default().build_from_path(fasta_path)?;
 
     let mut expander = IndelEquivalenceExpander::new(fasta_reader);
