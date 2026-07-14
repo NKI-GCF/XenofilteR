@@ -76,50 +76,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             strip: args.common.io.strip_read_suffix,
         })
     }
-    pub(crate) fn new(
-        config: &CommonArgs,
-        mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
-        bed: [Option<TabixBed>; 2],
-        vcf: [Option<TabixVcf>; 2],
-    ) -> Result<Self, Error> {
-        assert_eq!(
-            aln.len(),
-            2,
-            "CollatedMatcher requires exactly 2 alignment streams"
-        );
-        let ambiguous_log_threshold = match config.scoring.ambiguous_threshold {
-            0 => 0.0,
-            t => (t as f64) * std::f64::consts::LN_10 / 10.0,
-        };
-        let penalties = config.scoring.to_penalties();
-        let add_decision_tag = config.io.add_decision_tag;
 
-        let aln_len = aln.len();
-        for (i, a) in aln.iter_mut().enumerate() {
-            a.init_writers(&config.io, i)?;
-        }
-
-        let mut iter = aln.into_iter();
-        let stream0 = iter.next().unwrap();
-        let stream1 = iter.next().unwrap();
-        let strip = config.io.strip_read_suffix;
-        let bisulfite = config.scoring.bisulfite; 
-
-        Ok(Self {
-            a: CollatedReader::new(stream0, bisulfite, 0),
-            b: CollatedReader::new(stream1, bisulfite, 1),
-            waiting_a: HashMap::with_hasher(RandomState::new()),
-            waiting_b: HashMap::with_hasher(RandomState::new()),
-            penalties,
-            scratch: Scratch::new(),
-            routing_counters: SmallVec::from_elem(0, aln_len * 4),
-            add_decision_tag,
-            ambiguous_log_threshold,
-            strip: config.io.strip_read_suffix,
-            bed,
-            vcf,
-        })
-    }
     // CONCURRENCY STUB — CollatedMatcher parallel worker pool
     //
     // `score_pair` / `nw_score_fragment` are embarrassingly parallel once a pair

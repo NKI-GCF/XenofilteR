@@ -7,7 +7,7 @@
 use crate::{
     alignment::{FragmentState, SimpleRec},
     aln_stream::AlignmentStream,
-    config::{NamesortedArgs, StripReadSuffix},
+    config::{NamesortedArgs, StripReadSuffix, args::resolve_threshold},
     header_name_to_id,
     penalty::Penalty,
     progress::ProgressReporter,
@@ -18,6 +18,7 @@ use noodles::sam::alignment::Record;
 use smallvec::SmallVec;
 use std::path::Path;
 use std::sync::Arc;
+use noodles::sam::alignment::record_buf::RecordBuf;
 
 pub const READ_CT: usize = 8;
 pub(crate) const VNT_LEN: usize = 16;
@@ -135,29 +136,7 @@ pub(crate) struct LineByLine<R> {
 }
 
 impl<R: SimpleRec> LineByLine<R> {
-    pub(crate) fn new_from_namesorted(
-        args: &NamesortedArgs,
-        aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>,
-    ) -> Result<Self, Error> {
-        let n = aln.len();
-        let chimeric_pairs = args.chimeric_pairs.parse_pairs(n)?;
-        let ambiguous_log_threshold = resolve_threshold(
-            args.common.scoring.ambiguous_threshold,
-            /* is_pass2 */ false,
-        );
-        Ok(Self {
-            aln,
-            routing_counters: SmallVec::from_elem(0, n * COUNTER_STRIDE),
-            penalties: args.common.scoring.to_penalty(),
-            ambiguous_log_threshold,
-            add_decision_tag: args.common.io.add_decision_tag,
-            bisulfite: args.common.bisulfite,
-            score_threads: args.parallel.score_threads,
-            chimeric_pairs,
-            stream_labels: args.chimeric.stream_labels.clone(),
-            progress: ProgressReporter::new(args.common.io.quiet),
-        })
-    }
+
     pub(crate) fn new(
         config: &NamesortedArgs,
         mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
@@ -170,12 +149,12 @@ impl<R: SimpleRec> LineByLine<R> {
             true => is_secondary,
             false => always_false,
         };
-        let ambiguous_log_threshold = match config.ambiguous_threshold {
+        let ambiguous_log_threshold = match config.common.scoring.ambiguous_threshold {
             0 => 0.0,
             t => (t as f64) * std::f64::consts::LN_10 / 10.0,
         };
         let is_new_qname: fn(&FragmentBuffer<R>, &[u8]) -> Option<bool> =
-            match config.strip_read_suffix {
+            match config.common.io.strip_read_suffix {
                 StripReadSuffix::True => |best: &FragmentBuffer<R>, qname2: &[u8]| {
                     best.first()
                         .map(|b| b.first_qname())
@@ -209,7 +188,7 @@ impl<R: SimpleRec> LineByLine<R> {
 
         // Clamp score_threads to aln.len() * 2 as a sanity bound; beyond that
         // the IO thread becomes the bottleneck and extra workers are idle.
-        let score_threads = config.score_threads.max(1);
+        let score_threads = config.parallel.score_threads.max(1);
 
         if score_threads > 1 {
             tracing::info!(
@@ -218,7 +197,7 @@ impl<R: SimpleRec> LineByLine<R> {
                  Output order is nondeterministic."
             );
         }
-        let progress = match config.quiet {
+        let progress = match config.common.io.quiet {
             true => None,
             false => Some(ProgressReporter::new()),
         };
@@ -249,6 +228,36 @@ impl<R: SimpleRec> LineByLine<R> {
             bisulfite: config.bisulfite,
             positive_regions,
             region_score_fn: config.region_score_fn,
+        })
+    }
+}
+
+impl LineByLine<RecordBuf> {
+    pub(crate) fn new_from_namesorted(
+        args: &NamesortedArgs,
+        aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>,
+    ) -> Result<Self, Error> {
+        let n = aln.len();
+        let chimeric_pairs = args.chimeric.parse_pairs(n)?;
+        let ambiguous_log_threshold = resolve_threshold(
+            args.common.scoring.ambiguous_threshold,
+            /* is_pass2 */ false,
+        );
+        let progress = match args.common.io.quiet {
+            true => None,
+            false => Some(ProgressReporter::new()),
+        };
+        Ok(Self {
+            aln,
+            routing_counters: SmallVec::from_elem(0, n * COUNTER_STRIDE),
+            penalties: args.common.scoring.to_penalty(),
+            ambiguous_log_threshold,
+            add_decision_tag: args.common.io.add_decision_tag,
+            bisulfite: args.common.scoring.bisulfite,
+            score_threads: args.parallel.score_threads,
+            chimeric_pairs,
+            stream_labels: args.chimeric.stream_labels.clone(),
+            progress,
         })
     }
 }

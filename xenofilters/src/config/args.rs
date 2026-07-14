@@ -215,16 +215,6 @@ impl ScoringArgs {
             self.error_model,
         )
     }
-    /// Build a [`Penalty`] from the current penalty parameters.
-    pub fn to_penalties(&self) -> Penalty {
-        Penalty::build(
-            self.gap_open,
-            self.gap_extend,
-            self.mismatch_penalty,
-            self.chimeric_junction_bases,
-            self.error_model,
-        )
-    }
 }
 
 impl VariantArgs {

@@ -119,42 +119,6 @@ impl<R: SimpleRec> HashLookup<R> {
             bisulfite: args.common.scoring.bisulfite,
         })
     }
-    pub(crate) fn new(
-        config: &HashlookupArgs,
-        mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
-        bed: [Option<AmbiguousRegions>; 2],
-        vcf: [Option<DiagnosticVariants>; 2],
-    ) -> Result<Self, Error> {
-        let aln_len = aln.len();
-        if aln_len != 2 {
-            return Err(Error::AlgoRequiresTwoStreams);
-        }
-        let ambiguous_log_threshold = match config.common.scoring.ambiguous_threshold {
-            0 => 0.0,
-            t => (t as f64) * std::f64::consts::LN_10 / 10.0,
-        };
-        for (i, a) in aln.iter_mut().enumerate() {
-            a.init_writers(&config.common.io, i)?;
-        }
-        Ok(Self {
-            aln,
-            table: new_fragment_table(),
-            staged: StagedOutput::new(),
-            seq_counter: 0,
-            record_counters: [0, 0],
-            penalties: config.common.scoring.to_penalties(),
-            scratch: Scratch::new(),
-            routing_counters: SmallVec::from_elem(0, aln_len * 4),
-            add_decision_tag: config.common.io.add_decision_tag,
-            ambiguous_log_threshold,
-            strip: config.common.io.strip_read_suffix,
-            bed,
-            vcf,
-            bisulfite: config.common.scoring.bisulfite,
-            codec_prefix: Vec::new(),
-            positive: [None, None],
-        })
-    }
 
     pub(crate) fn process(&mut self, config: &HashlookupArgs) -> Result<(), Error> {
         let mut exhausted = [false; 2];
