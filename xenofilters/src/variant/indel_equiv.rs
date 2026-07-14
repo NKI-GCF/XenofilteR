@@ -558,16 +558,29 @@ pub(crate) fn build_sample_store_expanded(
     // BCF (bgzf) or plain VCF — determine from extension.
     let is_bcf = vcf_path.extension().map_or(false, |e| e == "bcf");
     let hdr;
-    let mut reader: Box<dyn Iterator<Item = Result<RecordBuf, Error>>> = if is_bcf {
+
+    // Declare uninitialized readers here so they live through the whole function
+    let mut bcf_reader;
+    let mut vcf_reader;
+    // Add `+ '_` to tell Rust this Box borrows local variables
+    let reader: Box<dyn Iterator<Item = Result<RecordBuf, Error>> + '_> = if is_bcf {
         use noodles::bcf;
-        let mut bcf_reader =
+        bcf_reader =
             bcf::io::Reader::new(bgzf::io::Reader::new(BufReader::new(File::open(vcf_path)?)));
         hdr = bcf_reader.read_header()?;
-        Box::new(bcf_reader.record_bufs(&hdr).into())
+        Box::new(
+            bcf_reader
+                .record_bufs(&hdr)
+                .map(|res| res.map_err(Error::from)),
+        )
     } else {
-        let mut vcf_reader = vcf::io::Reader::new(BufReader::new(File::open(vcf_path)?));
+        vcf_reader = vcf::io::Reader::new(BufReader::new(File::open(vcf_path)?));
         hdr = vcf_reader.read_header()?;
-        Box::new(vcf_reader.record_bufs(&hdr).into())
+        Box::new(
+            vcf_reader
+                .record_bufs(&hdr)
+                .map(|res| res.map_err(Error::from)),
+        )
     };
     let name_to_id = build_name_to_id(&hdr);
 
@@ -612,16 +625,30 @@ pub(crate) fn build_population_store_expanded(
 
     let is_bcf = vcf_path.extension().map_or(false, |e| e == "bcf");
     let hdr;
-    let mut reader: Box<dyn Iterator<Item = Result<RecordBuf, Error>>> = if is_bcf {
+
+    // Declare uninitialized readers here so they live through the whole function
+    let mut bcf_reader;
+    let mut vcf_reader;
+
+    // Add `+ '_` to tell Rust this Box borrows local variables
+    let reader: Box<dyn Iterator<Item = Result<RecordBuf, Error>> + '_> = if is_bcf {
         use noodles::bcf;
-        let mut bcf_reader =
+        bcf_reader =
             bcf::io::Reader::new(bgzf::io::Reader::new(BufReader::new(File::open(vcf_path)?)));
         hdr = bcf_reader.read_header()?;
-        Box::new(bcf_reader.record_bufs(&hdr).into())
+        Box::new(
+            bcf_reader
+                .record_bufs(&hdr)
+                .map(|res| res.map_err(Error::from)),
+        )
     } else {
-        let mut vcf_reader = vcf::io::Reader::new(BufReader::new(File::open(vcf_path)?));
+        vcf_reader = vcf::io::Reader::new(BufReader::new(File::open(vcf_path)?));
         hdr = vcf_reader.read_header()?;
-        Box::new(vcf_reader.record_bufs(&hdr).into())
+        Box::new(
+            vcf_reader
+                .record_bufs(&hdr)
+                .map(|res| res.map_err(Error::from)),
+        )
     };
     let name_to_id = build_name_to_id(&hdr);
 

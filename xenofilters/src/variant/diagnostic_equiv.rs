@@ -16,16 +16,14 @@ use std::{
     path::Path,
 };
 
-use noodles::{bgzf, bcf, vcf};
+use noodles::{bcf, bgzf, vcf};
 use tracing::{debug, warn};
 
+use crate::Error;
 use crate::{
     region::diagnostic::{DiagnosticSite, DiagnosticVariants},
-    variant::indel_equiv::{
-        classify, enumerate_equivalents, IndelEquivalenceExpander, IndelKind,
-    },
+    variant::indel_equiv::{classify, enumerate_equivalents, IndelEquivalenceExpander, IndelKind},
 };
-use crate::Error;
 use noodles::vcf::variant::record::AlternateBases;
 
 // ---------------------------------------------------------------------------
@@ -35,7 +33,7 @@ use noodles::vcf::variant::record::AlternateBases;
 impl crate::variant::indel_equiv::WithAlleles for DiagnosticSite {
     fn with_alleles(&self, pos_0based: usize, ref_a: &[u8], _alt_a: &[u8]) -> Self {
         DiagnosticSite {
-            pos:     pos_0based,
+            pos: pos_0based,
             ref_len: ref_a.len(),
         }
     }
@@ -80,37 +78,53 @@ pub(crate) const INDEL_EXPAND_PADDING_DEFAULT: usize = 50;
 /// into all equivalent positions so that overlap detection works regardless
 /// of aligner representation.
 pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
-    vcf_path:   &Path,
-    expander:   &mut IndelEquivalenceExpander<R>,
+    vcf_path: &Path,
+    expander: &mut IndelEquivalenceExpander<R>,
     name_to_id: &HashMap<String, usize>,
-    header:     &vcf::Header,
+    header: &vcf::Header,
 ) -> Result<DiagnosticVariants, Error> {
     use std::{fs::File, io::BufReader};
 
     let is_bcf = vcf_path.extension().map_or(false, |e| e == "bcf");
-    let records: Box<dyn Iterator<Item = Result<vcf::variant::RecordBuf, Error>>> = if is_bcf {
-        let mut r = bcf::io::Reader::new(
-            bgzf::io::Reader::new(BufReader::new(File::open(vcf_path)?))
-        );
-        let _h = r.read_header()?;
-        Box::new(r.record_bufs(header).into())
+
+    // Hoist the readers to the outer scope
+    let mut bcf_reader;
+    let mut vcf_reader;
+
+    // Add `+ '_` here as well
+    let records: Box<dyn Iterator<Item = Result<vcf::variant::RecordBuf, Error>> + '_> = if is_bcf {
+        bcf_reader =
+            bcf::io::Reader::new(bgzf::io::Reader::new(BufReader::new(File::open(vcf_path)?)));
+        let _h = bcf_reader.read_header()?;
+        Box::new(
+            bcf_reader
+                .record_bufs(header)
+                .map(|res| res.map_err(Error::from)),
+        )
     } else {
-        let mut r = vcf::io::Reader::new(BufReader::new(File::open(vcf_path)?));
-        let _h    = r.read_header()?;
-        Box::new(r.record_bufs(header).into())
+        vcf_reader = vcf::io::Reader::new(BufReader::new(File::open(vcf_path)?));
+        let _h = vcf_reader.read_header()?;
+        Box::new(
+            vcf_reader
+                .record_bufs(header)
+                .map(|res| res.map_err(Error::from)),
+        )
     };
 
     let mut per_ref: Vec<Vec<DiagnosticSite>> = Vec::new();
     let mut n_canonical = 0u64;
-    let mut n_expanded  = 0u64;
+    let mut n_expanded = 0u64;
 
     for rec_result in records {
-        let mut rec  = rec_result?;
-        let chrom    = rec.reference_sequence_name().to_string();
-        let ref_id   = match name_to_id.get(&chrom) {
+        let rec = rec_result?;
+        let chrom = rec.reference_sequence_name().to_string();
+        let ref_id = match name_to_id.get(&chrom) {
             Some(&id) => id,
             None => {
-                warn!(chrom, "chromosome not in name_to_id map; skipping diagnostic record");
+                warn!(
+                    chrom,
+                    "chromosome not in name_to_id map; skipping diagnostic record"
+                );
                 continue;
             }
         };
@@ -122,12 +136,17 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
             .iter()
             .map(|b| b.to_ascii_uppercase())
             .collect();
-        let alt_bytes: Vec<u8> = rec
-            .alternate_bases()
-            .iter()
-            .next()
-            .transpose()?
-            .map_or(Vec::new(), |alt| alt.as_bytes().iter().map(|b| b.to_ascii_uppercase()).collect());
+        let alt_bytes: Vec<u8> =
+            rec.alternate_bases()
+                .iter()
+                .next()
+                .transpose()?
+                .map_or(Vec::new(), |alt| {
+                    alt.as_bytes()
+                        .iter()
+                        .map(|b| b.to_ascii_uppercase())
+                        .collect()
+                });
 
         if alt_bytes.is_empty() {
             warn!(chrom, "diagnostic record has no ALT allele; skipped");
@@ -136,7 +155,7 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
 
         let pos_0based: usize = rec
             .variant_start()
-            .map(|p| p.get() - 1)   // VCF 1-based → 0-based
+            .map(|p| p.get() - 1) // VCF 1-based → 0-based
             .unwrap_or(0);
 
         n_canonical += 1;
@@ -150,10 +169,12 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
                     "Complex diagnostic allele; stored as-is without expansion"
                 );
             }
-            vec![DiagnosticSite { pos: pos_0based, ref_len: ref_bytes.len() }]
+            vec![DiagnosticSite {
+                pos: pos_0based,
+                ref_len: ref_bytes.len(),
+            }]
         } else {
-            let (ctx_start, ctx) = expander
-                .fetch_context(&chrom, pos_0based, ref_bytes.len())?;
+            let (ctx_start, ctx) = expander.fetch_context(&chrom, pos_0based, ref_bytes.len())?;
 
             let equivalents =
                 enumerate_equivalents(pos_0based, &ref_bytes, &alt_bytes, &ctx, ctx_start);
@@ -166,7 +187,10 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
             );
             equivalents
                 .iter()
-                .map(|eq| DiagnosticSite { pos: eq.pos, ref_len: eq.ref_a.len() })
+                .map(|eq| DiagnosticSite {
+                    pos: eq.pos,
+                    ref_len: eq.ref_a.len(),
+                })
                 .collect()
         };
 
@@ -183,7 +207,11 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
         bucket.sort_unstable_by_key(|s| s.pos);
         bucket.dedup_by_key(|s| s.pos);
     }
-    let max_ref_len = per_ref.iter().flat_map(|b| b.iter().map(|s| s.ref_len)).max().unwrap_or(1);
+    let max_ref_len = per_ref
+        .iter()
+        .flat_map(|b| b.iter().map(|s| s.ref_len))
+        .max()
+        .unwrap_or(1);
 
     tracing::info!(
         vcf  = %vcf_path.display(),
@@ -192,5 +220,8 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
         "Diagnostic variant store built with indel equivalence expansion"
     );
 
-    Ok(DiagnosticVariants { per_ref, max_ref_len })
+    Ok(DiagnosticVariants {
+        per_ref,
+        max_ref_len,
+    })
 }
