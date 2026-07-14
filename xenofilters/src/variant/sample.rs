@@ -7,15 +7,16 @@ use noodles::vcf::Header;
 // FIXME, a variant could have multiple ALT alleles, and the GT could be 0/2, so we should ideally
 // have one Sample per ALT allele, and check if each ALT allele is present in the GT. For
 // simplicity, this example assumes only one ALT allele and GT is either 0/1 or 1/1 for the ALT.
+#[derive(Debug, Clone)]
 pub(crate) struct Sample {
-    ref_id: usize,
-    pos: usize,
-    ref_a: Vec<u8>,
-    alt_a: Vec<u8>,
+    pub(crate) ref_id: usize,
+    pub(crate) pos: usize,
+    pub(crate) ref_a: Vec<u8>,
+    pub(crate) alt_a: Vec<u8>,
     /// Genotype Quality (GQ) from the FORMAT field
-    genotype_quality: f64,
+    pub(crate) genotype_quality: f64,
     /// True if GT is 0/1 or 1/1
-    is_called: bool,
+    pub(crate) is_called: bool,
 }
 
 impl Variant for Sample {
@@ -46,6 +47,8 @@ pub(crate) fn parse_sample_record(
     record: &mut Record,
     header: &Header,
 ) -> Result<Vec<Sample>, Error> {
+    let pos = record.variant_start().transpose()?.map(|p| p.get()).unwrap_or(0);
+    let ref_id = record.reference_sequence_id()?;
     // Genotype representation as a vector of GenotypeAllele.
     // 1. Get GT and GQ from FORMAT
     let samples = record.samples()?;
@@ -75,11 +78,8 @@ pub(crate) fn parse_sample_record(
         let is_called = gt == alt_index;
 
         variants.push(Sample {
-            pos: record
-                .variant_start()
-                .transpose()?
-                .map(|p| p.get())
-                .unwrap_or(0),
+            ref_id,
+            pos,
             ref_a: ref_a.clone(),
             alt_a: alt_a.to_vec(),
             genotype_quality: gq as f64,

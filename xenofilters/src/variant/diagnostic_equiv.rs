@@ -16,7 +16,6 @@ use std::{
     path::Path,
 };
 
-use anyhow::{Context, Result};
 use noodles::{bgzf, bcf, vcf};
 use tracing::{debug, warn};
 
@@ -26,6 +25,8 @@ use crate::{
         classify, enumerate_equivalents, IndelEquivalenceExpander, IndelKind,
     },
 };
+use crate::Error;
+use noodles::vcf::variant::record::AlternateBases;
 
 // ---------------------------------------------------------------------------
 // WithAlleles for DiagnosticSite
@@ -83,20 +84,20 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
     expander:   &mut IndelEquivalenceExpander<R>,
     name_to_id: &HashMap<String, usize>,
     header:     &vcf::Header,
-) -> Result<DiagnosticVariants> {
+) -> Result<DiagnosticVariants, Error> {
     use std::{fs::File, io::BufReader};
 
     let is_bcf = vcf_path.extension().map_or(false, |e| e == "bcf");
-    let records: Box<dyn Iterator<Item = Result<vcf::variant::RecordBuf>>> = if is_bcf {
+    let records: Box<dyn Iterator<Item = Result<vcf::variant::RecordBuf, Error>>> = if is_bcf {
         let mut r = bcf::io::Reader::new(
             bgzf::io::Reader::new(BufReader::new(File::open(vcf_path)?))
         );
         let _h = r.read_header()?;
-        Box::new(r.record_bufs(header).map(|r| r.map_err(anyhow::Error::from)))
+        Box::new(r.record_bufs(header).into())
     } else {
         let mut r = vcf::io::Reader::new(BufReader::new(File::open(vcf_path)?));
         let _h    = r.read_header()?;
-        Box::new(r.record_bufs(header).map(|r| r.map_err(anyhow::Error::from)))
+        Box::new(r.record_bufs(header).into())
     };
 
     let mut per_ref: Vec<Vec<DiagnosticSite>> = Vec::new();
@@ -117,6 +118,7 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
         // Fetch alleles (ref + first alt).
         let ref_bytes: Vec<u8> = rec
             .reference_bases()
+            .as_bytes()
             .iter()
             .map(|b| b.to_ascii_uppercase())
             .collect();
@@ -124,8 +126,8 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
             .alternate_bases()
             .iter()
             .next()
-            .map(|a| a.unwrap_or(&[]).iter().map(|b| b.to_ascii_uppercase()).collect())
-            .unwrap_or_default();
+            .transpose()?
+            .map_or(Vec::new(), |alt| alt.as_bytes().iter().map(|b| b.to_ascii_uppercase()).collect());
 
         if alt_bytes.is_empty() {
             warn!(chrom, "diagnostic record has no ALT allele; skipped");
@@ -134,8 +136,6 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
 
         let pos_0based: usize = rec
             .variant_start()
-            .transpose()
-            .context("variant_start")?
             .map(|p| p.get() - 1)   // VCF 1-based → 0-based
             .unwrap_or(0);
 
@@ -153,8 +153,7 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
             vec![DiagnosticSite { pos: pos_0based, ref_len: ref_bytes.len() }]
         } else {
             let (ctx_start, ctx) = expander
-                .fetch_context(&chrom, pos_0based, ref_bytes.len())
-                .with_context(|| format!("diagnostic FASTA fetch at {chrom}:{}", pos_0based + 1))?;
+                .fetch_context(&chrom, pos_0based, ref_bytes.len())?;
 
             let equivalents =
                 enumerate_equivalents(pos_0based, &ref_bytes, &alt_bytes, &ctx, ctx_start);
@@ -184,6 +183,7 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
         bucket.sort_unstable_by_key(|s| s.pos);
         bucket.dedup_by_key(|s| s.pos);
     }
+    let max_ref_len = per_ref.iter().flat_map(|b| b.iter().map(|s| s.ref_len)).max().unwrap_or(1);
 
     tracing::info!(
         vcf  = %vcf_path.display(),
@@ -192,5 +192,5 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
         "Diagnostic variant store built with indel equivalence expansion"
     );
 
-    Ok(DiagnosticVariants { per_ref })
+    Ok(DiagnosticVariants { per_ref, max_ref_len })
 }

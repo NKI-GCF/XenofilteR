@@ -8,7 +8,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, Error)]
 pub enum Error {
     #[error(transparent)]
-    MdError(#[from] std::io::Error),
+    StdIo(#[from] std::io::Error),
 
     #[error(transparent)]
     SerdeJson(#[from] serde_json::Error),

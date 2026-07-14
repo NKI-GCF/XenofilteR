@@ -40,7 +40,13 @@ pub(crate) struct Store<V: Variant> {
 }
 
 impl<V: Variant> Store<V> {
-    pub(crate) fn new(
+    pub(crate) fn new() -> Store<V> {
+        Store {
+            per_chr: HashMap::new(),
+            max_variant_len: 1,
+        }
+    }
+    pub(crate) fn new_from_path(
         f: &Path,
         parser: impl Fn(&mut Record, &Header) -> Result<Vec<V>, Error>,
     ) -> Result<Store<V>, Error> {

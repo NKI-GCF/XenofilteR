@@ -6,13 +6,14 @@ use noodles::vcf::{
     Header,
 };
 
+#[derive(Debug, Clone)]
 pub(crate) struct Population {
-    ref_id: usize,
-    pos: usize,
-    ref_a: Vec<u8>,
-    alt_a: Vec<u8>,
+    pub(crate) ref_id: usize,
+    pub(crate) pos: usize,
+    pub(crate) ref_a: Vec<u8>,
+    pub(crate) alt_a: Vec<u8>,
     /// Allele frequency, e.g., 0.01 (1%)
-    allele_frequency: f64,
+    pub(crate) allele_frequency: f64,
 }
 
 impl Variant for Population {
@@ -38,6 +39,7 @@ pub(crate) fn parse_population_record(
     record: &mut Record,
     header: &Header,
 ) -> Result<Vec<Population>, Error> {
+    let ref_id = record.reference_sequence_id()?;
     let pos = record
         .variant_start()
         .transpose()?
@@ -81,6 +83,7 @@ pub(crate) fn parse_population_record(
                 .or_else(|| afs.first().copied())
                 .ok_or(Error::MissingOrInvalidAfTag)?;
             Ok(Population {
+                ref_id,
                 pos,
                 ref_a: ref_a.clone(),
                 alt_a: alt_a.clone(),
