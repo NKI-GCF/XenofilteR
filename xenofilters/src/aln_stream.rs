@@ -34,14 +34,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use noodles::fasta::io::indexed_reader::Builder;
 use std::path::Path;
-use crate::config::args::IoArgs;
+use crate::config::run_config::RunConfig;
 
 pub(crate) trait AlignmentStream<R: SimpleRec> {
     fn next_qname(&self) -> &[u8];
     fn un_next(&mut self, rec: R) -> Result<(), Error>;
     fn next_rec(&mut self) -> Result<Option<R>, Error>;
     fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<(), Error>;
-    fn init_writers(&mut self, _opt: &IoArgs, _i: usize) -> Result<(), Error> {
+    fn init_writers(&mut self, _opt: &RunConfig, _i: usize) -> Result<(), Error> {
         Ok(())
     }
     fn variant_store(&self) -> Option<Arc<dyn StoreTrait>> {
@@ -76,14 +76,14 @@ where
     R: SimpleRec + FromBamRecord,
 {
     pub(crate) fn new(
-        opt: &mut IoArgs,
+        opt: &mut RunConfig,
         i: usize,
         positive_regions: Option<(PositiveRegions, ScoreFn)>,
     ) -> Result<Self, Error> {
-        let path = opt.alignment[i].as_str();
-        let seekable_required = MatchingAlgorithm::Hashlookup == opt.matching_algorithm;
+        let path = opt.alignment[i].to_string_lossy();
+        let seekable_required = MatchingAlgorithm::Hashlookup == opt.algorithm;
 
-        let file = File::open(path)?;
+        let file = File::open(&opt.alignment[i])?;
 
         // MultithreadedReader parallelises bgzf block decompression.
         // Requires threads > 1 AND a non-seeking backend (namesorted / collated).
@@ -111,12 +111,12 @@ where
             .any(|id| id.ends_with(SUFFIX_AMBIGUOUS.as_bytes()));
 
         if is_pass2 {
-            opt.is_pass2 = true; // set on IoArgs; overrides threshold selection
+            opt.is_pass2 = true; // set on RunConfig; overrides threshold selection
         }
 
         // Sort-order check (namesorted only).
         let raw = bam.read_raw_header_bytes()?;
-        if MatchingAlgorithm::Namesorted == opt.matching_algorithm {
+        if MatchingAlgorithm::Namesorted == opt.algorithm {
             for parts in raw
                 .split(|&b| b == b'\n')
                 .map(|s| s.split(|&b| b == b'\t').collect::<Vec<_>>())
@@ -283,17 +283,17 @@ where
         Ok(())
     }
 
-    fn init_writers(&mut self, opt: &IoArgs, i: usize) -> Result<(), Error> {
-        let add_pg = !opt.no_program_line;
+    fn init_writers(&mut self, opt: &RunConfig, i: usize) -> Result<(), Error> {
+        let add_pg = !opt.io.no_program_line;
         let threads = self.threads.into();
         self.output = opt
-            .output
+            .output.output
             .get(i)
             .map(|f| out_from_file(f, &self.header, add_pg, threads))
             .transpose()?;
         let expanded = expand_header(self.header.clone(), opt.write_discarded);
         self.ambiguous = opt
-            .ambiguous_output
+            .output.ambiguous_output
             .get(i)
             .map(|f| out_from_file(f, &expanded, add_pg, threads))
             .transpose()?;
