@@ -51,7 +51,6 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
                 return Ok(None);
             }
         };
-
         let canonicals = match crate::variant::sample::parse_sample_record(rec, header) {
             Ok(v) => v,
             Err(e) => {
@@ -59,11 +58,51 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
                 return Ok(None);
             }
         };
+        let out =
+            self.expand_with_refid_inner(canonicals, &chrom, ref_id, "Sample indel expansion")?;
+        Ok(Some((ref_id, out)))
+    }
 
+    /// Expand one VCF record into `(ref_id, Vec<Population>)`.
+    pub(crate) fn expand_population_with_refid(
+        &mut self,
+        rec: &mut vcf::variant::RecordBuf,
+        header: &vcf::Header,
+        name_to_id: &HashMap<String, usize>,
+    ) -> Result<Option<(usize, Vec<Population>)>, Error> {
+        let chrom = rec.reference_sequence_name().to_string();
+        let ref_id = match name_to_id.get(&chrom) {
+            Some(&id) => id,
+            None => {
+                warn!(chrom, "chromosome absent; skipping population record");
+                return Ok(None);
+            }
+        };
+        let canonicals = match crate::variant::population::parse_population_record(rec, header) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(chrom, "parse_population_record: {e}; skipping");
+                return Ok(None);
+            }
+        };
+        let out =
+            self.expand_with_refid_inner(canonicals, &chrom, ref_id, "Population indel expansion")?;
+        Ok(Some((ref_id, out)))
+    }
+
+    fn expand_with_refid_inner<V>(
+        &mut self,
+        canonicals: Vec<V>,
+        chrom: &str,
+        ref_id: usize,
+        expand_label: &str,
+    ) -> Result<Vec<V>, Error>
+    where
+        V: Clone + crate::variant::Variant + WithAllelesRefId,
+    {
         let mut out = Vec::new();
         for canon in &canonicals {
             let kind = classify(canon.ref_allele(), canon.alt_allele());
-
             if matches!(kind, IndelKind::Complex) {
                 warn!(chrom, pos = canon.pos() + 1, "Complex allele not expanded");
                 out.push(canon.with_alleles_refid(
@@ -83,9 +122,8 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
                 ));
                 continue;
             }
-
             let (ctx_start, ctx) =
-                self.fetch_context(&chrom, canon.pos(), canon.ref_allele().len())?;
+                self.fetch_context(chrom, canon.pos(), canon.ref_allele().len())?;
             let equivalents = enumerate_equivalents(
                 canon.pos(),
                 canon.ref_allele(),
@@ -97,90 +135,42 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
                 chrom,
                 pos = canon.pos() + 1,
                 n = equivalents.len(),
-                "Sample indel expansion"
+                "{expand_label}"
             );
-
             for eq in &equivalents {
                 out.push(canon.with_alleles_refid(ref_id, eq.pos, &eq.ref_a, &eq.alt_a));
             }
         }
-        Ok(Some((ref_id, out)))
+        Ok(out)
     }
+}
 
-    /// Expand one VCF record into `(ref_id, Vec<Population>)`.
-    pub(crate) fn expand_population_with_refid(
-        &mut self,
-        rec: &mut vcf::variant::RecordBuf,
-        header: &vcf::Header,
-        name_to_id: &HashMap<String, usize>,
-    ) -> Result<Option<(usize, Vec<Population>)>, Error> {
-        let chrom = rec.reference_sequence_name().to_string();
-        let ref_id = match name_to_id.get(&chrom) {
-            Some(&id) => id,
-            None => {
-                warn!(chrom, "chromosome absent; skipping population record");
-                return Ok(None);
-            }
-        };
-
-        let canonicals = match crate::variant::population::parse_population_record(rec, header) {
-            Ok(v) => v,
-            Err(e) => {
-                warn!(chrom, "parse_population_record: {e}; skipping");
-                return Ok(None);
-            }
-        };
-
-        let mut out = Vec::new();
-        for canon in &canonicals {
-            let kind = classify(canon.ref_allele(), canon.alt_allele());
-
-            if matches!(kind, IndelKind::Complex) {
-                warn!(
-                    chrom,
-                    pos = canon.pos() + 1,
-                    "Complex population allele not expanded"
-                );
-                out.push(canon.with_alleles_refid(
-                    ref_id,
-                    canon.pos(),
-                    canon.ref_allele(),
-                    canon.alt_allele(),
-                ));
-                continue;
-            }
-            if matches!(kind, IndelKind::Snp) {
-                out.push(canon.with_alleles_refid(
-                    ref_id,
-                    canon.pos(),
-                    canon.ref_allele(),
-                    canon.alt_allele(),
-                ));
-                continue;
-            }
-
-            let (ctx_start, ctx) =
-                self.fetch_context(&chrom, canon.pos(), canon.ref_allele().len())?;
-            let equivalents = enumerate_equivalents(
-                canon.pos(),
-                canon.ref_allele(),
-                canon.alt_allele(),
-                &ctx,
-                ctx_start,
-            );
-            debug!(
-                chrom,
-                pos = canon.pos() + 1,
-                n = equivalents.len(),
-                "Population indel expansion"
-            );
-
-            for eq in &equivalents {
-                out.push(canon.with_alleles_refid(ref_id, eq.pos, &eq.ref_a, &eq.alt_a));
-            }
+fn build_expanded_store_corrected<V>(
+    vcf_path: &Path,
+    log_label: &str,
+    mut expand: impl FnMut(
+        &mut vcf::variant::RecordBuf,
+        &vcf::Header,
+    ) -> Result<Option<(usize, Vec<V>)>, Error>,
+) -> Result<Store<V>, Error>
+where
+    V: Variant + Clone,
+{
+    let mut store = Store::<V>::new();
+    let header = read_vcf_or_bcf_header(vcf_path)?;
+    let mut n_canonical = 0u64;
+    let mut n_expanded = 0u64;
+    for_each_vcf_record(vcf_path, &header, |rec| {
+        n_canonical += 1;
+        if let Some((ref_id, variants)) = expand(rec, &header)? {
+            n_expanded += variants.len() as u64;
+            store.insert_expanded(ref_id, variants);
         }
-        Ok(Some((ref_id, out)))
-    }
+        Ok(())
+    })?;
+    store.dedup();
+    tracing::info!(vcf = %vcf_path.display(), n_canonical, n_expanded, "{log_label}");
+    Ok(store)
 }
 
 // ---------------------------------------------------------------------------
@@ -248,34 +238,12 @@ pub(crate) fn build_sample_store_expanded(
     gamete: bool,
 ) -> Result<Store<Sample>, Error> {
     let fasta_reader = fasta::io::indexed_reader::Builder::default().build_from_path(fasta_path)?;
-
     let mut expander = IndelEquivalenceExpander::new(fasta_reader);
-    let mut store = Store::<Sample>::new();
-
-    let header = read_vcf_or_bcf_header(vcf_path)?;
-    let mut n_canonical = 0u64;
-    let mut n_expanded = 0u64;
-
-    for_each_vcf_record(vcf_path, &header, |rec| {
-        n_canonical += 1;
-        if let Some((ref_id, variants)) =
-            expander.expand_sample_with_refid(rec, &header, name_to_id, gamete)?
-        {
-            n_expanded += variants.len() as u64;
-            store.insert_expanded(ref_id, variants);
-        }
-        Ok(())
-    })?;
-
-    store.dedup();
-
-    tracing::info!(
-        vcf = %vcf_path.display(),
-        n_canonical,
-        n_expanded,
-        "Sample store built with indel equivalence expansion"
-    );
-    Ok(store)
+    build_expanded_store_corrected(
+        vcf_path,
+        "Sample store built with indel equivalence expansion",
+        |rec, hdr| expander.expand_sample_with_refid(rec, hdr, name_to_id, gamete),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -288,34 +256,12 @@ pub(crate) fn build_population_store_expanded(
     name_to_id: &HashMap<String, usize>,
 ) -> Result<Store<Population>, Error> {
     let fasta_reader = fasta::io::indexed_reader::Builder::default().build_from_path(fasta_path)?;
-
     let mut expander = IndelEquivalenceExpander::new(fasta_reader);
-    let mut store = Store::<Population>::new();
-
-    let header = read_vcf_or_bcf_header(vcf_path)?;
-    let mut n_canonical = 0u64;
-    let mut n_expanded = 0u64;
-
-    for_each_vcf_record(vcf_path, &header, |rec| {
-        n_canonical += 1;
-        if let Some((ref_id, variants)) =
-            expander.expand_population_with_refid(rec, &header, name_to_id)?
-        {
-            n_expanded += variants.len() as u64;
-            store.insert_expanded(ref_id, variants);
-        }
-        Ok(())
-    })?;
-
-    store.dedup();
-
-    tracing::info!(
-        vcf = %vcf_path.display(),
-        n_canonical,
-        n_expanded,
-        "Population store built with indel equivalence expansion"
-    );
-    Ok(store)
+    build_expanded_store_corrected(
+        vcf_path,
+        "Population store built with indel equivalence expansion",
+        |rec, hdr| expander.expand_population_with_refid(rec, hdr, name_to_id),
+    )
 }
 
 // ---------------------------------------------------------------------------

@@ -11,12 +11,12 @@
 //   VCF input  — 1-based, inclusive (noodles Variant::variant_start()).
 //   All output — 0-based (pos = vcf_pos - 1).
 
-use crate::variant::Variant;
 use crate::{
     variant::{
         population::{parse_population_record, Population},
         sample::{parse_sample_record, Sample as SampleVariant},
         store::Store,
+        Variant,
     },
     Error,
 };
@@ -24,10 +24,7 @@ use fasta::io::IndexedReader;
 use noodles::{
     core::Region,
     fasta, vcf,
-    vcf::variant::record::{
-        samples::{Sample, Series},
-        AlternateBases, ReferenceBases,
-    },
+    vcf::variant::record::{AlternateBases, ReferenceBases},
     vcf::variant::RecordBuf,
 };
 use smallvec::SmallVec;
@@ -381,85 +378,26 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
         Ok((ctx_start, bytes))
     }
 
-    /// Expand a single sample VCF record into all equivalent `SampleVariant`s.
-    ///
-    /// The original scoring parameters (`genotype_quality`, `alt_haplotype`,
-    /// `phase_set`, `gamete_mode`) are replicated unchanged across all
-    /// equivalent representations; only `pos`, `ref_a`, and `alt_a` change.
-    pub(crate) fn expand_sample(
+    /// Shared body of `expand_sample` and `expand_population`.
+    fn expand_variants<V>(
         &mut self,
         record: &mut RecordBuf,
         header: &vcf::Header,
         chrom: &str,
-    ) -> Result<Vec<SampleVariant>, Error> {
-        // Parse the canonical variant first (existing function; unchanged).
-        let canonicals = match parse_sample_record(record, header) {
+        parse_fn: impl Fn(&mut RecordBuf, &vcf::Header) -> Result<Vec<V>, Error>,
+        parse_label: &str,
+    ) -> Result<Vec<V>, Error>
+    where
+        V: Clone + WithAlleles + Variant,
+    {
+        let canonicals = match parse_fn(record, header) {
             Ok(v) => v,
             Err(e) => {
-                warn!(chrom, "parse_sample_record failed: {e}; skipping record");
+                warn!(chrom, "{parse_label} failed: {e}; skipping");
                 return Ok(vec![]);
             }
         };
-
-        let mut out: Vec<SampleVariant> = Vec::new();
-        for canon in &canonicals {
-            let kind = classify(canon.ref_allele(), canon.alt_allele());
-            if matches!(kind, IndelKind::Snp) {
-                out.push(canon.clone());
-                continue;
-            }
-            if matches!(kind, IndelKind::Complex) {
-                warn!(
-                    chrom,
-                    pos = canon.pos() + 1, // report 1-based in warning
-                    "Complex allele skipped for indel equivalence expansion"
-                );
-                out.push(canon.clone());
-                continue;
-            }
-
-            let ref_len = canon.ref_allele().len();
-            let (ctx_start, ctx) = self.fetch_context(chrom, canon.pos(), ref_len)?;
-
-            let equivalents = enumerate_equivalents(
-                canon.pos(),
-                canon.ref_allele(),
-                canon.alt_allele(),
-                &ctx,
-                ctx_start,
-            );
-
-            debug!(
-                chrom,
-                pos = canon.pos() + 1,
-                n_equivalents = equivalents.len(),
-                "Indel equivalence expansion"
-            );
-
-            for eq in &equivalents {
-                // Clone with shifted coordinates; scoring parameters preserved.
-                out.push(canon.with_alleles(eq.pos, &eq.ref_a, &eq.alt_a));
-            }
-        }
-        Ok(out)
-    }
-
-    /// Expand a single population VCF record into all equivalent `Population`s.
-    pub(crate) fn expand_population(
-        &mut self,
-        record: &mut RecordBuf,
-        header: &vcf::Header,
-        chrom: &str,
-    ) -> Result<Vec<Population>, Error> {
-        let canonicals = match parse_population_record(record, header) {
-            Ok(v) => v,
-            Err(e) => {
-                warn!(chrom, "parse_population_record failed: {e}; skipping");
-                return Ok(vec![]);
-            }
-        };
-
-        let mut out: Vec<Population> = Vec::new();
+        let mut out = Vec::new();
         for canon in &canonicals {
             let kind = classify(canon.ref_allele(), canon.alt_allele());
             if matches!(kind, IndelKind::Snp) {
@@ -475,10 +413,8 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
                 out.push(canon.clone());
                 continue;
             }
-
-            let ref_len = canon.ref_allele().len();
-            let (ctx_start, ctx) = self.fetch_context(chrom, canon.pos(), ref_len)?;
-
+            let (ctx_start, ctx) =
+                self.fetch_context(chrom, canon.pos(), canon.ref_allele().len())?;
             let equivalents = enumerate_equivalents(
                 canon.pos(),
                 canon.ref_allele(),
@@ -486,20 +422,160 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
                 &ctx,
                 ctx_start,
             );
-
             debug!(
                 chrom,
                 pos = canon.pos() + 1,
                 n_equivalents = equivalents.len(),
-                "Population indel equivalence expansion"
+                "Indel equivalence expansion"
             );
-
             for eq in &equivalents {
                 out.push(canon.with_alleles(eq.pos, &eq.ref_a, &eq.alt_a));
             }
         }
         Ok(out)
     }
+
+    /// Expand a single sample VCF record into all equivalent `SampleVariant`s.
+    ///
+    /// The original scoring parameters (`genotype_quality`, `alt_haplotype`,
+    /// `phase_set`, `gamete_mode`) are replicated unchanged across all
+    /// equivalent representations; only `pos`, `ref_a`, and `alt_a` change.
+    pub(crate) fn expand_sample(
+        &mut self,
+        record: &mut RecordBuf,
+        header: &vcf::Header,
+        chrom: &str,
+    ) -> Result<Vec<SampleVariant>, Error> {
+        self.expand_variants(
+            record,
+            header,
+            chrom,
+            parse_sample_record,
+            "parse_sample_record",
+        )
+    }
+
+    /// Expand a single population VCF record into all equivalent `Population`s.
+    pub(crate) fn expand_population(
+        &mut self,
+        record: &mut RecordBuf,
+        header: &vcf::Header,
+        chrom: &str,
+    ) -> Result<Vec<Population>, Error> {
+        self.expand_variants(
+            record,
+            header,
+            chrom,
+            parse_population_record,
+            "parse_population_record",
+        )
+    }
+}
+
+// -- Private VCF iteration helpers ----------------------------------------
+
+fn vcf_header(path: &Path) -> Result<vcf::Header, Error> {
+    use noodles::bgzf;
+    use std::{fs::File, io::BufReader};
+    if path.extension().is_some_and(|e| e == "bcf") {
+        use noodles::bcf;
+        Ok(
+            bcf::io::Reader::new(bgzf::io::Reader::new(BufReader::new(File::open(path)?)))
+                .read_header()?,
+        )
+    } else {
+        Ok(vcf::io::Reader::new(BufReader::new(File::open(path)?)).read_header()?)
+    }
+}
+
+fn for_each_vcf_rec(
+    path: &Path,
+    header: &vcf::Header,
+    mut f: impl FnMut(&mut RecordBuf) -> Result<(), Error>,
+) -> Result<(), Error> {
+    use noodles::bgzf;
+    use std::{fs::File, io::BufReader};
+    if path.extension().is_some_and(|e| e == "bcf") {
+        use noodles::bcf;
+        let mut r = bcf::io::Reader::new(bgzf::io::Reader::new(BufReader::new(File::open(path)?)));
+        let _ = r.read_header()?;
+        for result in r.record_bufs(header) {
+            f(&mut result.map_err(Error::from)?)?;
+        }
+    } else {
+        let mut r = vcf::io::Reader::new(BufReader::new(File::open(path)?));
+        let _ = r.read_header()?;
+        for result in r.record_bufs(header) {
+            f(&mut result.map_err(Error::from)?)?;
+        }
+    }
+    Ok(())
+}
+
+/// Shared body of `build_sample_store_expanded` and `build_population_store_expanded`.
+fn build_expanded_store<V>(
+    vcf_path: &Path,
+    log_label: &str,
+    mut expand: impl FnMut(&mut RecordBuf, &vcf::Header, &str) -> Result<Vec<V>, Error>,
+) -> Result<Store<V>, Error>
+where
+    V: Variant + Clone,
+{
+    let mut store = Store::<V>::new();
+    let hdr = vcf_header(vcf_path)?;
+    let name_to_id = build_name_to_id(&hdr);
+    let mut n_canonical = 0u64;
+    let mut n_expanded = 0u64;
+    for_each_vcf_rec(vcf_path, &hdr, |rec| {
+        n_canonical += 1;
+        let chrom = rec.reference_sequence_name().to_string();
+        let ref_id = name_to_id
+            .get(&chrom)
+            .copied()
+            .ok_or(Error::NoReferenceSequenceId)?;
+        let variants = expand(rec, &hdr, &chrom)?;
+        n_expanded += variants.len() as u64;
+        store.insert_expanded(ref_id, variants);
+        Ok(())
+    })?;
+    tracing::info!(vcf = %vcf_path.display(), n_canonical, n_expanded, "{log_label}");
+    Ok(store)
+}
+
+/// Build a `Store<SampleVariant>` with indel equivalence expansion.
+///
+/// Replaces the bare `Store::from_vcf(path)` call in aln_stream.rs
+/// when `--reference` is supplied.
+///
+/// # Coordinate contract
+/// All positions in the returned `Store` are 0-based.  The existing
+/// `store.overlapping_multi(tid, read_start, read_end)` hot path operates
+/// on 0-based half-open intervals and is unchanged.
+pub(crate) fn build_sample_store_expanded(
+    vcf_path: &Path,
+    fasta_path: &Path,
+) -> Result<Store<SampleVariant>, Error> {
+    let fasta_reader = fasta::io::indexed_reader::Builder::default().build_from_path(fasta_path)?;
+    let mut expander = IndelEquivalenceExpander::new(fasta_reader);
+    build_expanded_store(
+        vcf_path,
+        "Sample variant store built with indel equivalence expansion",
+        |rec, hdr, chrom| expander.expand_sample(rec, hdr, chrom),
+    )
+}
+
+/// Build a `Store<Population>` with indel equivalence expansion.
+pub(crate) fn build_population_store_expanded(
+    vcf_path: &Path,
+    fasta_path: &Path,
+) -> Result<Store<Population>, Error> {
+    let fasta_reader = fasta::io::indexed_reader::Builder::default().build_from_path(fasta_path)?;
+    let mut expander = IndelEquivalenceExpander::new(fasta_reader);
+    build_expanded_store(
+        vcf_path,
+        "Population variant store built with indel equivalence expansion",
+        |rec, hdr, chrom| expander.expand_population(rec, hdr, chrom),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -528,146 +604,6 @@ fn build_name_to_id(hdr: &vcf::Header) -> HashMap<String, usize> {
         .enumerate()
         .map(|(i, (name, _))| (name.to_string(), i))
         .collect()
-}
-
-/// Build a `Store<SampleVariant>` with indel equivalence expansion.
-///
-/// Replaces the bare `Store::from_vcf(path)` call in aln_stream.rs
-/// when `--reference` is supplied.
-///
-/// # Coordinate contract
-/// All positions in the returned `Store` are 0-based.  The existing
-/// `store.overlapping_multi(tid, read_start, read_end)` hot path operates
-/// on 0-based half-open intervals and is unchanged.
-pub(crate) fn build_sample_store_expanded(
-    vcf_path: &Path,
-    fasta_path: &Path,
-) -> Result<Store<SampleVariant>, Error> {
-    use noodles::bgzf;
-    use std::{fs::File, io::BufReader};
-    let fasta_reader = fasta::io::indexed_reader::Builder::default().build_from_path(fasta_path)?;
-    let mut expander = IndelEquivalenceExpander::new(fasta_reader);
-    let mut store = Store::<SampleVariant>::new();
-
-    // BCF (bgzf) or plain VCF — determine from extension.
-    let is_bcf = vcf_path.extension().is_some_and(|e| e == "bcf");
-    let hdr;
-
-    // Declare uninitialized readers here so they live through the whole function
-    let mut bcf_reader;
-    let mut vcf_reader;
-    // Add `+ '_` to tell Rust this Box borrows local variables
-    let reader: Box<dyn Iterator<Item = Result<RecordBuf, Error>> + '_> = if is_bcf {
-        use noodles::bcf;
-        bcf_reader =
-            bcf::io::Reader::new(bgzf::io::Reader::new(BufReader::new(File::open(vcf_path)?)));
-        hdr = bcf_reader.read_header()?;
-        Box::new(
-            bcf_reader
-                .record_bufs(&hdr)
-                .map(|res| res.map_err(Error::from)),
-        )
-    } else {
-        vcf_reader = vcf::io::Reader::new(BufReader::new(File::open(vcf_path)?));
-        hdr = vcf_reader.read_header()?;
-        Box::new(
-            vcf_reader
-                .record_bufs(&hdr)
-                .map(|res| res.map_err(Error::from)),
-        )
-    };
-    let name_to_id = build_name_to_id(&hdr);
-
-    let mut n_canonical = 0u64;
-    let mut n_expanded = 0u64;
-
-    for rec_result in reader {
-        let mut rec = rec_result?;
-        // Derive chromosome name for FASTA fetch.
-        let chrom = rec.reference_sequence_name().to_string();
-        let ref_id = match name_to_id.get(&chrom) {
-            Some(&id) => id,
-            None => return Err(Error::NoReferenceSequenceId),
-        };
-        let variants = expander.expand_sample(&mut rec, &hdr, &chrom)?;
-        n_expanded += variants.len() as u64;
-        n_canonical += 1;
-        store.insert_expanded(ref_id, variants);
-    }
-
-    tracing::info!(
-        vcf  = %vcf_path.display(),
-        n_canonical,
-        n_expanded,
-        "Sample variant store built with indel equivalence expansion"
-    );
-    Ok(store)
-}
-
-/// Build a `Store<Population>` with indel equivalence expansion.
-pub(crate) fn build_population_store_expanded(
-    vcf_path: &Path,
-    fasta_path: &Path,
-) -> Result<Store<Population>, Error> {
-    use noodles::bgzf;
-    use std::{fs::File, io::BufReader};
-
-    // Validate that the .fai sidecar exists before opening the expander.
-    let fasta_reader = fasta::io::indexed_reader::Builder::default().build_from_path(fasta_path)?;
-    let mut expander = IndelEquivalenceExpander::new(fasta_reader);
-    let mut store = Store::<Population>::new();
-
-    let is_bcf = vcf_path.extension().is_some_and(|e| e == "bcf");
-    let hdr;
-
-    // Declare uninitialized readers here so they live through the whole function
-    let mut bcf_reader;
-    let mut vcf_reader;
-
-    // Add `+ '_` to tell Rust this Box borrows local variables
-    let reader: Box<dyn Iterator<Item = Result<RecordBuf, Error>> + '_> = if is_bcf {
-        use noodles::bcf;
-        bcf_reader =
-            bcf::io::Reader::new(bgzf::io::Reader::new(BufReader::new(File::open(vcf_path)?)));
-        hdr = bcf_reader.read_header()?;
-        Box::new(
-            bcf_reader
-                .record_bufs(&hdr)
-                .map(|res| res.map_err(Error::from)),
-        )
-    } else {
-        vcf_reader = vcf::io::Reader::new(BufReader::new(File::open(vcf_path)?));
-        hdr = vcf_reader.read_header()?;
-        Box::new(
-            vcf_reader
-                .record_bufs(&hdr)
-                .map(|res| res.map_err(Error::from)),
-        )
-    };
-    let name_to_id = build_name_to_id(&hdr);
-
-    let mut n_canonical = 0u64;
-    let mut n_expanded = 0u64;
-    for rec_result in reader {
-        let mut rec = rec_result?;
-        let chrom = rec.reference_sequence_name().to_string();
-        let ref_id = match name_to_id.get(&chrom) {
-            Some(&id) => id,
-            None => return Err(Error::NoReferenceSequenceId),
-        };
-        let variants = expander.expand_population(&mut rec, &hdr, &chrom)?;
-        n_expanded += variants.len() as u64;
-        n_canonical += 1;
-        store.insert_expanded(ref_id, variants);
-    }
-
-    tracing::info!(
-        vcf  = %vcf_path.display(),
-        n_canonical,
-        n_expanded,
-        "Population variant store built with indel equivalence expansion"
-    );
-    Ok(store)
 }
 
 #[cfg(test)]
