@@ -180,6 +180,111 @@ readability.
 2. Update `Display` / `Debug` formatting to include the category prefix.
 3. No `From` conversions; no new enum variants.
 
+## v0.7 — Architecture
+
+### Config Composition via Clap Flatten
+
+**Goal:** Reduce the 40-field flat `Config` struct into composed domain configurations,
+improving cohesion and reducing `validate_and_init` line count.
+
+**Prerequisite:** All existing tests pass; no open refactoring PRs.
+
+**Implementation steps:**
+
+1. Define three sub-structs using `#[derive(Parser)]` with clap's `#[command(flatten)]`:
+
+```rust
+   #[derive(Parser, Clone, Debug, Default)]
+   pub struct ScoringConfig {
+       #[arg(short, long, default_value = "4")]  pub mismatch_penalty: f64,
+       #[arg(short, long, default_value = "6")]  pub gap_open: f64,
+       #[arg(short = 'e', long, default_value = "1")] pub gap_extend: f64,
+       #[arg(short = 'c', long, default_value = "5")] pub clipping_penalty: f64,
+       #[arg(long, default_value = "illumina")] pub error_model: ErrorModel,
+       #[arg(long)]                             pub bisulfite: bool,
+       #[arg(long, default_value_t = u32::MAX)] pub ambiguous_threshold: u32,
+       #[arg(short = 'J', long, default_value = "20")] pub chimeric_junction_bases: u32,
+   }
+
+   #[derive(Parser, Clone, Debug, Default)]
+   pub struct ParallelConfig {
+       #[arg(short = 't', long, default_value = "4")] pub threads: usize,
+       #[arg(short = 'S', long, default_value = "1")] pub score_threads: usize,
+   }
+
+   #[derive(Parser, Clone, Debug, Default)]
+   pub struct VariantConfig {
+       #[arg(short, long, num_args = 0..4)] pub sample_variants: Vec<String>,
+       #[arg(short, long, num_args = 0..4)] pub population_variants: Vec<String>,
+       #[arg(long)]                         pub expand_indels: bool,
+       #[arg(long, requires = "reference")] pub reference: Option<PathBuf>,
+       // ... etc.
+   }
+```
+
+2. In the root `Config`, replace individual fields with:
+```rust
+   #[command(flatten)]  pub scoring:  ScoringConfig,
+   #[command(flatten)]  pub parallel: ParallelConfig,
+   #[command(flatten)]  pub variants: VariantConfig,
+```
+
+3. Update `validate_and_init` to delegate to sub-struct validators:
+   `self.scoring.validate()`, `self.parallel.validate()`, etc.
+
+4. Update all call sites (grep for `config.mismatch_penalty`, etc.) to use
+   `config.scoring.mismatch_penalty`. Expected ~150 mechanical substitutions.
+
+5. Validate: `cargo test --all` must pass; `cargo clippy -- -D warnings`.
+
+**Deferred because:** Step 4 touches every file that reads config fields.
+The mechanical substitution is high-volume and carries merge-conflict risk.
+Doing it in one focused PR is safer than mixing with feature work.
+
+---
+
+### AlignmentStream Trait Extraction
+
+**Goal:** Move the `AlignmentStream` trait out of `src/aln_stream.rs` into
+`src/stream/traits.rs` so that `aln_stream.rs` contains only the concrete
+`AlnStream` struct, not the interface contract.
+
+**Prerequisite:** Config composition complete (reduces cross-module coupling first).
+
+**Implementation steps:**
+
+1. Create `src/stream/mod.rs` and `src/stream/traits.rs`.
+2. Move `pub(crate) trait AlignmentStream<R: SimpleRec>` and `FromBamRecord`
+   into `src/stream/traits.rs`.
+3. Add `pub(crate) mod stream;` to `src/lib.rs`.
+4. Update all `use crate::aln_stream::AlignmentStream` imports.
+5. In `src/aln_stream.rs`, `use crate::stream::traits::{AlignmentStream, FromBamRecord};`.
+6. Run `cargo check` to enumerate remaining import failures; fix mechanically.
+
+**Deferred because:** `AlignmentStream<R>` is a generic trait with `R: SimpleRec`
+bounded receivers. The current test infrastructure (`MockStream` in
+`src/aln_stream/tests.rs`) closely couples to the same file. Moving the trait
+requires moving or re-exporting the test mock as well, expanding the scope.
+
+---
+
+### Workspace Crate Extraction
+
+**Goal:** Extract `src/bam/`, `src/alignment/ops.rs`, and `src/variant/store.rs`
+into separate workspace crates (`crates/xf-bam`, `crates/xf-align-math`,
+`crates/xf-variant-store`) to enforce strict dependency boundaries and improve
+incremental compilation times.
+
+**Prerequisite:** Both Config composition and AlignmentStream extraction complete.
+
+**Estimated impact:** ~30% reduction in full-rebuild time for the main crate.
+Requires `cargo workspaces` tooling for version management.
+
+**Deferred because:** This restructuring changes every internal import path and
+requires deciding on stable inter-crate API surfaces before `v1.0` publication.
+Profile first: run `cargo build --timings` on a real PDX dataset rebuild to
+confirm the compile-time bottleneck is in these specific modules before investing.
+
 ---
 
 ## v1.0 — Production
