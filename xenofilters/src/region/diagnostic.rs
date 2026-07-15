@@ -131,20 +131,21 @@ mod tests {
             max_ref_len,
         }
     }
-
     #[test]
-    fn test_snv_overlap() {
-        assert!(store(&[(0, 100, 1)]).overlaps(0, 100, 110));
-    }
+    fn test_snv_overlap_cases() {
+        let s = store(&[(0, 100, 1)]);
 
-    #[test]
-    fn test_snv_no_overlap_before() {
-        assert!(!store(&[(0, 100, 1)]).overlaps(0, 50, 100));
-    }
+        // Format: (q_ref, q_start, q_end, expected_overlap)
+        let cases = [
+            (0, 100, 110, true),  // overlaps
+            (0, 50, 100, false),  // no overlap before
+            (0, 101, 200, false), // no overlap after
+            (1, 100, 110, false), // wrong ref
+        ];
 
-    #[test]
-    fn test_snv_no_overlap_after() {
-        assert!(!store(&[(0, 100, 1)]).overlaps(0, 101, 200));
+        for (q_ref, q_start, q_end, expected) in cases {
+            assert_eq!(s.overlaps(q_ref, q_start, q_end), expected);
+        }
     }
 
     #[test]
@@ -152,10 +153,5 @@ mod tests {
         let s = store(&[(0, 100, 5)]);
         assert!(s.overlaps(0, 103, 110));
         assert!(!s.overlaps(0, 105, 200));
-    }
-
-    #[test]
-    fn test_wrong_ref() {
-        assert!(!store(&[(0, 100, 1)]).overlaps(1, 100, 110));
     }
 }

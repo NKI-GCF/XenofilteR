@@ -132,39 +132,61 @@ mod tests {
     }
 
     #[test]
-    fn homopolymer_deletion_slides_fully() {
-        // Reference: GAAAAG (positions 0-5)
-        // Delete one A; can appear at positions 0-3 (anchor at 0,1,2,3).
-        // Left-normalized: pos=0, ref=GA, alt=G
-        //   → slides right 3 times: anchors at 1,2,3
-        // Final representation: pos=3, ref=AG, alt=A → no more A after pos 4
-        let cases = [Case {
-            label: "homopolymer A×4 deletion",
-            reference: b"GAAAAG",
-            pos_0based: 0,
-            ref_a: b"GA", // pos=0, anchor G, delete A
-            alt_a: b"G",
-            n: Some(4),
-            positions: Some(&[0, 1, 2, 3]),
-        }];
+    fn single_entry_variants() {
+        let cases = [
+            Case {
+                label: "non-repeat single-base deletion",
+                reference: b"ACGTACGT",
+                pos_0based: 1, // anchor C, delete G
+                ref_a: b"CG",
+                alt_a: b"C",
+                n: Some(1),
+                positions: Some(&[1]),
+            },
+            Case {
+                label: "SNP no expansion",
+                reference: b"ACGT",
+                pos_0based: 1,
+                ref_a: b"C",
+                alt_a: b"T",
+                n: Some(1),
+                positions: Some(&[1]),
+            },
+            Case {
+                label: "complex MNP no expansion",
+                reference: b"ACGTACGT",
+                pos_0based: 0,
+                ref_a: b"ACG",
+                alt_a: b"TTT",
+                n: Some(1),
+                positions: Some(&[0]),
+            },
+        ];
         run_cases(&cases);
     }
 
     #[test]
-    fn homopolymer_insertion_slides_fully() {
-        // Reference: GAAAG
-        // Insert one A after position 0 (between G and first A).
-        // Left-normalized: pos=0, ref=G, alt=GA
-        // Slides right as long as next ref base == 'A'.
-        let cases = [Case {
-            label: "homopolymer A×3 insertion",
-            reference: b"GAAAG",
-            pos_0based: 0,
-            ref_a: b"G",
-            alt_a: b"GA",
-            n: Some(4),
-            positions: Some(&[0, 1, 2, 3]),
-        }];
+    fn homopolymer_slides_fully() {
+        let cases = [
+            Case {
+                label: "homopolymer A×4 deletion",
+                reference: b"GAAAAG",
+                pos_0based: 0,
+                ref_a: b"GA",
+                alt_a: b"G",
+                n: Some(4),
+                positions: Some(&[0, 1, 2, 3]),
+            },
+            Case {
+                label: "homopolymer A×3 insertion",
+                reference: b"GAAAG",
+                pos_0based: 0,
+                ref_a: b"G",
+                alt_a: b"GA",
+                n: Some(4),
+                positions: Some(&[0, 1, 2, 3]),
+            },
+        ];
         run_cases(&cases);
     }
 
@@ -181,51 +203,6 @@ mod tests {
             alt_a: b"C",
             n: Some(6),
             positions: Some(&[0, 1, 2, 3, 4, 5]),
-        }];
-        run_cases(&cases);
-    }
-
-    #[test]
-    fn non_repeat_deletion_does_not_slide() {
-        // Reference: ACGTACGT
-        // Delete G at position 2; no repeat → 1 entry only.
-        let cases = [Case {
-            label: "non-repeat single-base deletion",
-            reference: b"ACGTACGT",
-            pos_0based: 1, // anchor C, delete G
-            ref_a: b"CG",
-            alt_a: b"C",
-            n: Some(1),
-            positions: Some(&[1]),
-        }];
-        run_cases(&cases);
-    }
-
-    #[test]
-    fn snp_returns_single_entry() {
-        let cases = [Case {
-            label: "SNP no expansion",
-            reference: b"ACGT",
-            pos_0based: 1,
-            ref_a: b"C",
-            alt_a: b"T",
-            n: Some(1),
-            positions: Some(&[1]),
-        }];
-        run_cases(&cases);
-    }
-
-    #[test]
-    fn complex_allele_returns_single_entry() {
-        // MNP: ref=ACG alt=TTT — complex, cannot slide.
-        let cases = [Case {
-            label: "complex MNP no expansion",
-            reference: b"ACGTACGT",
-            pos_0based: 0,
-            ref_a: b"ACG",
-            alt_a: b"TTT",
-            n: Some(1),
-            positions: Some(&[0]),
         }];
         run_cases(&cases);
     }

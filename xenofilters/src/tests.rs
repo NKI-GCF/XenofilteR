@@ -1,5 +1,5 @@
-mod exploratory;
 pub(crate) mod common;
+mod exploratory;
 
 use super::*;
 #[cfg(test)]
@@ -7,7 +7,11 @@ pub(crate) mod property;
 #[cfg(test)]
 pub(crate) use aln_stream::tests::*;
 
-use std::iter::repeat;
+use noodles::core::Position;
+use noodles::sam::alignment::{
+    record::data::field::Tag,
+    record_buf::{data::field::Value, Data},
+};
 use noodles::sam::alignment::{
     record::{
         cigar::{op::Kind, Op},
@@ -15,11 +19,8 @@ use noodles::sam::alignment::{
     },
     record_buf::{Cigar, QualityScores, RecordBuf, Sequence},
 };
-use noodles::core::Position;
-use noodles::sam::alignment::{
-    record::data::field::Tag,
-    record_buf::{data::field::Value, Data},
-};
+use noodles::sam::Header;
+use std::iter::repeat;
 
 fn create_cigar(cigar: &str) -> Result<Cigar, Error> {
     let mut ops = Vec::new();

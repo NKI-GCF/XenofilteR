@@ -49,21 +49,18 @@ fn test_overlap_basic_hit() {
 }
 
 #[test]
-fn test_overlap_wrong_chromosome_no_hit() {
-    let store = make_store(vec![(1, fv(100, 1))]);
-    assert!(store.overlapping(2, 100, 101).is_empty());
-}
+fn test_overlap_exclusions() {
+    let store = make_store(vec![(1, fv(100, 1))]); // start 100, ends at 101
 
-#[test]
-fn test_overlap_read_starts_exactly_at_variant_end_is_excluded() {
-    let store = make_store(vec![(1, fv(100, 1))]); // ends at 101 (exclusive)
-    assert!(store.overlapping(1, 101, 110).is_empty());
-}
+    let cases = [
+        (2, 100, 101), // wrong chromosome
+        (1, 101, 110), // starts exactly at variant end
+        (1, 90, 100),  // ends exactly at variant start
+    ];
 
-#[test]
-fn test_overlap_read_ends_exactly_at_variant_start_is_excluded() {
-    let store = make_store(vec![(1, fv(100, 1))]);
-    assert!(store.overlapping(1, 90, 100).is_empty());
+    for (q_ref, q_start, q_end) in cases {
+        assert!(store.overlapping(q_ref, q_start, q_end).is_empty());
+    }
 }
 
 #[test]

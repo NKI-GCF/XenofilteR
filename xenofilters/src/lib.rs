@@ -14,6 +14,7 @@ pub mod stats;
 pub mod variant;
 
 use crate::region::ScoredRegions;
+use crate::variant::name_to_id::header_name_to_id;
 use aln_stream::{AlignmentStream, AlnStream};
 use config::{Config, MatchingAlgorithm};
 pub use error::Error;
@@ -21,7 +22,6 @@ use filter_algorithm::{
     collated::CollatedMatcher, hash_lookup::HashLookup, line_by_line::LineByLine,
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
-use noodles::sam::Header;
 use region::{AmbiguousRegions, DiagnosticVariants};
 use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
@@ -249,49 +249,34 @@ fn run_collated(mut config: Config) -> Result<(), Error> {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-/// Map reference sequence name → 0-based integer ID from a SAM header.
-/// The integer IDs match what noodles BAM records carry in their ref_seq_id field.
-fn header_name_to_id(header: &Header) -> HashMap<String, usize> {
-    header
-        .reference_sequences()
-        .iter()
-        .enumerate()
-        .map(|(i, (name, _))| (name.to_string(), i))
-        .collect()
+fn load_specs<T, F>(specs: &[String], mut load_fn: F) -> Result<[Option<T>; 2], Error>
+where
+    F: FnMut(&Path) -> Result<T, Error>,
+{
+    Ok([
+        specs
+            .first()
+            .filter(|s| !s.is_empty())
+            .map(|s| load_fn(Path::new(s)))
+            .transpose()?,
+        specs
+            .get(1)
+            .filter(|s| !s.is_empty())
+            .map(|s| load_fn(Path::new(s)))
+            .transpose()?,
+    ])
 }
 
 fn load_ambiguous_regions(
     specs: &[String],
     name_to_id: &HashMap<String, usize>,
 ) -> Result<[Option<AmbiguousRegions>; 2], Error> {
-    Ok([
-        specs
-            .first()
-            .filter(|s| !s.is_empty())
-            .map(|s| AmbiguousRegions::from_bed(Path::new(s), name_to_id))
-            .transpose()?,
-        specs
-            .get(1)
-            .filter(|s| !s.is_empty())
-            .map(|s| AmbiguousRegions::from_bed(Path::new(s), name_to_id))
-            .transpose()?,
-    ])
+    load_specs(specs, |p| AmbiguousRegions::from_bed(p, name_to_id))
 }
 
 fn load_diagnostic_variants(
     specs: &[String],
     name_to_id: &HashMap<String, usize>,
 ) -> Result<[Option<DiagnosticVariants>; 2], Error> {
-    Ok([
-        specs
-            .first()
-            .filter(|s| !s.is_empty())
-            .map(|s| DiagnosticVariants::from_vcf(Path::new(s), name_to_id))
-            .transpose()?,
-        specs
-            .get(1)
-            .filter(|s| !s.is_empty())
-            .map(|s| DiagnosticVariants::from_vcf(Path::new(s), name_to_id))
-            .transpose()?,
-    ])
+    load_specs(specs, |p| DiagnosticVariants::from_vcf(p, name_to_id))
 }

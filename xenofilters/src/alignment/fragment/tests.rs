@@ -16,9 +16,9 @@ use smallvec::{smallvec, SmallVec};
 // Test penalty helpers
 // ---------------------------------------------------------------------------
 
-/// Flat penalties: match=0, mismatch=-1, gap_open=-2, gap_extend=-0.5.
+/// Setup penalties: match=0, mismatch=-1, gap_open=-2, gap_extend=-0.5.
 /// Quality-independent — use for unit-testing score logic without Q noise.
-fn flat_penalties() -> Penalty {
+pub(crate) fn setup_penalties() -> Penalty {
     let c = Config::default();
     let mut p = c.to_penalties();
     p.log_likelihood_match = [0.0; 93];
@@ -74,7 +74,7 @@ fn scoring_table() {
         want: f64,
     }
     let q30 = vec![30u8; 15]; // generous budget
-    let flat = flat_penalties();
+    let flat = setup_penalties();
     let cases: &[Row] = &[
         Row {
             cigar: "10M",
@@ -400,7 +400,7 @@ fn variant_rescue_p_variant_table() {
     ];
 
     // Read: "AAGAA" (base at position 2 matches alt 'G')
-    let pen = flat_penalties();
+    let pen = setup_penalties();
     for c in cases {
         let rec = create_record(b"r", "5M", b"AAGAA", &[30u8; 5], "2G2", false).unwrap();
         let flags = rec.flags();
@@ -463,16 +463,6 @@ fn variant_rescue_p_variant_table() {
             );
         }
     }
-}
-
-pub(crate) fn setup_penalties() -> Penalty {
-    let c = Config::default();
-    let mut p = c.to_penalties();
-    p.log_likelihood_match = [0.0; 93]; // 0 log-like for match
-    p.log_likelihood_mismatch = [-1.0; 93];
-    p.gap_open = -2.0;
-    p.gap_extend = -0.5;
-    p
 }
 
 struct TestVariant {

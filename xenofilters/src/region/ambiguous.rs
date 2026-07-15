@@ -113,33 +113,21 @@ mod tests {
     }
 
     #[test]
-    fn test_no_overlap_touching_left_edge() {
-        assert!(!store(&[(0, 100, 200)]).overlaps(0, 50, 100));
-    }
+    fn test_overlap_cases() {
+        let s = store(&[(0, 100, 200)]);
 
-    #[test]
-    fn test_no_overlap_touching_right_edge() {
-        assert!(!store(&[(0, 100, 200)]).overlaps(0, 200, 300));
-    }
+        let cases = [
+            (0, 120, 150, true),  // contained
+            (0, 50, 150, true),   // straddles left
+            (0, 150, 250, true),  // straddles right
+            (0, 50, 100, false),  // touching left edge
+            (0, 200, 300, false), // touching right edge
+            (1, 100, 200, false), // wrong ref_id
+        ];
 
-    #[test]
-    fn test_overlap_contained() {
-        assert!(store(&[(0, 100, 200)]).overlaps(0, 120, 150));
-    }
-
-    #[test]
-    fn test_overlap_straddles_left() {
-        assert!(store(&[(0, 100, 200)]).overlaps(0, 50, 150));
-    }
-
-    #[test]
-    fn test_overlap_straddles_right() {
-        assert!(store(&[(0, 100, 200)]).overlaps(0, 150, 250));
-    }
-
-    #[test]
-    fn test_wrong_ref_id() {
-        assert!(!store(&[(0, 100, 200)]).overlaps(1, 100, 200));
+        for (q_ref, q_start, q_end, expected) in cases {
+            assert_eq!(s.overlaps(q_ref, q_start, q_end), expected);
+        }
     }
 
     #[test]
