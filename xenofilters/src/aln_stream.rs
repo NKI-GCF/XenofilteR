@@ -1,3 +1,5 @@
+pub(crate) mod open;
+
 use crate::alignment::SimpleRec;
 use crate::bam::{
     expand_header, out_from_file, path_unicode_ok, rewrite_rg, BamOutput, SUFFIX_AMBIGUOUS,

@@ -5,11 +5,15 @@
 //! - [`early_assign`]: predicate combining both checks.
 //! - [`tabix_query`]: random-access queries for the Collated algorithm.
 
+pub(crate) mod ambiguous;
 pub(crate) mod diagnostic;
 pub(crate) mod scored;
+pub(crate) mod load;
+pub(crate) mod tabix_load;
 pub(crate) mod tabix_query;
 
 // AmbiguousRegions is now an alias; strand-awareness comes for free.
+pub(crate) use ambiguous::AmbiguousRegions;
 pub(crate) use diagnostic::DiagnosticVariants;
 pub(crate) use scored::{ScoreFn, ScoredRegions};
 

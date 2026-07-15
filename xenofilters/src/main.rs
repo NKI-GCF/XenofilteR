@@ -1,7 +1,7 @@
-use xenofilters::{Error,config::Config, run};
 use clap::Parser;
+use xenofilters::{config::Cli, run, Error};
 
 fn main() -> Result<(), Error> {
-    let config = Config::parse();
-    run(config)
+    let cli = Cli::parse();
+    run(cli)
 }

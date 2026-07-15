@@ -22,11 +22,13 @@ pub(crate) mod tests;
 use crate::alignment::{mate_slot, segment_id, Fragment, MateKind, MdCigFlags, SimpleRec};
 use crate::alignment::{pre_assess_scoring_records, PreAssessResult};
 use crate::aln_stream::AlignmentStream;
+use crate::config::HashlookupArgs;
 use crate::config::{Config, StripReadSuffix};
 use crate::filter_algorithm::collated::reader::canonical_name;
 use crate::filter_algorithm::line_by_line::{ordering::Decision, Scratch, READ_CT};
 use crate::penalty::Penalty;
 use crate::region::{AmbiguousRegions, DiagnosticVariants};
+use crate::region::{ScoreFn, ScoredRegions};
 use crate::variant::FragEvalVec;
 use crate::Error;
 use assemble::{
@@ -85,6 +87,34 @@ pub(crate) struct HashLookup<R: SimpleRec> {
 }
 
 impl<R: SimpleRec> HashLookup<R> {
+    pub(crate) fn new_from_hashlookup(
+        args: &HashlookupArgs,
+        aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>,
+        bed: [Option<AmbiguousRegions>; 2],
+        vcf: [Option<DiagnosticVariants>; 2],
+        pos: [Option<(ScoredRegions, ScoreFn)>; 2],
+    ) -> Result<Self, Error> {
+        let ambiguous_log_threshold =
+            resolve_threshold(args.common.scoring.ambiguous_threshold, false);
+        Ok(Self {
+            aln,
+            table: new_fragment_table(),
+            staged: StagedOutput::new(),
+            seq_counter: 0,
+            record_counters: [0, 0],
+            penalties: args.common.scoring.to_penalty(),
+            scratch: Scratch::new(),
+            routing_counters: vec![0u64; 2 * COUNTER_STRIDE].into_boxed_slice(),
+            add_decision_tag: args.common.io.add_decision_tag,
+            ambiguous_log_threshold,
+            strip: args.common.io.strip_read_suffix,
+            bed,
+            vcf,
+            positive: pos,
+            codec: ReadNameCodec::new(),
+            codec_prefix: Vec::new(),
+        })
+    }
     pub(crate) fn new(
         config: &Config,
         mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,

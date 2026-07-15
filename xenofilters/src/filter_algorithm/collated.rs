@@ -29,6 +29,8 @@ use reader::{CollatedReader, canonical_name};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use ahash::RandomState;
+use crate::region::ScoreFn;
+use crate::config::CollatedArgs;
 
 pub(crate) struct CollatedMatcher<R: SimpleRec> {
     a: CollatedReader<R>,
@@ -46,6 +48,31 @@ pub(crate) struct CollatedMatcher<R: SimpleRec> {
 }
 
 impl<R: SimpleRec> CollatedMatcher<R> {
+    pub(crate) fn new_from_collated(
+        args: &CollatedArgs,
+        aln:  SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>,
+        bed:  [Option<TabixBed>; 2],
+        vcf:  [Option<TabixVcf>; 2],
+        pos:  [Option<(TabixScored, ScoreFn)>; 2],
+    ) -> Result<Self, Error> {
+        let ambiguous_log_threshold = resolve_threshold(
+            args.common.scoring.ambiguous_threshold, false,
+        );
+        let mut it = aln.into_iter();
+        let (a0, a1) = (it.next().unwrap(), it.next().unwrap());
+        Ok(Self {
+            a: CollatedReader::new(a0, args.common.io.strip_read_suffix, 0),
+            b: CollatedReader::new(a1, args.common.io.strip_read_suffix, 1),
+            waiting_a: HashMap::with_hasher(RandomState::new()),
+            waiting_b: HashMap::with_hasher(RandomState::new()),
+            penalties: args.common.scoring.to_penalty(),
+            scratch: Scratch::new(),
+            routing_counters: vec![0u64; 2 * COUNTER_STRIDE].into_boxed_slice(),
+            add_decision_tag: args.common.io.add_decision_tag,
+            ambiguous_log_threshold,
+            bed, vcf, positive: pos,
+        })
+    }
     pub(crate) fn new(
         config: &Config,
         mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,

@@ -285,6 +285,38 @@ requires deciding on stable inter-crate API surfaces before `v1.0` publication.
 Profile first: run `cargo build --timings` on a real PDX dataset rebuild to
 confirm the compile-time bottleneck is in these specific modules before investing.
 
+## v0.8 — Runtime wiring completion
+
+### noodles-util unified reader integration
+`open_streams_unified` currently assumes hand-written per-extension dispatch
+(SAM/BAM/CRAM) rather than `noodles_util::alignment::io::reader::Builder`.
+Needs verification of exact builder API at the pinned noodles version;
+swap in once confirmed. Fallback dispatch is functionally complete but
+duplicates format-detection logic noodles-util would centralize.
+
+### TabixScored — positive-score tabix-indexed BED reader
+`open_tabix_scored` references a `TabixScored` type that does not exist yet.
+Implement analogous to `TabixBed`/`TabixVcf`: tabix query → parse score
+(column 5) and strand (column 6) → return `ScoredRegion` list for the
+queried interval. Required for `collated --positive-regions`.
+
+### Wire positive_regions into score_state_nw call sites
+`HashLookup`/`CollatedMatcher` now carry a `positive: [Option<(Regions, ScoreFn)>; 2]`
+field but the NW scoring calls (`nw_score_records`, `nw_score_fragment`) do not
+yet pass it through to `score_state_nw`'s `positive_regions` parameter.
+Three call-site edits; deferred to keep this change reviewable in isolation.
+
+### chimeric_junction_bases as a CLI flag
+Currently hardcoded to 20 in `ScoringArgs::to_penalty()`. Promote to a
+`--chimeric-junction-bases` flag on `ScoringArgs` (shared across all
+subcommands) once the default value has been empirically validated.
+
+### CRAM index seeking for HashLookup
+`open_streams_raw_bam` rejects CRAM input with a clear error. Implementing
+CRAM support requires `.crai` index seeking in place of BGZF virtual offsets —
+a distinct code path in `fetch_by_virtual_offset`. Significant scope; tracked
+separately from this wiring pass.
+
 ---
 
 ## v1.0 — Production

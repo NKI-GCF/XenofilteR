@@ -4,14 +4,14 @@
 //   - LineByLine::new() reads score_threads from config
 //   - process() dispatcher added (sequential vs parallel)
 
-use crate::region::{ScoreFn, ScoredRegions};
 use crate::{
     alignment::{FragmentState, SimpleRec},
     aln_stream::AlignmentStream,
-    config::{Config, StripReadSuffix},
+    config::{Config, NamesortedArgs, StripReadSuffix},
     header_name_to_id,
     penalty::Penalty,
     progress::ProgressReporter,
+    region::{ScoreFn, ScoredRegions},
     Error,
 };
 use noodles::sam::alignment::Record;
@@ -135,6 +135,29 @@ pub(crate) struct LineByLine<R> {
 }
 
 impl<R: SimpleRec> LineByLine<R> {
+    pub(crate) fn new_from_namesorted(
+        args: &NamesortedArgs,
+        aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>,
+    ) -> Result<Self, Error> {
+        let n = aln.len();
+        let chimeric_pairs = args.chimeric_pairs.parse_pairs(n)?;
+        let ambiguous_log_threshold = resolve_threshold(
+            args.common.scoring.ambiguous_threshold,
+            /* is_pass2 */ false,
+        );
+        Ok(Self {
+            aln,
+            routing_counters: vec![0u64; n * COUNTER_STRIDE].into_boxed_slice(),
+            penalties: args.common.scoring.to_penalty(),
+            ambiguous_log_threshold,
+            add_decision_tag: args.common.io.add_decision_tag,
+            bisulfite: args.common.scoring.bisulfite,
+            score_threads: args.parallel.score_threads,
+            chimeric_pairs,
+            stream_labels: args.chimeric.stream_labels.clone(),
+            progress: ProgressReporter::new(args.common.io.quiet),
+        })
+    }
     pub(crate) fn new(
         config: &Config,
         mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
