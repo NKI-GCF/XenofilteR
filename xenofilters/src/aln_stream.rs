@@ -12,7 +12,7 @@ use crate::variant::{
         build_sample_store_expanded,
         IndelEquivalenceExpander,
     },
-    indel_equiv_corrected::read_vcf_or_bcf_header,
+    indel_equiv::corrected::read_vcf_or_bcf_header,
     name_to_id::header_name_to_id,
     population::{Population, parse_population_record},
     sample::{Sample, parse_sample_record},

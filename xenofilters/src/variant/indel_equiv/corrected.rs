@@ -19,7 +19,7 @@ use tracing::{debug, warn};
 
 use crate::variant::{population::Population, sample::Sample, store::Store, Variant};
 
-pub(crate) use super::indel_equiv::{
+use crate::variant::indel_equiv::{
     classify, enumerate_equivalents, IndelEquivalenceExpander, IndelKind,
 };
 use crate::Error;

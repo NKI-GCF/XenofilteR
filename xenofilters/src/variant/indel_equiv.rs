@@ -10,6 +10,8 @@
 // Coordinate contract (strict):
 //   VCF input  — 1-based, inclusive (noodles Variant::variant_start()).
 //   All output — 0-based (pos = vcf_pos - 1).
+pub(crate) mod corrected;
+pub(crate) mod impls;
 
 use crate::{
     variant::{

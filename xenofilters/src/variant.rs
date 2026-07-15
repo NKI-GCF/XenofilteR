@@ -1,13 +1,10 @@
 pub(crate) mod diagnostic_equiv;
 pub mod eval;
 pub(crate) mod indel_equiv;
-pub(crate) mod indel_equiv_corrected;
-pub(crate) mod indel_equiv_impls; // WithAlleles impls + Store::insert_expanded
 pub(crate) mod name_to_id;
 pub(crate) mod population;
 pub(crate) mod sample;
 pub(crate) mod store;
-pub(crate) mod store_insert;
 
 pub(crate) use eval::Eval;
 
