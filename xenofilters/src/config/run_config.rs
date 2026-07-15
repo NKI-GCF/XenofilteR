@@ -1,9 +1,8 @@
 use crate::config::args::{
-    IoArgs, OutputArgsMulti, RegionArgsMemory,
-    RegionArgsTabix, ScoringArgs, VariantArgs,
+    IoArgs, OutputArgsMulti, RegionArgsMemory, RegionArgsTabix, ScoringArgs, VariantArgs,
 };
 use crate::config::{MatchingAlgorithm, NameEncoderKind};
-use crate::{Error, filter_algorithm::line_by_line::MAX_STREAMS};
+use crate::{filter_algorithm::line_by_line::MAX_STREAMS, Error};
 use std::path::PathBuf;
 
 /// Single flat struct consumed by all three engines. No Args-struct
@@ -64,24 +63,29 @@ impl RunConfig {
                 }
                 self.output.validate(2)?;
             }
+            MatchingAlgorithm::Strain => {
+                if n != 1 {
+                    return Err(Error::StrainStreamCount { got: n });
+                }
+                self.output.validate(1)?;
+            }
         }
 
         // CRAM sanity: any .cram input requires --reference.
-        if self.alignment.iter().any(|p| p.ends_with(".cram"))
-            && self.io.reference.is_none()
-        {
+        if self.alignment.iter().any(|p| p.ends_with(".cram")) && self.io.reference.is_none() {
             return Err(Error::CramRequiresReference);
         }
 
         // stdin: at most one stream, namesorted only.
-        let stdin_count =
-            self.alignment.iter().filter(|p| p.to_sting_lossy() == "-").count();
+        let stdin_count = self
+            .alignment
+            .iter()
+            .filter(|p| p.to_string_lossy() == "-")
+            .count();
         if stdin_count > 1 {
             return Err(Error::MultipleStdinStreams);
         }
-        if stdin_count == 1
-            && self.algorithm != MatchingAlgorithm::Namesorted
-        {
+        if stdin_count == 1 && self.algorithm != MatchingAlgorithm::Namesorted {
             return Err(Error::StdinNamesortedOnly);
         }
 

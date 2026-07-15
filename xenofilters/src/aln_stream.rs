@@ -61,8 +61,8 @@ pub(crate) trait AlignmentStream<R: SimpleRec> {
 pub(crate) struct AlnStream<R> {
     pub(crate) bam: Option<BgzfBamReader>,
     next: Option<R>,
-    sample_variants: Option<Arc<Store<Sample>>>,
-    population_variants: Option<Arc<Store<Population>>>,
+    sample_variants: Option<Arc<dyn StoreTrait>>,
+    population_variants: Option<Arc<dyn StoreTrait>>,
     pub(crate) header: Header,
     output: Option<BamOutput>,
     ambiguous: Option<BamOutput>,
@@ -81,7 +81,7 @@ where
         positive_regions: Option<(PositiveRegions, ScoreFn)>,
     ) -> Result<Self, Error> {
         let path = opt.alignment[i].as_str();
-        let seekable_required = opt.matching_algorithm == MatchingAlgorithm::Hashlookup;
+        let seekable_required = MatchingAlgorithm::Hashlookup == opt.matching_algorithm;
 
         let file = File::open(path)?;
 
@@ -116,7 +116,7 @@ where
 
         // Sort-order check (namesorted only).
         let raw = bam.read_raw_header_bytes()?;
-        if opt.matching_algorithm == MatchingAlgorithm::Namesorted {
+        if MatchingAlgorithm::Namesorted == opt.matching_algorithm {
             for parts in raw
                 .split(|&b| b == b'\n')
                 .map(|s| s.split(|&b| b == b'\t').collect::<Vec<_>>())
@@ -291,7 +291,7 @@ where
             .get(i)
             .map(|f| out_from_file(f, &self.header, add_pg, threads))
             .transpose()?;
-        let expanded = expand_header(self.header.clone(), opt);
+        let expanded = expand_header(self.header.clone(), opt.write_discarded);
         self.ambiguous = opt
             .ambiguous_output
             .get(i)

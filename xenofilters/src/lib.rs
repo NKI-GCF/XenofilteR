@@ -153,7 +153,7 @@ fn run_namesorted(mut args: NamesortedArgs) -> Result<(), Error> {
     args.common.parsed_chimeric_pairs = parse_chimeric_pairs(&args.chimeric.chimeric_pairs, n)?;
 
     let aln = open_streams_unified(&mut args.common, args.threads)?;
-    let counters = if args.score_threads > 1 {
+    let counters = if args.parallel.score_threads > 1 {
         LineByLine::new_from_namesorted(&args, aln)?.process_parallel()?
     } else {
         LineByLine::new_from_namesorted(&args, aln)?.process_sequential()?
