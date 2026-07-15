@@ -31,21 +31,22 @@
 
 mod format;
 mod io;
+pub(crate) mod reader;
 
+use crate::config::Config;
 use crate::Error;
 pub(crate) use format::AlnFormat;
-pub(crate) use io::{BamOutput, out_from_file, path_unicode_ok};
+pub(crate) use io::{out_from_file, path_unicode_ok, BamOutput};
 use noodles::sam::{
     alignment::{
         record::data::field::Tag,
-        record_buf::{RecordBuf, data::field::Value},
+        record_buf::{data::field::Value, RecordBuf},
     },
     header::{
+        record::value::{map::ReadGroup, Map},
         Header,
-        record::value::{Map, map::ReadGroup},
     },
 };
-use crate::config::Config;
 
 /// Suffixes appended to `RG:Z` tag values.
 pub(crate) const SUFFIX_FILTERED: &str = "_xenofilt";
@@ -71,7 +72,8 @@ pub(crate) fn expand_header(mut header: Header, opt: &Config) -> Header {
         .flat_map(|(id, rg)| {
             let id_str = id.to_string();
             let ambiguous = (format!("{id_str}{SUFFIX_AMBIGUOUS}"), rg.clone());
-            let filtered = opt.write_discarded
+            let filtered = opt
+                .write_discarded
                 .then(|| (format!("{id_str}{SUFFIX_FILTERED}"), rg.clone()));
             std::iter::once(ambiguous).chain(filtered)
         })

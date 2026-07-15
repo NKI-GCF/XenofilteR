@@ -19,13 +19,13 @@ use crate::variant::{
     store::Store,
     StoreTrait,
 };
+use crate::bam::reader::BgzfBamReader;
 use crate::Error;
 use noodles::bam::{io::Reader as BamReader, record::Record};
-use noodles::bgzf::{self, io::MultithreadedReader, VirtualPosition};
+use noodles::bgzf::{io::MultithreadedReader, VirtualPosition};
 use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::Header;
 use std::fs::File;
-use std::io::Read as ioRead;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use noodles::fasta::io::indexed_reader::Builder;
@@ -50,70 +50,6 @@ pub(crate) trait AlignmentStream<R: SimpleRec> {
     /// Returns `Err` for stream types that do not support seeking (e.g. mock streams).
     fn fetch_by_virtual_offset(&mut self, _virtual_offset: u64) -> Result<RecordBuf, Error> {
         Err(Error::FetchByVirtualOffsetNotSupported)
-    }
-}
-
-/// Wraps both bgzf reader variants in a zero-cost internal enum.
-/// `Single` is seekable (required by HashLookup pass-2).
-/// `Multi` is not seekable but parallelises decompression.
-pub(crate) enum BgzfBamReader {
-    Single(BamReader<bgzf::io::Reader<File>>),
-    Multi(BamReader<MultithreadedReader<File>>),
-}
-
-impl BgzfBamReader {
-    fn read_header(&mut self) -> std::io::Result<Header> {
-        match self {
-            Self::Single(r) => r.read_header(),
-            Self::Multi(r) => r.read_header(),
-        }
-    }
-
-    /// Returns an error for the multithreaded variant.
-    /// HashLookup must always be constructed with `Single`.
-    fn seek_vpos(&mut self, pos: VirtualPosition) -> std::io::Result<VirtualPosition> {
-        match self {
-            Self::Single(r) => r.get_mut().seek(pos),
-            Self::Multi(_) => Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "seek_vpos unavailable on MultithreadedReader; \
-                 use --matching-algorithm namesorted or collated with --threads",
-            )),
-        }
-    }
-
-    fn next_record(&mut self) -> Option<std::io::Result<Record>> {
-        match self {
-            Self::Single(r) => r.records().next(),
-            Self::Multi(r) => r.records().next(),
-        }
-    }
-
-    /// Raw header bytes for SO: / GO: sort-order validation.
-    /// Both variants can read sequentially from position 0.
-    fn read_raw_header_bytes(&mut self) -> std::io::Result<Vec<u8>> {
-        // Re-read the raw SAM header via the inner bgzf reader.
-        // After `read_header()` the file cursor is at the first record;
-        // this secondary read is only used during `new()` before any
-        // records are consumed.
-        match self {
-            Self::Single(r) => {
-                let mut hr = r.header_reader();
-                hr.read_magic_number()?;
-                let mut rhr = hr.raw_sam_header_reader()?;
-                let mut buf = Vec::new();
-                rhr.read_to_end(&mut buf)?;
-                Ok(buf)
-            }
-            Self::Multi(r) => {
-                let mut hr = r.header_reader();
-                hr.read_magic_number()?;
-                let mut rhr = hr.raw_sam_header_reader()?;
-                let mut buf = Vec::new();
-                rhr.read_to_end(&mut buf)?;
-                Ok(buf)
-            }
-        }
     }
 }
 
