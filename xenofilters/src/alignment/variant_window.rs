@@ -173,13 +173,12 @@ mod tests {
     }
 
     #[test]
-    fn test_window_no_overlap_before() {
+    fn test_window_no_overlap() {
+        // no ovelap before
         assert!(VariantWindow::compute(1, 3, 5, 6).is_none());
-    }
-
-    #[test]
-    fn test_window_touching_boundary_is_not_overlap() {
+        // touching boundary is not overlap
         assert!(VariantWindow::compute(1, 3, 3, 6).is_none());
+        // no overlap after
     }
 
     #[test]

@@ -1,4 +1,3 @@
-
 pub(super) const MAX_Q: usize = 93;
 
 /// Platform-specific quality-score calibration and gap cost presets.
@@ -26,42 +25,34 @@ pub enum ErrorModel {
 }
 
 impl ErrorModel {
+    // Return a tuple of (calibration, gap_open, gap_extend, mismatch_penalty)
+    fn params(&self) -> (f64, f64, f64, f64) {
+        match self {
+            ErrorModel::Illumina => (1.0, 6.0, 1.0, 4.0),
+            ErrorModel::HiFi => (1.0, 4.0, 0.5, 4.0),
+            ErrorModel::Ont => (0.7, 2.0, 0.3, 2.0),
+        }
+    }
     /// Fraction by which reported Phred scores are scaled before computing
     /// per-base log-likelihoods.  Values < 1.0 reduce confidence in
     /// reported qualities (conservative scoring).
     pub(crate) fn quality_calibration(&self) -> f64 {
-        match self {
-            ErrorModel::Illumina => 1.0,
-            ErrorModel::HiFi => 1.0,
-            ErrorModel::Ont => 0.7, // R10.4 empirical; adjust per basecaller
-        }
+        self.params().0
     }
 
     /// Suggested gap_open penalty for this platform.
     pub(crate) fn default_gap_open(&self) -> f64 {
-        match self {
-            ErrorModel::Illumina => 6.0,
-            ErrorModel::HiFi => 4.0,
-            ErrorModel::Ont => 2.0,
-        }
+        self.params().1
     }
 
     /// Suggested gap_extend penalty for this platform.
     pub(crate) fn default_gap_extend(&self) -> f64 {
-        match self {
-            ErrorModel::Illumina => 1.0,
-            ErrorModel::HiFi => 0.5,
-            ErrorModel::Ont => 0.3,
-        }
+        self.params().2
     }
 
     /// Suggested mismatch_penalty for this platform.
     pub(crate) fn default_mismatch_penalty(&self) -> f64 {
-        match self {
-            ErrorModel::Illumina => 4.0,
-            ErrorModel::HiFi => 4.0,
-            ErrorModel::Ont => 2.0, // mismatches are less surprising in ONT
-        }
+        self.params().3
     }
 }
 

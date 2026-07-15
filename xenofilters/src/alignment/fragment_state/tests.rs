@@ -1,10 +1,10 @@
-use crate::Error;
 use crate::alignment::fragment_state::FragmentState;
 use crate::tests::create_record;
+use crate::Error;
 use noodles::core::Position;
 use noodles::sam::alignment::record::Flags;
 use noodles::sam::alignment::record_buf::RecordBuf;
-use smallvec::{SmallVec, smallvec};
+use smallvec::{smallvec, SmallVec};
 use std::cmp::Ordering;
 
 fn segment(qname: &[u8], flag_bits: u16, tid: usize, start: usize) -> Result<RecordBuf, Error> {

@@ -1,3 +1,4 @@
+use crate::tests::common::{r, u};
 use crate::{
     alignment::FragmentState,
     aln_stream::AlignmentStream,
@@ -38,16 +39,6 @@ fn lbl_chimeric(specs: &[(&str, Vec<RecordBuf>)], pairs: &[[usize; 2]]) -> LineB
         })
         .collect();
     LineByLine::new(&cfg, aln).unwrap()
-}
-
-fn rec(name: &[u8], cigar: &str, md: &str) -> RecordBuf {
-    create_record(name, cigar, &[], &[30u8; 20], md, false).unwrap()
-}
-
-fn unmap(name: &[u8]) -> RecordBuf {
-    let seq = vec![b'A'; 10];
-    let q = vec![30u8; 10];
-    create_record(name, "", &seq, &q, "", false).unwrap()
 }
 
 /// Set flag bits and retain name.
@@ -106,53 +97,53 @@ fn two_stream_tournament() {
         // ── Tier 1: unmapped ─────────────────────────────────────────────
         TwoStreamCase {
             label: "both unmapped → both ambiguous",
-            s0: vec![unmap(b"R1")], s1: vec![unmap(b"R1")],
+            s0: vec![u(b"R1")], s1: vec![u(b"R1")],
             out0:0, out1:0, disc0:0, disc1:0, ambig0:1, ambig1:1,
         },
         TwoStreamCase {
             label: "s0 unmapped s1 mapped → s1 wins",
-            s0: vec![unmap(b"R1")], s1: vec![rec(b"R1", "10M", "10")],
+            s0: vec![u(b"R1")], s1: vec![r(b"R1", "10M", "10")],
             out0:0, out1:1, disc0:1, disc1:0, ambig0:0, ambig1:0,
         },
         // ── Tier 2: perfect-match ─────────────────────────────────────────
         TwoStreamCase {
             label: "s0 perfect s1 imperfect → s0 wins",
-            s0: vec![rec(b"R1", "10M", "10")],
-            s1: vec![rec(b"R1", "10M", "5A4")],
+            s0: vec![r(b"R1", "10M", "10")],
+            s1: vec![r(b"R1", "10M", "5A4")],
             out0:1, out1:0, disc0:0, disc1:1, ambig0:0, ambig1:0,
         },
         TwoStreamCase {
             label: "both perfect → ambiguous",
-            s0: vec![rec(b"R1", "10M", "10")], s1: vec![rec(b"R1", "10M", "10")],
+            s0: vec![r(b"R1", "10M", "10")], s1: vec![r(b"R1", "10M", "10")],
             out0:0, out1:0, disc0:0, disc1:0, ambig0:1, ambig1:1,
         },
         TwoStreamCase {
             label: "s1 perfect s0 softclip → s1 wins",
-            s0: vec![rec(b"R1", "5S5M", "5")],
-            s1: vec![rec(b"R1", "10M",  "10")],
+            s0: vec![r(b"R1", "5S5M", "5")],
+            s1: vec![r(b"R1", "10M",  "10")],
             out0:0, out1:1, disc0:1, disc1:0, ambig0:0, ambig1:0,
         },
         // ── Tier 2.5: match-count domination ─────────────────────────────
         TwoStreamCase {
             label: "s0 more matches in CIGAR/MD → s0 wins via Tier2.5",
             // s0: 8 matches, s1: 6 matches (both imperfect so Tier2 doesn't resolve)
-            s0: vec![rec(b"R1", "10M", "8AA")],
-            s1: vec![rec(b"R1", "10M", "6AAAA")],
+            s0: vec![r(b"R1", "10M", "8AA")],
+            s1: vec![r(b"R1", "10M", "6AAAA")],
             out0:1, out1:0, disc0:0, disc1:1, ambig0:0, ambig1:0,
         },
         // ── Tier 3: NW scoring breaks tie ────────────────────────────────
         TwoStreamCase {
             label: "equal match count, NW score from quality breaks tie — not testable with MockStream quality=30 constant",
             // With all q=30 and flat MD, both identical CIGARs → ambiguous
-            s0: vec![rec(b"R1", "8M2S", "8")],
-            s1: vec![rec(b"R1", "8M2S", "8")],
+            s0: vec![r(b"R1", "8M2S", "8")],
+            s1: vec![r(b"R1", "8M2S", "8")],
             out0:0, out1:0, disc0:0, disc1:0, ambig0:1, ambig1:1,
         },
         // ── Multiple fragments ────────────────────────────────────────────
         TwoStreamCase {
             label: "multiple fragments independent outcomes",
-            s0: vec![rec(b"R1","10M","10"), rec(b"R2","5S5M","5"),  rec(b"R3","10M","10")],
-            s1: vec![rec(b"R1","5S5M","5"), rec(b"R2","10M","10"),  rec(b"R3","10M","10")],
+            s0: vec![r(b"R1","10M","10"), r(b"R2","5S5M","5"),  r(b"R3","10M","10")],
+            s1: vec![r(b"R1","5S5M","5"), r(b"R2","10M","10"),  r(b"R3","10M","10")],
             out0:1, out1:1, disc0:1, disc1:1, ambig0:1, ambig1:1,
         },
     ]);
@@ -175,9 +166,9 @@ fn three_stream_tournament() {
         Row {
             label: "s0 perfect others imperfect → s0 wins",
             s: [
-                vec![rec(b"R1", "10M", "10")],
-                vec![rec(b"R1", "10M", "5A4")],
-                vec![rec(b"R1", "10M", "4A4A0")],
+                vec![r(b"R1", "10M", "10")],
+                vec![r(b"R1", "10M", "5A4")],
+                vec![r(b"R1", "10M", "4A4A0")],
             ],
             out: [1, 0, 0],
             disc: [0, 1, 1],
@@ -186,9 +177,9 @@ fn three_stream_tournament() {
         Row {
             label: "all three perfect → all ambiguous",
             s: [
-                vec![rec(b"R1", "10M", "10")],
-                vec![rec(b"R1", "10M", "10")],
-                vec![rec(b"R1", "10M", "10")],
+                vec![r(b"R1", "10M", "10")],
+                vec![r(b"R1", "10M", "10")],
+                vec![r(b"R1", "10M", "10")],
             ],
             out: [0, 0, 0],
             disc: [0, 0, 0],
@@ -197,9 +188,9 @@ fn three_stream_tournament() {
         Row {
             label: "s2 has most matches → s2 wins via Tier 2.5",
             s: [
-                vec![rec(b"R1", "10M", "6AAAA")], // 6 matches
-                vec![rec(b"R1", "10M", "8AA")],   // 8 matches
-                vec![rec(b"R1", "10M", "9A0")],   // 9 matches
+                vec![r(b"R1", "10M", "6AAAA")], // 6 matches
+                vec![r(b"R1", "10M", "8AA")],   // 8 matches
+                vec![r(b"R1", "10M", "9A0")],   // 9 matches
             ],
             out: [0, 0, 1],
             disc: [1, 1, 0],
@@ -208,9 +199,9 @@ fn three_stream_tournament() {
         Row {
             label: "s0 unmapped, s1/s2 mapped, s1 perfect → s1 wins",
             s: [
-                vec![unmap(b"R1")],
-                vec![rec(b"R1", "10M", "10")],
-                vec![rec(b"R1", "10M", "8AA")],
+                vec![u(b"R1")],
+                vec![r(b"R1", "10M", "10")],
+                vec![r(b"R1", "10M", "8AA")],
             ],
             out: [0, 1, 0],
             disc: [1, 0, 1],
@@ -239,7 +230,7 @@ fn three_stream_tournament() {
 
 /// Build a paired-end record: flags encode first/last segment.
 fn pe(name: &[u8], cigar: &str, md: &str, flags_bits: u16) -> RecordBuf {
-    with_flags(rec(name, cigar, md), flags_bits)
+    with_flags(r(name, cigar, md), flags_bits)
 }
 
 #[test]
@@ -344,7 +335,7 @@ fn chimeric_three_stream_pair_01_mouse_competes_normally() {
     // mouse records should be discarded normally
     let r1_human = pe(b"R1", "10M", "10", 0x41);
     let r2_hpv = pe(b"R1", "10M", "10", 0x81);
-    let r_mouse = rec(b"R1", "10M", "5A4"); // loses normally
+    let r_mouse = r(b"R1", "10M", "5A4"); // loses normally
     let config = Config::default();
 
     let mut lbl = lbl_chimeric(
