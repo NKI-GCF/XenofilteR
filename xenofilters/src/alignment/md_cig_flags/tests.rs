@@ -293,14 +293,14 @@ fn partial_ord_and_eq_reproduced_collect_misses() {
                     "partial_ord_and_eq: md_p1.partial_cmp(md_p2) != Some(Equal)".to_string(),
                 );
             }
-            if md_p1.partial_cmp(&md_i1) != Some(Ordering::Less) {
-                misses
-                    .push("partial_ord_and_eq: md_p1.partial_cmp(md_i1) != Some(Less)".to_string());
-            }
-            if md_i1.partial_cmp(&md_p1) != Some(Ordering::Greater) {
+            if md_p1.partial_cmp(&md_i1) != Some(Ordering::Greater) {
                 misses.push(
-                    "partial_ord_and_eq: md_i1.partial_cmp(md_p1) != Some(Greater)".to_string(),
+                    "partial_ord_and_eq: md_p1.partial_cmp(md_i1) != Some(Greater)".to_string(),
                 );
+            }
+            if md_i1.partial_cmp(&md_p1) != Some(Ordering::Less) {
+                misses
+                    .push("partial_ord_and_eq: md_i1.partial_cmp(md_p1) != Some(Less)".to_string());
             }
             if md_i1.partial_cmp(&md_i2) != None {
                 misses.push("partial_ord_and_eq: md_i1.partial_cmp(md_i2) != None".to_string());

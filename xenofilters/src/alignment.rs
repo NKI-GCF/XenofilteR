@@ -18,6 +18,17 @@ pub(crate) use variant_window::{align_alt_to_read, weighted_ref_score, VariantWi
 use noodles::sam::alignment::record::cigar::op::Kind;
 use noodles::sam::alignment::record::data::field::{Tag, Value};
 use noodles::sam::alignment::Record;
+use std::cmp::Ordering;
+
+#[inline]
+pub(crate) fn tie_break_bool(a: bool, b: bool) -> Option<Ordering> {
+    match (a, b) {
+        (true, true) => Some(Ordering::Equal),
+        (true, false) => Some(Ordering::Greater),
+        (false, true) => Some(Ordering::Less),
+        (false, false) => None,
+    }
+}
 
 pub(crate) fn stringify_record<R: Record + PartialEq>(rec: &R) -> String {
     let qname = rec.name();

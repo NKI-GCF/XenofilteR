@@ -1,7 +1,5 @@
 use crate::alignment::mate_kind::{mate_slot, segment_id, MateClassifiable, MateKind};
-use crate::alignment::Fragment;
-use crate::alignment::MdCigFlags;
-use crate::alignment::SimpleRec;
+use crate::alignment::{tie_break_bool, Fragment, MdCigFlags, SimpleRec};
 use crate::filter_algorithm::line_by_line::{Scratch, READ_CT};
 use crate::penalty::Penalty;
 use crate::region::{PositiveRegions, ScoreFn};
@@ -129,12 +127,7 @@ impl<R: SimpleRec> FragmentState<R> {
             mcfs2.push(mcf);
         }
 
-        *ord = match (perfect_self, perfect_other) {
-            (true, true) => Some(Ordering::Equal),
-            (false, true) => Some(Ordering::Less),
-            (true, false) => Some(Ordering::Greater),
-            (false, false) => None,
-        };
+        *ord = tie_break_bool(perfect_self, perfect_other);
         Ok((mcfs1, mcfs2))
     }
     /// Single-stream NW scoring loop, shared by LineByLine, Collated, and HashLookup.
@@ -266,12 +259,7 @@ impl<R: SimpleRec> FragmentState<R> {
 
 impl<R: SimpleRec> PartialOrd for FragmentState<R> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        match (self.is_all_unmapped(), other.is_all_unmapped()) {
-            (true, true) => Some(Ordering::Equal),
-            (true, false) => Some(Ordering::Less),
-            (false, true) => Some(Ordering::Greater),
-            (false, false) => None,
-        }
+        tie_break_bool(other.is_all_unmapped(), self.is_all_unmapped())
     }
 }
 

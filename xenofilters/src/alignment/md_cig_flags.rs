@@ -1,3 +1,4 @@
+use crate::alignment::tie_break_bool;
 use crate::Error;
 use noodles::sam::alignment::record::{data::field::Tag, data::field::Value, Cigar, Flags, Record};
 use std::cmp::Ordering;
@@ -140,12 +141,7 @@ impl<'r> MdCigFlags<'r> {
 
 impl<'r> PartialOrd for MdCigFlags<'r> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        match (self.is_perfect(), other.is_perfect()) {
-            (true, true) => Some(Ordering::Equal), // both unmapped => tie-break with next pair
-            (true, false) => Some(Ordering::Less), // self worse
-            (false, true) => Some(Ordering::Greater), // other worse
-            (false, false) => None, // Slow path, first cig/md after init, then per base evaluation.
-        }
+        tie_break_bool(self.is_perfect(), other.is_perfect())
     }
 }
 
