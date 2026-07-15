@@ -105,7 +105,7 @@ impl<R: SimpleRec> HashLookup<R> {
             record_counters: [0, 0],
             penalties: args.common.scoring.to_penalty(),
             scratch: Scratch::new(),
-            routing_counters: vec![0u64; 2 * COUNTER_STRIDE].into_boxed_slice(),
+            routing_counters: SmallVec::from_elem(0, 2 * COUNTER_STRIDE),
             add_decision_tag: args.common.io.add_decision_tag,
             ambiguous_log_threshold,
             strip: args.common.io.strip_read_suffix,

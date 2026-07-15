@@ -5,10 +5,10 @@ use crate::region::ScoreFn;
 use clap::Args;
 use std::path::PathBuf;
 use crate::Error;
-use crate::config::{StripReadSuffix, Penalty};
+use crate::config::StripReadSuffix;
 
 /// Shared by every subcommand. No arity-specific fields here.
-#[derive(Args, Debug, Clone)]
+#[derive(Args, Debug, Clone, Default)]
 pub(crate) struct IoArgs {
     /// Reference FASTA for CRAM decoding.
     #[arg(long, help_heading = "Input")]
@@ -40,7 +40,7 @@ pub(crate) struct IoArgs {
 }
 
 /// Scoring flags, shared everywhere.
-#[derive(Args, Debug, Clone)]
+#[derive(Args, Debug, Clone, Default)]
 pub(crate) struct ScoringArgs {
     #[arg(long, default_value = "illumina", help_heading = "Scoring")]
     pub(crate) error_model: ErrorModel,
@@ -178,146 +178,154 @@ pub(crate) struct OutputArgsPair {
 
 impl IoArgs {
     pub(crate) fn validate(&self) -> Result<(), Error> {
-        if let Some(ref_path) = &self.reference {
-            ensure!(
-                ref_path.exists(),
-                "--reference file not found: {}",
-                ref_path.display()
-            );
+        if let Some(ref p) = self.reference {
+            if !p.exists() {
+                return Err(Error::ReferenceNotFound {
+                    path: p.display().to_string(),
+                });
+            }
         }
         Ok(())
     }
 }
 
+
 impl ScoringArgs {
     pub(crate) fn validate(&mut self) -> Result<(), Error> {
-        ensure!(
-            self.mismatch_penalty > 0.0,
-            "--mismatch-penalty must be positive"
-        );
-        ensure!(self.gap_open > 0.0, "--gap-open must be positive");
-        ensure!(self.gap_extend >= 0.0, "--gap-extend must be non-negative");
-        ensure!(
-            (0.0..=1.0).contains(&self.warn_ambig_fraction),
-            "--warn-ambig-fraction must be in [0.0, 1.0]"
-        );
+        if self.mismatch_penalty <= 0.0
+            || self.gap_open <= 0.0
+            || self.gap_extend < 0.0
+        {
+            return Err(Error::InvalidPenalties);
+        }
+        if !(0.0..=1.0).contains(&self.warn_ambig_fraction) {
+            return Err(Error::InvalidWarnAmbigFraction {
+                value: self.warn_ambig_fraction,
+            });
+        }
         Ok(())
     }
 
-    pub(crate) fn to_penalty(&self) -> Penalty {
-        Penalty::build(
+    pub(crate) fn to_penalty(&self) -> crate::penalty::Penalty {
+        crate::penalty::Penalty::build(
             self.gap_open,
             self.gap_extend,
             self.mismatch_penalty,
-            20, // chimeric_junction_bases; TODO: expose as flag (roadmap)
+            20,
             self.error_model,
         )
     }
 }
 
 impl VariantArgs {
-    /// Parse "[IDX:]FILE" entries into (stream_idx, path) pairs.
-    /// Default index is positional (i-th entry → stream i) when no prefix given.
-    pub(crate) fn parse_indexed(specs: &[String]) -> Result<Vec<(usize, PathBuf)>, Error> {
-        specs
-            .iter()
-            .enumerate()
-            .map(|(i, s)| match s.split_once(':') {
-                Some((idx_str, path)) if idx_str.chars().all(|c| c.is_ascii_digit()) => {
+    pub(crate) fn parse_indexed(
+        specs: &[String],
+    ) -> Result<Vec<(usize, std::path::PathBuf)>, Error> {
+        specs.iter().enumerate().map(|(i, s)| {
+            match s.split_once(':') {
+                Some((idx_str, path))
+                    if idx_str.chars().all(|c| c.is_ascii_digit()) =>
+                {
                     let idx = idx_str
                         .parse::<usize>()
-                        .map_err(|_| anyhow!("invalid stream index in '{s}'"))?;
-                    Ok((idx, PathBuf::from(path)))
+                        .map_err(|_| Error::InvalidVariantStreamIndex {
+                            spec: s.clone(),
+                        })?;
+                    Ok((idx, std::path::PathBuf::from(path)))
                 }
-                _ => Ok((i, PathBuf::from(s))),
-            })
-            .collect()
+                _ => Ok((i, std::path::PathBuf::from(s))),
+            }
+        }).collect()
     }
 
     pub(crate) fn has_index(&self, idx: usize) -> Result<bool, Error> {
-        let sample_has = Self::parse_indexed(&self.sample_variants)?
-            .iter()
-            .any(|(i, _)| *i == idx);
-        let pop_has = Self::parse_indexed(&self.population_variants)?
-            .iter()
-            .any(|(i, _)| *i == idx);
-        Ok(sample_has || pop_has)
+        let s = Self::parse_indexed(&self.sample_variants)?
+            .iter().any(|(i, _)| *i == idx);
+        let p = Self::parse_indexed(&self.population_variants)?
+            .iter().any(|(i, _)| *i == idx);
+        Ok(s || p)
     }
 }
 
 impl OutputArgsMulti {
     pub(crate) fn validate(&self, n_streams: usize) -> Result<(), Error> {
-        ensure!(
-            self.output.len() <= n_streams,
-            "--output has {} paths but only {n_streams} streams",
-            self.output.len()
-        );
-        ensure!(
-            self.ambiguous_output.is_empty() || self.ambiguous_output.len() <= n_streams,
-            "--ambiguous-output has {} paths but only {n_streams} streams",
-            self.ambiguous_output.len()
-        );
+        if self.output.len() > n_streams {
+            return Err(Error::TooManyOutputPaths {
+                count: self.output.len(),
+                max: n_streams,
+            });
+        }
+        if !self.ambiguous_output.is_empty()
+            && self.ambiguous_output.len() > n_streams
+        {
+            return Err(Error::TooManyAmbiguousPaths {
+                given: self.ambiguous_output.len(),
+                streams: n_streams,
+            });
+        }
         Ok(())
     }
 }
-impl From<OutputArgsPair> for OutputArgsMulti {
-    fn from(p: OutputArgsPair) -> Self {
-        Self {
-            output: p.output,
-            ambiguous_output: p.ambiguous_output,
-        }
-    }
-}
+
 impl OutputArgsPair {
     pub(crate) fn validate(&self) -> Result<(), Error> {
-        ensure!(
-            self.output.len() <= 2,
-            "--output accepts at most 2 paths here"
-        );
-        ensure!(
-            self.ambiguous_output.len() <= 2,
-            "--ambiguous-output accepts at most 2 paths here"
-        );
+        if self.output.len() > 2 {
+            return Err(Error::TooManyOutputPathsPair);
+        }
+        if self.ambiguous_output.len() > 2 {
+            return Err(Error::TooManyAmbiguousPathsPair);
+        }
         Ok(())
     }
 }
 
 impl ChimericArgs {
-    pub(crate) fn parse_pairs(&self, n_streams: usize) -> Result<Vec<[usize; 2]>, Error> {
+    pub(crate) fn parse_pairs(
+        &self,
+        n_streams: usize,
+    ) -> Result<Vec<[usize; 2]>, Error> {
         parse_chimeric_pairs(&self.chimeric_pairs, n_streams)
     }
 }
 
-/// Parse "A:B" chimeric-pair specs into canonical [lower, upper] index pairs.
-/// Deduplicates and validates indices are within range and distinct.
 pub(crate) fn parse_chimeric_pairs(
     specs: &[String],
     n_streams: usize,
 ) -> Result<Vec<[usize; 2]>, Error> {
     let mut pairs = Vec::with_capacity(specs.len());
     for raw in specs {
-        let (a_str, b_str) = raw.split_once(':').ok_or_else(|| {
-            anyhow!("--chimeric-pairs: expected format 'A:B' (e.g. '0:1'), got '{raw}'")
-        })?;
+        let (a_str, b_str) =
+            raw.split_once(':').ok_or_else(|| Error::InvalidChimericPairFormat {
+                raw: raw.clone(),
+            })?;
         let a = a_str
             .trim()
             .parse::<usize>()
-            .map_err(|_| anyhow!("--chimeric-pairs: '{a_str}' is not a valid stream index"))?;
+            .map_err(|_| Error::InvalidChimericPairFormat { raw: raw.clone() })?;
         let b = b_str
             .trim()
             .parse::<usize>()
-            .map_err(|_| anyhow!("--chimeric-pairs: '{b_str}' is not a valid stream index"))?;
-        ensure!(
-            a != b,
-            "--chimeric-pairs: stream index must differ (got '{raw}')"
-        );
-        ensure!(
-            a < n_streams && b < n_streams,
-            "--chimeric-pairs: index out of range for {n_streams} streams (got '{raw}')"
-        );
+            .map_err(|_| Error::InvalidChimericPairFormat { raw: raw.clone() })?;
+        if a == b {
+            return Err(Error::ChimericPairSameIndex { raw: raw.clone() });
+        }
+        if a >= n_streams || b >= n_streams {
+            return Err(Error::ChimericPairIndexOutOfRange {
+                raw: raw.clone(),
+                streams: n_streams,
+            });
+        }
         pairs.push([a.min(b), a.max(b)]);
     }
     pairs.sort_unstable();
     pairs.dedup();
     Ok(pairs)
+}
+
+pub(crate) fn resolve_threshold(phred: u32, is_pass2: bool) -> f64 {
+    let p = match phred {
+        u32::MAX => if is_pass2 { 0 } else { 10 },
+        p        => p,
+    };
+    (p as f64) * std::f64::consts::LN_10 / 10.0
 }

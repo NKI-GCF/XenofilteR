@@ -19,19 +19,20 @@ pub(crate) mod tests;
 use crate::Error;
 use crate::alignment::{FragmentState, SimpleRec, PreAssessResult, pre_assess_alignments, MateKind, mate_kind::MateClassifiable };
 use crate::aln_stream::AlignmentStream;
-use crate::config::{Config, StripReadSuffix};
+use crate::config::{CommonArgs, StripReadSuffix};
 use crate::filter_algorithm::line_by_line::{Scratch, ordering::Decision};
 use crate::penalty::Penalty;
 use crate::region::tabix_query::{TabixBed, TabixVcf};
 use noodles::sam::alignment::record::{cigar::Cigar, data::field::Tag};
 use noodles::sam::alignment::record_buf::{RecordBuf, data::field::Value};
 use reader::{CollatedReader, canonical_name};
-use smallvec::SmallVec;
+use smallvec::{SmallVec, smallvec};
 use std::collections::HashMap;
 use ahash::RandomState;
 use crate::region::ScoreFn;
 use crate::config::CollatedArgs;
 use crate::filter_algorithm::line_by_line::COUNTER_STRIDE;
+use crate::region::tabix_query::TabixScored;
 
 pub(crate) struct CollatedMatcher<R: SimpleRec> {
     a: CollatedReader<R>,
@@ -68,14 +69,14 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             waiting_b: HashMap::with_hasher(RandomState::new()),
             penalties: args.common.scoring.to_penalty(),
             scratch: Scratch::new(),
-            routing_counters: vec![0u64; 2 * COUNTER_STRIDE].into_boxed_slice(),
+            routing_counters: SmallVec::from_elem(0, 2 * COUNTER_STRIDE),
             add_decision_tag: args.common.io.add_decision_tag,
             ambiguous_log_threshold,
             bed, vcf, positive: pos,
         })
     }
     pub(crate) fn new(
-        config: &Config,
+        config: &CommonArgs,
         mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
         bed: [Option<TabixBed>; 2],
         vcf: [Option<TabixVcf>; 2],
@@ -129,7 +130,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
     //
     // Output order is NOT guaranteed (acceptable for Collated).
     // N-STREAM: scales to N waiting maps; memory is O(name-order skew × streams).
-    pub(crate) fn process(&mut self, config: &Config) -> Result<(), Error> {
+    pub(crate) fn process(&mut self, config: &CommonArgs) -> Result<(), Error> {
         loop {
             let fa = self.a.next_fragment()?;
             let fb = self.b.next_fragment()?;

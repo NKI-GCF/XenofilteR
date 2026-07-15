@@ -4,7 +4,7 @@
 
 use crate::alignment::{FragmentState, SimpleRec};
 use crate::aln_stream::AlignmentStream;
-use crate::config::Config;
+use crate::config::CommonArgs;
 use crate::config::StripReadSuffix;
 use crate::region::{PositiveRegions, ScoreFn};
 use crate::variant::StoreTrait;
@@ -46,7 +46,7 @@ pub(crate) struct CollatedReader<R> {
 impl<R: SimpleRec> CollatedReader<R> {
     pub(crate) fn new(
         inner: Box<dyn AlignmentStream<R>>,
-        config: &Config,
+        config: &CommonArgs,
         species_nr: usize,
     ) -> Self {
         Self {

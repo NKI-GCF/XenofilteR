@@ -147,11 +147,11 @@ impl<R: SimpleRec> LineByLine<R> {
         );
         Ok(Self {
             aln,
-            routing_counters: vec![0u64; n * COUNTER_STRIDE].into_boxed_slice(),
+            routing_counters: SmallVec::from_elem(0, n * COUNTER_STRIDE),
             penalties: args.common.scoring.to_penalty(),
             ambiguous_log_threshold,
             add_decision_tag: args.common.io.add_decision_tag,
-            bisulfite: args.common.scoring.bisulfite,
+            bisulfite: args.common.bisulfite,
             score_threads: args.parallel.score_threads,
             chimeric_pairs,
             stream_labels: args.chimeric.stream_labels.clone(),

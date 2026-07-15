@@ -83,6 +83,9 @@ pub enum Error {
     #[error("Invalid input: {0}")]
     InvalidInput(String),
 
+    #[error("No reader available")]
+    NoReaderAvailable,
+
     // ---------------------------------------------------------------------------
     // CLI / Configuration
     // ---------------------------------------------------------------------------
@@ -98,8 +101,18 @@ pub enum Error {
     #[error("CRAM input is only supported with --matching-algorithm namesorted")]
     CramNamesortedOnly,
 
+    #[error("CRAM index seeking not yet implemented (see ROADMAP)")]
+    CramSeekingNotImplemented,
+
+
     #[error("stdin requires --input-format sam")]
     StdinRequiresSamFormat,
+
+    #[error("stdin input is only supported with namesorted")]
+    StdinNamesortedOnly,
+
+    #[error("hashlookup requires BAM input; CRAM/SAM seeking not yet supported")]
+    HashlookupRequiresBam,
 
     #[error("Gap open/mismatch penalties must be positive")]
     InvalidPenalties,
@@ -155,6 +168,59 @@ pub enum Error {
 
     #[error("Ambiguous fraction {value} is out of range [0.0, 1.0]")]
     WarnAmbigFractionOutOfRange { value: f64 },
+
+    #[error("--reference file not found: {path}")]
+    ReferenceNotFound { path: String },
+
+    #[error("--warn-ambig-fraction must be in [0.0, 1.0], got {value}")]
+    InvalidWarnAmbigFraction { value: f64 },
+
+    #[error("--ambiguous-output has {given} paths but only {streams} streams")]
+    TooManyAmbiguousPaths { given: usize, streams: usize },
+
+    #[error("--output accepts at most 2 paths for this subcommand")]
+    TooManyOutputPathsPair,
+
+    #[error("--ambiguous-output accepts at most 2 paths for this subcommand")]
+    TooManyAmbiguousPathsPair,
+
+    #[error(
+        "--chimeric-pairs: expected format 'A:B' (e.g. '0:1'), got '{raw}'"
+    )]
+    InvalidChimericPairFormat { raw: String },
+
+    #[error("--chimeric-pairs: '{raw}' — stream index must differ")]
+    ChimericPairSameIndex { raw: String },
+
+    #[error(
+        "--chimeric-pairs: index out of range for {streams} streams, got '{raw}'"
+    )]
+    ChimericPairIndexOutOfRange { raw: String, streams: usize },
+
+    #[error("invalid stream index in variant spec '{spec}'")]
+    InvalidVariantStreamIndex { spec: String },
+
+    #[error(
+        "strain: requires a variant profile for both strain 0 and strain 1 \
+         (via --sample-variants or --population-variants, e.g. '0:a.vcf 1:b.vcf')"
+    )]
+    StrainMissingVariantProfile,
+
+    // -- Stream count ---------------------------------------------------------
+    #[error(
+        "namesorted supports 1..={MAX_STREAMS} streams, got {got}",
+        MAX_STREAMS = crate::filter_algorithm::line_by_line::MAX_STREAMS
+    )]
+    NamesortedStreamCount { got: usize },
+
+    #[error("hashlookup requires exactly 2 streams, got {got}")]
+    HashlookupStreamCount { got: usize },
+
+    #[error("collated requires exactly 2 streams, got {got}")]
+    CollatedStreamCount { got: usize },
+
+    #[error("{algorithm} does not support --score-threads > 1")]
+    AlgorithmNotParallel { algorithm: &'static str },
 
     // ---------------------------------------------------------------------------
     // Region / BED / Tabix
@@ -445,4 +511,27 @@ pub enum Error {
 
     #[error("indel expansion position overflow at {chrom}:{pos}")]
     ExpansionPositionOverflow { chrom: String, pos: usize },
+
+    // -- Alignment / scoring --------------------------------------------------
+    #[error("unexpected MD tag value type")]
+    UnexpectedMdTagType,
+
+    #[error("missing flags at index {idx}")]
+    MissingFlags { idx: usize },
+
+    #[error("mapped record missing reference sequence ID")]
+    MissingRefSeqId,
+
+    #[error("mapped record missing alignment start")]
+    MissingAlignStart,
+
+    #[error("NW error: {0}")]
+    NwError(String),
+
+    #[error("scoring error for stream {stream}: {source}")]
+    ScoreError { stream: usize, source: Box<Error> },
+
+    // -- no-merged-writer -----------------------------------------------------
+    #[error("no merged writer configured")]
+    NoMergedWriter,
 }

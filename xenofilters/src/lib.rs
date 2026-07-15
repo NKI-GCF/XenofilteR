@@ -14,7 +14,7 @@ pub mod reporting;
 pub mod stats;
 pub mod variant;
 
-use aln_stream::{open::open_streams_unified, AlignmentStream, AlnStream};
+use aln_stream::{open::open_streams_unified};
 use config::{args::parse_chimeric_pairs, AlgorithmCommand, Cli, CollatedArgs, HashlookupArgs, NamesortedArgs};
 use clap::CommandFactory;
 use clap_complete::generate;
@@ -24,13 +24,8 @@ use filter_algorithm::{
     hash_lookup::HashLookup,
     line_by_line::{LineByLine, MAX_STREAMS},
 };
-use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::Header;
-use region::{AmbiguousRegions, DiagnosticVariants, ScoredRegions, load::{
-
-
-}};
-use smallvec::{smallvec, SmallVec};
+use region::{AmbiguousRegions, DiagnosticVariants, load::{load_ambiguous_regions_memory, load_diagnostic_variants_memory, load_positive_regions_memory}};
 use std::collections::HashMap;
 use std::path::Path;
 use tracing_subscriber::{fmt, EnvFilter};
@@ -153,7 +148,7 @@ fn run_namesorted(mut args: NamesortedArgs) -> Result<(), Error> {
     } else {
         LineByLine::new_from_namesorted(&args, aln)?.process_sequential()?
     };
-    print_routing_counters(&counters, "namesorted", &args.common);
+    run_repot.print_routing_counters("namesorted", &args.common);
     write_stats_if_configured(&counters, &args.common, n, "namesorted")
 }
 
