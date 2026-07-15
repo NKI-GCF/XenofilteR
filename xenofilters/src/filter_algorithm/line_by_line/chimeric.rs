@@ -53,17 +53,17 @@
 //!   mouse output  : all records    → discarded output (normal tournament)
 //! ```
 
+use super::core::{LineByLine, COUNTER_STRIDE};
 use crate::alignment::{FragmentState, SimpleRec};
 use crate::filter_algorithm::line_by_line::core::FragmentBuffer;
+use crate::Error;
 use noodles::sam::alignment::record::{
-    Flags,
     cigar::op::Kind,
     data::field::{Tag, Value},
+    Flags,
 };
-use smallvec::SmallVec;
-use crate::Error;
-use super::core::{LineByLine, COUNTER_STRIDE};
 use noodles::sam::alignment::record_buf::data::field::Value as RecordBufValue;
+use smallvec::SmallVec;
 
 /// Fast flag-only check for paired-end chimeric complement.
 ///
@@ -72,7 +72,7 @@ use noodles::sam::alignment::record_buf::data::field::Value as RecordBufValue;
 /// Runs before `detect_chimeric_event` (which also scans CIGAR/MD for read-splits);
 /// this path uses only flag checks.
 pub(crate) fn detect_chimeric_mate_complement<R: SimpleRec>(
-    best:           &FragmentBuffer<R>,
+    best: &FragmentBuffer<R>,
     chimeric_pairs: &[[usize; 2]],
 ) -> Option<(usize, usize)> {
     use crate::alignment::mate_kind::{mate_slot, segment_id};
@@ -82,7 +82,9 @@ pub(crate) fn detect_chimeric_mate_complement<R: SimpleRec>(
         let mut m = [None::<bool>; 2];
         for r in state.get_records() {
             let Ok(f) = r.flags() else { continue };
-            if f.is_secondary() || f.is_supplementary() { continue; }
+            if f.is_secondary() || f.is_supplementary() {
+                continue;
+            }
             let slot = mate_slot(segment_id(&f));
             // Later records for the same slot overwrite; last primary wins.
             m[slot] = Some(!f.is_unmapped());
@@ -95,9 +97,14 @@ pub(crate) fn detect_chimeric_mate_complement<R: SimpleRec>(
         let sb = best.iter().find(|s| s.get_nr() == b)?;
 
         // Both streams must have paired-end records.
-        let paired = sa.get_records().iter().chain(sb.get_records().iter())
+        let paired = sa
+            .get_records()
+            .iter()
+            .chain(sb.get_records().iter())
             .any(|r| r.flags().is_ok_and(|f| f.is_segmented()));
-        if !paired { continue; }
+        if !paired {
+            continue;
+        }
 
         let mk_a = flag_mate_map(sa);
         let mk_b = flag_mate_map(sb);
@@ -255,38 +262,14 @@ fn is_complementary(range_a: (usize, usize), range_b: (usize, usize), read_len: 
 /// SNV letters (A/C/G/T/N) are counted as mismatches.  Returns 0 on
 /// empty or malformed input and never panics.
 fn md_mismatches_from_record<R: SimpleRec>(rec: &R) -> usize {
-    let md_bytes: &[u8] = match rec
+    match rec
         .data()
         .get(&Tag::MISMATCHED_POSITIONS)
         .and_then(|v| v.ok())
     {
-        Some(Value::String(s)) => {
-            let bytes: &[u8] = s.as_ref();
-            // SAFETY: we only read from this slice inside this scope.
-            unsafe { std::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) }
-        }
-        _ => return usize::MAX, // MD absent → treat as maximally mismatched
-    };
-
-    let mut count = 0usize;
-    let mut i = 0usize;
-    while i < md_bytes.len() {
-        let b = md_bytes[i];
-        if b.is_ascii_digit() {
-            i += 1;
-        } else if b == b'^' {
-            i += 1;
-            while i < md_bytes.len() && !md_bytes[i].is_ascii_digit() {
-                i += 1;
-            }
-        } else if matches!(b, b'A' | b'C' | b'G' | b'T' | b'N') {
-            count += 1;
-            i += 1;
-        } else {
-            i += 1;
-        }
+        Some(Value::String(s)) => crate::alignment::pre_assess::md_mismatches(s.as_ref()),
+        _ => usize::MAX, // MD absent → treat as maximally mismatched
     }
-    count
 }
 
 // ---------------------------------------------------------------------------
@@ -466,25 +449,30 @@ impl<R: SimpleRec> LineByLine<R> {
     /// reads with `samtools view -d XC:hpv`.
     pub(super) fn emit_chimeric(
         &mut self,
-        best:     &mut super::core::FragmentBuffer<R>,
+        best: &mut super::core::FragmentBuffer<R>,
         decision: ChimericDecision,
     ) -> Result<(), Error> {
         let (chimeric_a, chimeric_b, kind) = match decision {
-            ChimericDecision::Chimeric { stream_a, stream_b, kind } => (stream_a, stream_b, kind),
+            ChimericDecision::Chimeric {
+                stream_a,
+                stream_b,
+                kind,
+            } => (stream_a, stream_b, kind),
             ChimericDecision::Normal => unreachable!("emit_chimeric on non-chimeric"),
         };
         let label_a = self.chimeric_label(chimeric_a);
         let label_b = self.chimeric_label(chimeric_b);
-        let tag_xc  = Tag::new(b'X', b'C');
+        let tag_xc = Tag::new(b'X', b'C');
 
         tracing::debug!(kind = ?kind, stream_a = chimeric_a, stream_b = chimeric_b, "Emitting chimeric fragment");
 
-        best.drain(..).try_for_each(|mut state| -> Result<(), Error> {
-            let nr = state.get_nr();
-            let is_chimeric = nr == chimeric_a || nr == chimeric_b;
-            if is_chimeric {
-                let other_label = if nr == chimeric_a { &label_b } else { &label_a };
-                let xc_value    = RecordBufValue::String(other_label.as_bytes().into());
+        best.drain(..)
+            .try_for_each(|mut state| -> Result<(), Error> {
+                let nr = state.get_nr();
+                let is_chimeric = nr == chimeric_a || nr == chimeric_b;
+                if is_chimeric {
+                    let other_label = if nr == chimeric_a { &label_b } else { &label_a };
+                    let xc_value = RecordBufValue::String(other_label.as_bytes().into());
 
                     // For ReadSplit chimerism, stream A may contain a supplementary
                     // alignment that is a false-positive mapping of the split read's
@@ -495,22 +483,24 @@ impl<R: SimpleRec> LineByLine<R> {
                     //
                     // A future `--chimeric-suppress-supplementary` option could
                     // silently drop these records.
-                state.drain_records().try_for_each(|r| -> Result<(), Error> {
-                    let header = self.aln[nr].header();
-                    let mut rb = r.as_record_buf(header)?;
-                    rb.data_mut().insert(tag_xc, xc_value.clone());
-                    self.routing_counters[nr * COUNTER_STRIDE + 3] += 1;
-                    self.aln[nr].write_record(rb, Some(true))
-                })
-            } else {
-                // Streams outside the chimeric pair are discarded normally.
-                state.drain_records().try_for_each(|r| {
-                    let header = self.aln[nr].header();
-                    let rb = r.as_record_buf(header)?;
-                    self.routing_counters[nr * COUNTER_STRIDE] += 1;
-                    self.aln[nr].write_record(rb, Some(false))
-                })
-            }
-        })
+                    state
+                        .drain_records()
+                        .try_for_each(|r| -> Result<(), Error> {
+                            let header = self.aln[nr].header();
+                            let mut rb = r.as_record_buf(header)?;
+                            rb.data_mut().insert(tag_xc, xc_value.clone());
+                            self.routing_counters[nr * COUNTER_STRIDE + 3] += 1;
+                            self.aln[nr].write_record(rb, Some(true))
+                        })
+                } else {
+                    // Streams outside the chimeric pair are discarded normally.
+                    state.drain_records().try_for_each(|r| {
+                        let header = self.aln[nr].header();
+                        let rb = r.as_record_buf(header)?;
+                        self.routing_counters[nr * COUNTER_STRIDE] += 1;
+                        self.aln[nr].write_record(rb, Some(false))
+                    })
+                }
+            })
     }
 }

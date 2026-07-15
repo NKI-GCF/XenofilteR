@@ -319,7 +319,6 @@ pub(crate) fn pre_assess_scoring_records(
     }
 }
 
-#[cfg(test)]
 pub(crate) fn md_mismatches(md: &[u8]) -> usize {
     let mut count = 0;
     let mut pos = 0;
