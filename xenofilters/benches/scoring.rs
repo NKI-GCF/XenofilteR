@@ -2,17 +2,13 @@
 //! Run: cargo bench --bench scoring
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use smallvec::smallvec;
 use xenofilters::{
-    alignment::{
-        fragment::Fragment,
-        MdCigFlags,
-        pre_assess::pre_assess_alignments,
-    },
+    alignment::{fragment::Fragment, pre_assess::pre_assess_alignments, MdCigFlags},
     filter_algorithm::line_by_line::core::Scratch,
     penalty::Penalty,
     tests::create_record,
 };
-use smallvec::smallvec;
 
 fn bench_penalties() -> Penalty {
     xenofilters::config::Config {
@@ -20,6 +16,8 @@ fn bench_penalties() -> Penalty {
         gap_open: 6.0,
         gap_extend: 1.0,
         chimeric_junction_bases: 20,
+        expand_indels: true,
+        indel_expand_padding: 5,
         ..Default::default()
     }
     .to_penalties()
@@ -32,31 +30,31 @@ fn bench_penalties() -> Penalty {
 fn bench_score_op_iter(c: &mut Criterion) {
     // Representative cases: perfect, 1 mismatch, 10% mismatch, softclip, deletion.
     let cases: &[(&str, &str)] = &[
-        ("perfect_150M",     "150"),
-        ("1mm_150M",         "74A75"),
-        ("10pct_mm_150M",    "0A14A14A14A14A14A14A14A14A14A14"),
+        ("perfect_150M", "150"),
+        ("1mm_150M", "74A75"),
+        ("10pct_mm_150M", "0A14A14A14A14A14A14A14A14A14A14"),
         ("softclip_10S140M", "140"),
-        ("deletion_70M5D75M","70^ACGTA75"),
+        ("deletion_70M5D75M", "70^ACGTA75"),
     ];
     let pen = bench_penalties();
     let mut g = c.benchmark_group("ScoreOpIter");
     for &(label, md) in cases {
-        let cigar = if label.starts_with("softclip") { "10S140M" }
-                    else if label.starts_with("deletion") { "70M5D75M" }
-                    else { "150M" };
-        let qual  = vec![30u8; 150];
-        let rec   = create_record(b"r", cigar, &[], &qual, md, false).unwrap();
+        let cigar = if label.starts_with("softclip") {
+            "10S140M"
+        } else if label.starts_with("deletion") {
+            "70M5D75M"
+        } else {
+            "150M"
+        };
+        let qual = vec![30u8; 150];
+        let rec = create_record(b"r", cigar, &[], &qual, md, false).unwrap();
         let flags = rec.flags();
         g.bench_with_input(BenchmarkId::new("score_one", label), label, |b, _| {
             b.iter(|| {
-                let mcf  = MdCigFlags::try_from_record(&rec, &flags, false).unwrap();
-                let mut frag = Fragment::new(
-                    &pen,
-                    smallvec![black_box(&rec)],
-                    smallvec![mcf],
-                )
-                .unwrap();
-                let mut dvnt    = smallvec![smallvec![]];
+                let mcf = MdCigFlags::try_from_record(&rec, &flags, false).unwrap();
+                let mut frag =
+                    Fragment::new(&pen, smallvec![black_box(&rec)], smallvec![mcf]).unwrap();
+                let mut dvnt = smallvec![smallvec![]];
                 let mut scratch = Scratch::new();
                 black_box(frag.score(&mut scratch, &mut dvnt).unwrap())
             })
@@ -72,9 +70,9 @@ fn bench_score_op_iter(c: &mut Criterion) {
 fn bench_pre_assess(c: &mut Criterion) {
     // Pairs: (a_cigar, a_md, b_cigar, b_md, expected_outcome)
     let cases: &[(&str, &str, &str, &str)] = &[
-        ("150M", "150",     "150M", "148AA",   ),  // a dominates → EarlyDecision
-        ("150M", "148AA",   "150M", "148AA",   ),  // equal → Equal
-        ("150M", "74A75",   "150M", "74C75",   ),  // incomparable → FullScoring
+        ("150M", "150", "150M", "148AA"),   // a dominates → EarlyDecision
+        ("150M", "148AA", "150M", "148AA"), // equal → Equal
+        ("150M", "74A75", "150M", "74C75"), // incomparable → FullScoring
     ];
     let qual = vec![30u8; 150];
     let mut g = c.benchmark_group("pre_assess_alignments");
@@ -104,25 +102,46 @@ fn bench_wis(c: &mut Criterion) {
         variant::{eval::Eval, Variant},
     };
 
-    struct V { pos: usize, len: usize, delta: f64 }
+    struct V {
+        pos: usize,
+        len: usize,
+        delta: f64,
+    }
     impl Variant for V {
-        fn pos(&self)        -> usize { self.pos }
-        fn ref_allele(&self) -> &[u8] { b"A" }
-        fn alt_allele(&self) -> &[u8] { b"G" }
-        fn p_variant(&self)  -> f64   { 0.9 }
+        fn pos(&self) -> usize {
+            self.pos
+        }
+        fn ref_allele(&self) -> &[u8] {
+            b"A"
+        }
+        fn alt_allele(&self) -> &[u8] {
+            b"G"
+        }
+        fn p_variant(&self) -> f64 {
+            0.9
+        }
     }
 
     // Build N non-overlapping variants (worst-case WIS is O(N log N)).
     let make_dvnt = |n: usize| {
         let variants: Vec<&'static V> = (0..n)
             .map(|i| {
-                let v: &'static V = Box::leak(Box::new(V { pos: i * 10, len: 5, delta: 2.0 }));
+                let v: &'static V = Box::leak(Box::new(V {
+                    pos: i * 10,
+                    len: 5,
+                    delta: 2.0,
+                }));
                 v
             })
             .collect();
         let evals: smallvec::SmallVec<[Eval<'_>; 4]> = variants
             .iter()
-            .map(|v| { let mut e = Eval::new(); e.set_variant(*v as &dyn Variant); e.update(0.0, 2.0); e })
+            .map(|v| {
+                let mut e = Eval::new();
+                e.set_variant(*v as &dyn Variant);
+                e.update(0.0, 2.0);
+                e
+            })
             .collect();
         smallvec![evals]
     };
@@ -132,7 +151,7 @@ fn bench_wis(c: &mut Criterion) {
         g.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
             b.iter(|| {
                 let mut dvnt = make_dvnt(n);
-                let mut dp   = smallvec![];
+                let mut dp = smallvec![];
                 black_box(wis_max_rescue_delta(&mut dvnt, &mut dp))
             })
         });

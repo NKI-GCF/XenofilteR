@@ -212,7 +212,7 @@ pub struct Config {
         requires = "reference",
         help_heading = "Variants"
     )]
-    pub(crate) expand_indels: bool,
+    pub expand_indels: bool,
 
     /// Padding (bp) added on each side of ambiguous-region BED intervals
     /// when --expand-indels is active.  Extends the masking window to catch
@@ -226,7 +226,7 @@ pub struct Config {
         value_parser = clap::value_parser!(usize),
         help_heading = "Variants"
     )]
-    pub(crate) indel_expand_padding: usize,
+    pub indel_expand_padding: usize,
 
     /// VCF/BCF of species-diagnostic positions per stream (positional: stream 0, then 1).
     /// Reads overlapping these positions are forced through full scoring.
