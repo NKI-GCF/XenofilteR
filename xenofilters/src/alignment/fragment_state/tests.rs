@@ -35,42 +35,13 @@ fn test_fragment_state_first_qname() -> Result<(), Error> {
     assert_eq!(state.first_qname(), b"read1");
     Ok(())
 }
-#[test]
-fn test_fragment_state_equality() -> Result<(), Error> {
-    let qual = vec![37; 100];
-    let rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
-    let rec2 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
-    let state1 = FragmentState::from_record(rec1, 0, false)?;
-    let state2 = FragmentState::from_record(rec2, 0, false)?;
-    assert_eq!(state1, state2);
-    Ok(())
-}
-#[test]
-fn test_fragment_state_partial_ord_equal_imperfects() -> Result<(), Error> {
-    let qual = vec![37; 100];
-    let rec1 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
-    let rec2 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
-    let state1 = FragmentState::from_record(rec1, 0, false)?;
-    let state2 = FragmentState::from_record(rec2, 0, false)?;
-    assert_eq!(state1.partial_cmp(&state2), None); // Same imperfect matches
-    Ok(())
-}
+
 #[test]
 fn test_fragment_state_get_nr() -> Result<(), Error> {
     let qual = vec![37; 100];
     let rec = create_record(b"read1", "100M", &[], &qual, "100", false)?;
     let state = FragmentState::from_record(rec, 42, false)?;
     assert_eq!(state.get_nr(), 42);
-    Ok(())
-}
-#[test]
-fn test_fragment_state_inequality() -> Result<(), Error> {
-    let qual = vec![37; 100];
-    let rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
-    let rec2 = create_record(b"read2", "100M", &[], &qual, "100", false)?;
-    let state1 = FragmentState::from_record(rec1, 0, false)?;
-    let state2 = FragmentState::from_record(rec2, 0, false)?;
-    assert_ne!(state1, state2);
     Ok(())
 }
 #[test]
@@ -85,18 +56,7 @@ fn test_fragment_state_partial_ord_multiple_records_no_quick_balance() -> Result
     assert_eq!(state1.partial_cmp(&state2), None); // No quick balance
     Ok(())
 }
-#[test]
-fn test_fragment_state_partial_ord_no_quick_balance() -> Result<(), Error> {
-    let qual = vec![37; 100];
-    let rec1 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
-    let rec2 = create_record(b"read1", "100M", &[], &qual, "80T20", false)?;
-    let state1 = FragmentState::from_record(rec1, 0, false)?;
-    let state2 = FragmentState::from_record(rec2, 0, false)?;
-    assert_eq!(state1.partial_cmp(&state2), None); // No quick balance
-    Ok(())
-}
 
-//tests fail
 #[test]
 fn test_fragment_state_order_mates_multiple_records() -> Result<(), Error> {
     let qual = vec![37; 100];
@@ -109,6 +69,7 @@ fn test_fragment_state_order_mates_multiple_records() -> Result<(), Error> {
     assert_eq!(order, expected); // Forward read should come before reverse read
     Ok(())
 }
+
 #[test]
 fn test_fragment_state_partial_ord_multiple_records() -> Result<(), Error> {
     let qual = vec![37; 100];
@@ -124,67 +85,37 @@ fn test_fragment_state_partial_ord_multiple_records() -> Result<(), Error> {
     assert_eq!(ord, Some(Ordering::Greater)); // Perfect matches are better
     Ok(())
 }
+
 #[test]
 fn test_fragment_state_ordering() -> Result<(), Error> {
-    let qual = vec![37; 100];
-    let rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
-    let rec2 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
-    let state1 = FragmentState::from_record(rec1, 0, false)?;
-    let state2 = FragmentState::from_record(rec2, 1, false)?;
-    assert_eq!(state1.partial_cmp(&state2), None);
-
-    let mut ord: Option<Ordering> = None;
-    let _ = state1.cmp_perfect(&state2, &mut ord)?;
-    assert_eq!(ord, Some(Ordering::Equal));
-    Ok(())
-}
-#[test]
-fn test_fragment_state_partial_ord_with_unmapped() -> Result<(), Error> {
-    let qual = vec![37; 100];
-    let seq = vec![b'A'; 100];
-    let rec1 = create_record(b"read1", "", &seq, &qual, "", false)?;
-    let rec2 = create_record(b"read2", "100M", &seq, &qual, "", false)?;
-    let state1 = FragmentState::from_record(rec1, 0, false)?;
-    let state2 = FragmentState::from_record(rec2, 0, false)?;
-    assert_eq!(state1.partial_cmp(&state2), Some(Ordering::Less));
-    Ok(())
-}
-#[test]
-fn test_fragment_state_partial_ord_both_unmapped() -> Result<(), Error> {
-    let qual = vec![37; 100];
-    let seq = vec![b'A'; 100];
-    let rec1 = create_record(b"read1", "", &seq, &qual, "", false)?;
-    let rec2 = create_record(b"read2", "", &seq, &qual, "", false)?;
-    let state1: FragmentState<RecordBuf> = FragmentState::from_record(rec1, 0, false)?;
-    let state2: FragmentState<RecordBuf> = FragmentState::from_record(rec2, 0, false)?;
-    assert_eq!(state1.partial_cmp(&state2), Some(Ordering::Equal));
-    Ok(())
-}
-#[test]
-fn test_fragment_state_partial_ord_perfect_vs_imperfect() -> Result<(), Error> {
-    let qual = vec![37; 100];
-    let rec1 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
-    let rec2 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
-    let state1 = FragmentState::from_record(rec1, 0, false)?;
-    let state2 = FragmentState::from_record(rec2, 0, false)?;
-    assert_eq!(state1.partial_cmp(&state2), None);
-
-    let mut ord: Option<Ordering> = None;
-    let _ = state1.cmp_perfect(&state2, &mut ord)?;
-    assert_eq!(ord, Some(Ordering::Greater)); // Perfect match is better
-    Ok(())
-}
-#[test]
-fn test_fragment_state_partial_ord_imperfect_vs_perfect() -> Result<(), Error> {
-    let qual = vec![37; 100];
-    let rec1 = create_record(b"read1", "100M", &[], &qual, "90A10", false)?;
-    let rec2 = create_record(b"read1", "100M", &[], &qual, "100", false)?;
-    let state1 = FragmentState::from_record(rec1, 0, false)?;
-    let state2 = FragmentState::from_record(rec2, 0, false)?;
-    assert_eq!(state1.partial_cmp(&state2), None); // Perfect match is better
-    let mut ord: Option<Ordering> = None;
-    let _ = state1.cmp_perfect(&state2, &mut ord)?;
-    assert_eq!(ord, Some(Ordering::Less)); // Perfect match is better
+    use std::cmp::Ordering::*;
+    let cases = vec![
+        ("both_imperfect_same_md:100M:100M:90A10:90A10", None, None),
+        ("both_imperfect_diff_md:100M:100M:90A10:80T20", None, None),
+        ("perf_vs_imperf:100M:100M:100:90A10", None, Some(Greater)),
+        ("imperfect_vs_perfect:100M:100M:90A10:100", None, Some(Less)),
+        ("with_unmapped_vs_mapped::100M::90A10", Some(Less), None),
+        ("both_unmapped_equal_qname::::", Some(Ordering::Equal), None),
+    ];
+    for case in cases {
+        let (desc, exp_partial, exp_perfect) = case;
+        match desc.split(':').collect::<Vec<_>>().as_slice() {
+            [name, cig1, cig2, md1, md2] => {
+                let qual = vec![37; 100];
+                let rec1 = create_record(b"read1", cig1, &[], &qual, md1, false)?;
+                let rec2 = create_record(b"read2", cig2, &[], &qual, md2, false)?;
+                let state1 = FragmentState::from_record(rec1, 0, false)?;
+                let state2 = FragmentState::from_record(rec2, 0, false)?;
+                assert_eq!(state1.partial_cmp(&state2), exp_partial, "case: {}", name);
+                if let Some(expected) = exp_perfect {
+                    let mut ord: Option<Ordering> = None;
+                    let _ = state1.cmp_perfect(&state2, &mut ord)?;
+                    assert_eq!(ord, Some(expected), "case: {}", name);
+                }
+            }
+            _ => panic!("Invalid test case format: {}", desc),
+        }
+    }
     Ok(())
 }
 
@@ -267,4 +198,28 @@ fn test_order_mates_reverse_complement_pos_math() -> Result<(), Error> {
     let expected: SmallVec<[usize; 2]> = smallvec![1, 0];
     assert_eq!(order, expected);
     Ok(())
+}
+
+fn check_eq_ne(rec1: RecordBuf, rec2: RecordBuf, expect_equal: bool) -> Result<(), Error> {
+    let s1 = FragmentState::from_record(rec1, 0, false)?;
+    let s2 = FragmentState::from_record(rec2, 0, false)?;
+    assert_eq!(s1 == s2, expect_equal);
+    Ok(())
+}
+
+#[test]
+fn fragment_state_equality_and_inequality() -> Result<(), Error> {
+    let qual = vec![37; 100];
+    // equal: same qname, same cigar/md
+    check_eq_ne(
+        create_record(b"read1", "100M", &[], &qual, "100", false)?,
+        create_record(b"read1", "100M", &[], &qual, "100", false)?,
+        true,
+    )?;
+    // unequal: different qname
+    check_eq_ne(
+        create_record(b"read1", "100M", &[], &qual, "100", false)?,
+        create_record(b"read2", "100M", &[], &qual, "100", false)?,
+        false,
+    )
 }

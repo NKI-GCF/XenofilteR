@@ -15,18 +15,6 @@ use smallvec::{smallvec, SmallVec};
 // Builder helpers
 // ---------------------------------------------------------------------------
 
-fn lbl_from(specs: &[(&str, Vec<RecordBuf>)]) -> LineByLine<RecordBuf> {
-    let config = Config::default();
-    let aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> = specs
-        .iter()
-        .enumerate()
-        .map(|(i, (_, recs))| {
-            Box::new(MockStream::new(i, recs.clone())) as Box<dyn AlignmentStream<RecordBuf>>
-        })
-        .collect();
-    LineByLine::new(&config, aln).unwrap()
-}
-
 fn lbl_chimeric(specs: &[(&str, Vec<RecordBuf>)], pairs: &[[usize; 2]]) -> LineByLine<RecordBuf> {
     let mut cfg = Config::default();
     cfg.parsed_chimeric_pairs = pairs.to_vec();
@@ -80,7 +68,7 @@ struct TwoStreamCase {
 fn run_2stream(cases: &[TwoStreamCase]) {
     let config = Config::default();
     for c in cases {
-        let mut lbl = lbl_from(&[("a", c.s0.clone()), ("b", c.s1.clone())]);
+        let mut lbl = lbl_chimeric(&[("a", c.s0.clone()), ("b", c.s1.clone())], &[]);
         lbl.process_sequential(&config).unwrap();
         assert_eq!(out(&lbl, 0), c.out0, "[{}] out[0]", c.label);
         assert_eq!(out(&lbl, 1), c.out1, "[{}] out[1]", c.label);
@@ -210,11 +198,14 @@ fn three_stream_tournament() {
     ];
     let config = Config::default();
     for c in cases {
-        let mut lbl = lbl_from(&[
-            ("a", c.s[0].clone()),
-            ("b", c.s[1].clone()),
-            ("c", c.s[2].clone()),
-        ]);
+        let mut lbl = lbl_chimeric(
+            &[
+                ("a", c.s[0].clone()),
+                ("b", c.s[1].clone()),
+                ("c", c.s[2].clone()),
+            ],
+            &[],
+        );
         lbl.process_sequential(&config).unwrap();
         for i in 0..3 {
             assert_eq!(out(&lbl, i), c.out[i], "[{}] out[{i}]", c.label);
