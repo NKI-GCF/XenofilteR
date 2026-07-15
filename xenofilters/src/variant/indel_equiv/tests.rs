@@ -208,23 +208,39 @@ mod tests {
     }
 
     #[test]
-    fn left_normalize_removes_right_shifted_form() {
-        // Reference: GAAAAG; provide a right-shifted (non-left-normalized) input.
-        // pos=2, ref=AA, alt=A (anchor A at pos 2, delete A at pos 3)
-        // Left-normalized result: pos=0, ref=GA, alt=G
-        let (pos_out, ref_out, alt_out) = left_normalize(2, b"AA", b"A", b"GAAAAG", 0);
-        assert_eq!(pos_out, 0, "left normalize should shift to pos 0");
-        assert_eq!(ref_out, b"GA", "left normalized REF");
-        assert_eq!(alt_out, b"G", "left normalized ALT");
-    }
+    fn test_left_normalize() {
+        let cases = [
+            // (label, pos, ref_in, alt_in, seq, seq_offset, exp_pos, exp_ref, exp_alt)
+            (
+                "removes right shifted",
+                2,
+                b"AA".as_slice(),
+                b"A".as_slice(),
+                b"GAAAAG".as_slice(),
+                0,
+                0,
+                b"GA".as_slice(),
+                b"G".as_slice(),
+            ),
+            (
+                "noop at start",
+                0,
+                b"GA".as_slice(),
+                b"G".as_slice(),
+                b"GAAAAG".as_slice(),
+                0,
+                0,
+                b"GA".as_slice(),
+                b"G".as_slice(),
+            ),
+        ];
 
-    #[test]
-    fn left_normalize_at_chromosome_start_is_noop() {
-        // Anchor at position 0; cannot shift further left.
-        let (pos_out, ref_out, alt_out) = left_normalize(0, b"GA", b"G", b"GAAAAG", 0);
-        assert_eq!(pos_out, 0, "cannot left-shift past position 0");
-        assert_eq!(ref_out, b"GA");
-        assert_eq!(alt_out, b"G");
+        for (label, pos, ref_in, alt_in, seq, seq_off, exp_pos, exp_ref, exp_alt) in cases {
+            let (pos_out, ref_out, alt_out) = left_normalize(pos, ref_in, alt_in, seq, seq_off);
+            assert_eq!(pos_out, exp_pos, "{}", label);
+            assert_eq!(ref_out, exp_ref, "{}", label);
+            assert_eq!(alt_out, exp_alt, "{}", label);
+        }
     }
 
     #[test]

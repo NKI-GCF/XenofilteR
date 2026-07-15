@@ -1,3 +1,4 @@
+use crate::tests::common::{cfg, r, u};
 use crate::{
     aln_stream::tests::MockStream,
     aln_stream::AlignmentStream,
@@ -8,27 +9,10 @@ use crate::{
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::smallvec;
 
-fn cfg() -> Config {
-    Config {
-        gap_open: 6.0,
-        gap_extend: 1.0,
-        mismatch_penalty: 4.0,
-        strip_read_suffix: StripReadSuffix::False,
-        ..Config::default()
-    }
-}
-
 fn make(s0: Vec<RecordBuf>, s1: Vec<RecordBuf>, cfg: &Config) -> CollatedMatcher<RecordBuf> {
     let a0 = Box::new(MockStream::new(0, s0)) as Box<dyn AlignmentStream<RecordBuf>>;
     let a1 = Box::new(MockStream::new(1, s1)) as Box<dyn AlignmentStream<RecordBuf>>;
     CollatedMatcher::new(cfg, smallvec![a0, a1], [None, None], [None, None]).unwrap()
-}
-
-fn r(name: &[u8], cigar: &str, md: &str) -> RecordBuf {
-    create_record(name, cigar, &[], &[30u8; 20], md, false).unwrap()
-}
-fn u(name: &[u8]) -> RecordBuf {
-    create_record(name, "", &vec![b'A'; 10], &[30u8; 10], "", false).unwrap()
 }
 
 struct Row {

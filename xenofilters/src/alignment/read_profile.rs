@@ -378,13 +378,44 @@ mod tests {
     }
 
     #[test]
-    fn all_matching_is_equal() {
-        let a = profile(&[ReadOp::Match, ReadOp::Match, ReadOp::Match], 0, 0);
-        let b = profile(&[ReadOp::Match, ReadOp::Match, ReadOp::Match], 0, 0);
-        assert!(matches!(
-            compare_mate_profiles(&a, &b),
-            ReadSpaceDecision::EarlyDecision(Ordering::Equal)
-        ));
+    fn test_compare_mate_profiles_cases() {
+        let cases = [
+            (
+                "all matching is equal",
+                profile(&[ReadOp::Match, ReadOp::Match, ReadOp::Match], 0, 0),
+                profile(&[ReadOp::Match, ReadOp::Match, ReadOp::Match], 0, 0),
+                Ordering::Equal,
+            ),
+            (
+                "deletions break tie",
+                profile(&[ReadOp::Match, ReadOp::Match], 1, 3),
+                profile(&[ReadOp::Match, ReadOp::Match], 0, 0),
+                Ordering::Less,
+            ),
+            (
+                "b dominates all positions",
+                profile(&[ReadOp::SoftClip, ReadOp::Mismatch, ReadOp::Match], 0, 0),
+                profile(&[ReadOp::Match, ReadOp::Match, ReadOp::Match], 0, 0),
+                Ordering::Less,
+            ),
+            (
+                "mismatch vs softclip zero delta",
+                profile(&[ReadOp::Mismatch, ReadOp::Match], 0, 0),
+                profile(&[ReadOp::SoftClip, ReadOp::Match], 0, 0),
+                Ordering::Equal,
+            ),
+        ];
+
+        for (label, a, b, expected) in cases {
+            assert!(
+                matches!(
+                    compare_mate_profiles(&a, &b),
+                    ReadSpaceDecision::EarlyDecision(ord) if ord == expected
+                ),
+                "{}",
+                label
+            );
+        }
     }
 
     #[test]
@@ -412,16 +443,6 @@ mod tests {
     }
 
     #[test]
-    fn b_dominates_all_positions() {
-        let a = profile(&[ReadOp::SoftClip, ReadOp::Mismatch, ReadOp::Match], 0, 0);
-        let b = profile(&[ReadOp::Match, ReadOp::Match, ReadOp::Match], 0, 0);
-        assert!(matches!(
-            compare_mate_profiles(&a, &b),
-            ReadSpaceDecision::EarlyDecision(Ordering::Less)
-        ));
-    }
-
-    #[test]
     fn mixed_positions_returns_partial_scoring() {
         let a = profile(&[ReadOp::Match, ReadOp::Mismatch, ReadOp::Match], 0, 0);
         let b = profile(&[ReadOp::Mismatch, ReadOp::Match, ReadOp::Match], 0, 0);
@@ -434,30 +455,6 @@ mod tests {
             }
             other => panic!("expected PartialScoring, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn mismatch_vs_softclip_is_zero_delta() {
-        // Both pay log_lik_mismatch[q_i]; delta = 0.
-        let a = profile(&[ReadOp::Mismatch, ReadOp::Match], 0, 0);
-        let b = profile(&[ReadOp::SoftClip, ReadOp::Match], 0, 0);
-        // Position 0: Mismatch vs SoftClip → delta=0; position 1: Match vs Match → delta=0.
-        assert!(matches!(
-            compare_mate_profiles(&a, &b),
-            ReadSpaceDecision::EarlyDecision(Ordering::Equal)
-        ));
-    }
-
-    #[test]
-    fn deletions_break_tie() {
-        // Per-base positions are identical; A has a deletion, B does not.
-        let a = profile(&[ReadOp::Match, ReadOp::Match], 1, 3);
-        let b = profile(&[ReadOp::Match, ReadOp::Match], 0, 0);
-        // A pays more deletion penalty → B better.
-        assert!(matches!(
-            compare_mate_profiles(&a, &b),
-            ReadSpaceDecision::EarlyDecision(Ordering::Less)
-        ));
     }
 
     #[test]

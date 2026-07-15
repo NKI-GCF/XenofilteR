@@ -1,8 +1,7 @@
-use crate::region::{AmbiguousRegions, DiagnosticVariants};
-use smallvec::SmallVec;
 use crate::alignment::{mate_slot, segment_id, MateKind};
+use crate::region::{AmbiguousRegions, DiagnosticVariants};
 use noodles::sam::alignment::record::Flags;
-
+use smallvec::SmallVec;
 
 // ---------------------------------------------------------------------------
 // MappedRecord — full data, only ever built for mapped (primary or
@@ -60,20 +59,22 @@ pub(crate) enum RecordKind {
     Mapped(Box<MappedRecord>),
 }
 
+macro_rules! extract_record_field {
+    ($self:expr, $field:ident) => {
+        match $self {
+            RecordKind::Secondary { $field, .. } => *$field,
+            RecordKind::UnmappedPrimary { $field, .. } => *$field,
+            RecordKind::Mapped(m) => m.$field,
+        }
+    };
+}
+
 impl RecordKind {
     pub(crate) fn flags(&self) -> Flags {
-        match self {
-            RecordKind::Secondary { flags, .. } => *flags,
-            RecordKind::UnmappedPrimary { flags, .. } => *flags,
-            RecordKind::Mapped(m) => m.flags,
-        }
+        extract_record_field!(self, flags)
     }
     pub(crate) fn virtual_offset(&self) -> u64 {
-        match self {
-            RecordKind::Secondary { virtual_offset, .. } => *virtual_offset,
-            RecordKind::UnmappedPrimary { virtual_offset, .. } => *virtual_offset,
-            RecordKind::Mapped(m) => m.virtual_offset,
-        }
+        extract_record_field!(self, virtual_offset)
     }
     fn is_primary(&self) -> bool {
         let f = self.flags();
@@ -229,5 +230,3 @@ impl StreamKind {
         }
     }
 }
-
-

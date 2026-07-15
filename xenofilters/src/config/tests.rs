@@ -29,20 +29,6 @@ fn test_validate_rejects_single_alignment() {
 }
 
 #[test]
-fn test_validate_rejects_too_many_outputs() {
-    let mut c = base_config();
-    c.output = vec!["o1".into(), "o2".into(), "o3".into()];
-    assert!(c.validate_and_init().is_err());
-}
-
-#[test]
-fn test_validate_rejects_too_many_ambiguous_outputs() {
-    let mut c = base_config();
-    c.ambiguous_output = vec!["a1".into(), "a2".into(), "a3".into()];
-    assert!(c.validate_and_init().is_err());
-}
-
-#[test]
 fn test_validate_flips_positive_gap_penalties_to_negative() {
     let mut c = base_config();
     c.validate_and_init().unwrap();
@@ -182,39 +168,38 @@ fn test_single_alignment_mode_variant_assertions() {
         "1 sample + 1 population profile is fully valid"
     );
 }
-
 #[test]
-fn test_single_alignment_ambiguous_output_cap() {
-    let mut c = base_config();
-    c.alignment = vec!["single_strain.bam".into()];
-    c.single_alignment_mode = true;
-    c.sample_variants = vec!["0:a.vcf".into(), "1:b.vcf".into()];
+fn test_validate_rejects_invalid_configurations() {
+    let cases: &[fn(&mut Config)] = &[
+        |c| c.output = vec!["o1".into(), "o2".into(), "o3".into()],
+        |c| c.ambiguous_output = vec!["a1".into(), "a2".into(), "a3".into()],
+        |c| {
+            // single alignment ambiguous output cap
+            c.alignment = vec!["single_strain.bam".into()];
+            c.single_alignment_mode = true;
+            c.sample_variants = vec!["0:a.vcf".into(), "1:b.vcf".into()];
+            c.ambiguous_output = vec!["ambig1.bam".into(), "ambig2.bam".into()];
+        },
+        |c| {
+            // invalid variant index grouping
+            c.alignment = vec!["single_strain.bam".into()];
+            c.single_alignment_mode = true;
+            c.sample_variants = vec!["0:file1.vcf".into()];
+            c.population_variants = vec!["0:pop_snps.vcf".into()];
+        },
+    ];
 
-    // Attaching 2 ambiguous outputs for single-stream virtual splits is forbidden
-    c.ambiguous_output = vec!["ambig1.bam".into(), "ambig2.bam".into()];
-
-    let res = c.validate_and_init();
-    assert!(res.is_err());
+    for setup in cases {
+        let mut c = base_config();
+        setup(&mut c);
+        assert!(c.validate_and_init().is_err());
+    }
 }
 
 #[test]
 fn test_flag_mismatch_on_multi_alignment() {
     let mut c = base_config(); // Has 2 alignments
     c.single_alignment_mode = true; // User passed the flag accidentally
-
-    let res = c.validate_and_init();
-    assert!(res.is_err());
-}
-
-#[test]
-fn test_invalid_variant_index_grouping_on_single_alignment() {
-    let mut c = base_config();
-    c.alignment = vec!["single_strain.bam".into()];
-    c.single_alignment_mode = true;
-
-    // Error case: both variations are targeting strain index 0. Strain index 1 remains empty.
-    c.sample_variants = vec!["0:file1.vcf".into()];
-    c.population_variants = vec!["0:pop_snps.vcf".into()];
 
     let res = c.validate_and_init();
     assert!(res.is_err());
