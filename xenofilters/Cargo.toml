@@ -17,7 +17,7 @@ MAX_ALN = "4"
 [dependencies]
 ahash              = "0.8"
 indicatif          = "0.18"
-clap               = { version = "4.6", features = ["derive", "env", "wrap_help"] }
+clap               = { version = "^4.6", features = ["derive", "env", "wrap_help"] }
 smallvec           = { version = "1.15", features = ["const_generics", "union"] }
 thiserror          = "2.0.18"
 noodles            = { version = "0.111", features = ["async", "bam", "bed", "bcf", "bgzf", "core", "cram", "csi", "sam", "tabix", "vcf", "cram", "fasta"] }
@@ -26,7 +26,7 @@ serde_json         = "1"
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 crossbeam-channel  = "0.5"   # bounded MPSC channels for work/result queues
-clap_complete = "4.6.7"
+clap_complete = "4.6"
 
 [lib]
 name    = "xenofilters"

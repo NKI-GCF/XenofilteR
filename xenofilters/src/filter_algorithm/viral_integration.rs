@@ -8,7 +8,7 @@ use crate::{
 
 /// Preconfigured chimeric-pair detection for viral integration studies.
 /// Requires exactly 2 or 3 alignment streams: host, virus, [optional xenograft host].
-#[derive(Args, Debug)]
+#[derive(Args, Clone, Debug)]
 pub(crate) struct ViralIntegrationArgs {
     /// Host and viral reference alignments (2 streams), or host, virus,
     /// xenograft-host (3 streams, e.g. HPV+human tumour grafted in mouse).

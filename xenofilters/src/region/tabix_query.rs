@@ -8,7 +8,6 @@
 //! - BED query: use tabix index chunks to check overlap; parse overlapping records.
 //! - VCF indexed reader: `vcf::io::IndexedReader` provides `.query(&header, &region)`.
 
-use super::{ScoredRegion, Strand};
 use crate::Error;
 use noodles::bgzf;
 use noodles::core::{region::Interval, Position, Region};
@@ -39,7 +38,7 @@ impl TabixScored {
         ref_id: usize,
         s: usize,
         e: usize,
-        rev: bool,
+        _rev: bool,
         score_fn: ScoreFn,
     ) -> Result<f64, Error> {
         if self.inner.overlaps(ref_id, s, e)? {

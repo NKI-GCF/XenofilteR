@@ -7,7 +7,7 @@
 use crate::{
     alignment::{FragmentState, SimpleRec},
     aln_stream::AlignmentStream,
-    config::{Config, NamesortedArgs, StripReadSuffix},
+    config::{NamesortedArgs, StripReadSuffix},
     header_name_to_id,
     penalty::Penalty,
     progress::ProgressReporter,
@@ -159,7 +159,7 @@ impl<R: SimpleRec> LineByLine<R> {
         })
     }
     pub(crate) fn new(
-        config: &Config,
+        config: &NamesortedArgs,
         mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
     ) -> Result<Self, Error> {
         let is_unmapped_skipped = match config.discard_unmapped {

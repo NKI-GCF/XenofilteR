@@ -10,13 +10,13 @@ use super::chimeric::{
 };
 use super::core::{FragmentBuffer, LineByLine, Scratch};
 use super::ordering::{score_bundle, ScoringContext};
-use crate::config::Config;
 use crate::{variant::StoreTrait, Error};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::{smallvec, SmallVec};
 use std::sync::Arc;
 use std::thread;
+use crate::config::NamesortedArgs;
 
 /// Everything a scoring worker needs for one fragment.
 /// All data is owned or `Arc`-wrapped; no lifetime entanglement.
@@ -67,7 +67,7 @@ impl LineByLine<RecordBuf> {
     /// atomic increment per stream) before spawning workers, giving every
     /// worker full variant-rescue capability with zero unsafe code and zero
     /// extra allocation.
-    pub(crate) fn process_parallel(&mut self, config: &Config) -> Result<(), Error> {
+    pub(crate) fn process_parallel(&mut self, config: &NamesortedArgs) -> Result<(), Error> {
         let n = self.score_threads;
         let cap = n * 2; // bounded channel capacity — natural backpressure
 
@@ -122,7 +122,7 @@ impl LineByLine<RecordBuf> {
     /// side flowing while waiting for channel capacity.
     pub(super) fn parallel_io_loop(
         &mut self,
-        config: &Config,
+        config: &NamesortedArgs,
         work_tx: Sender<FragmentBundle>,
         result_rx: Receiver<ScoredFragment>,
         ctx: ScoringContext,

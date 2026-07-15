@@ -23,7 +23,7 @@ use crate::alignment::{mate_slot, segment_id, Fragment, MateKind, MdCigFlags, Si
 use crate::alignment::{pre_assess_scoring_records, PreAssessResult};
 use crate::aln_stream::AlignmentStream;
 use crate::config::HashlookupArgs;
-use crate::config::{Config, StripReadSuffix};
+use crate::config::StripReadSuffix;
 use crate::filter_algorithm::collated::reader::canonical_name;
 use crate::filter_algorithm::line_by_line::COUNTER_STRIDE;
 use crate::filter_algorithm::line_by_line::{ordering::Decision, Scratch, READ_CT};
@@ -117,7 +117,7 @@ impl<R: SimpleRec> HashLookup<R> {
         })
     }
     pub(crate) fn new(
-        config: &Config,
+        config: &HashlookupArgs,
         mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
         bed: [Option<AmbiguousRegions>; 2],
         vcf: [Option<DiagnosticVariants>; 2],
@@ -151,7 +151,7 @@ impl<R: SimpleRec> HashLookup<R> {
         })
     }
 
-    pub(crate) fn process(&mut self, config: &Config) -> Result<(), Error> {
+    pub(crate) fn process(&mut self, config: &HashlookupArgs) -> Result<(), Error> {
         let mut exhausted = [false; 2];
         loop {
             let mut finished = true;

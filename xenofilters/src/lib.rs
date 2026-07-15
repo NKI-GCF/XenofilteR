@@ -62,7 +62,7 @@ pub fn run(mut cli: Cli) -> Result<(), Error> {
         return Ok(());
     }
     let common = cli.command.common_mut();
-    init_tracing(common.verbose);
+    init_tracing(common.io.verbose);
 
     // Validate common args, detect pass 2, resolve thresholds.
     common.validate_and_init()?;
@@ -140,7 +140,7 @@ fn run_namesorted(mut args: NamesortedArgs) -> Result<(), Error> {
     }
 
     // Parse chimeric pairs
-    args.common.parsed_chimeric_pairs = parse_chimeric_pairs(&args.chimeric_pairs, n)?;
+    args.common.parsed_chimeric_pairs = parse_chimeric_pairs(&args.chimeric.chimeric_pairs, n)?;
 
     let aln = open_streams_unified(&mut args.common, args.threads)?;
     let counters = if args.score_threads > 1 {
@@ -148,7 +148,7 @@ fn run_namesorted(mut args: NamesortedArgs) -> Result<(), Error> {
     } else {
         LineByLine::new_from_namesorted(&args, aln)?.process_sequential()?
     };
-    run_repot.print_routing_counters("namesorted", &args.common);
+    run_report.print_routing_counters("namesorted", &args.common);
     write_stats_if_configured(&counters, &args.common, n, "namesorted")
 }
 

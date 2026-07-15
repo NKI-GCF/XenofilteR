@@ -2,8 +2,9 @@ use crate::config::args::{
     IoArgs, OutputArgsMulti, RegionArgsMemory,
     RegionArgsTabix, ScoringArgs, VariantArgs,
 };
-use crate::config::MatchingAlgorithm;
+use crate::config::{MatchingAlgorithm, NameEncoderKind};
 use crate::{Error, filter_algorithm::line_by_line::MAX_STREAMS};
+use std::path::PathBuf;
 
 /// Single flat struct consumed by all three engines. No Args-struct
 /// indirection survives past `into_run_config()`. This is what
@@ -12,7 +13,7 @@ use crate::{Error, filter_algorithm::line_by_line::MAX_STREAMS};
 #[derive(Debug, Default)]
 pub(crate) struct RunConfig {
     pub(crate) algorithm: MatchingAlgorithm,
-    pub(crate) alignment: Vec<String>,
+    pub(crate) alignment: Vec<PathBuf>,
     pub(crate) single_alignment_mode: bool,
     pub(crate) io: IoArgs,
     pub(crate) scoring: ScoringArgs,
@@ -74,7 +75,7 @@ impl RunConfig {
 
         // stdin: at most one stream, namesorted only.
         let stdin_count =
-            self.alignment.iter().filter(|p| p.as_str() == "-").count();
+            self.alignment.iter().filter(|p| p.to_sting_lossy() == "-").count();
         if stdin_count > 1 {
             return Err(Error::MultipleStdinStreams);
         }

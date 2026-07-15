@@ -34,13 +34,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use noodles::fasta::io::indexed_reader::Builder;
 use std::path::Path;
+use crate::config::args::IoArgs;
 
 pub(crate) trait AlignmentStream<R: SimpleRec> {
     fn next_qname(&self) -> &[u8];
     fn un_next(&mut self, rec: R) -> Result<(), Error>;
     fn next_rec(&mut self) -> Result<Option<R>, Error>;
     fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<(), Error>;
-    fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<(), Error> {
+    fn init_writers(&mut self, _opt: &IoArgs, _i: usize) -> Result<(), Error> {
         Ok(())
     }
     fn variant_store(&self) -> Option<Arc<dyn StoreTrait>> {
@@ -75,7 +76,7 @@ where
     R: SimpleRec + FromBamRecord,
 {
     pub(crate) fn new(
-        opt: &mut Config,
+        opt: &mut IoArgs,
         i: usize,
         positive_regions: Option<(PositiveRegions, ScoreFn)>,
     ) -> Result<Self, Error> {
@@ -110,7 +111,7 @@ where
             .any(|id| id.ends_with(SUFFIX_AMBIGUOUS.as_bytes()));
 
         if is_pass2 {
-            opt.is_pass2 = true; // set on Config; overrides threshold selection
+            opt.is_pass2 = true; // set on IoArgs; overrides threshold selection
         }
 
         // Sort-order check (namesorted only).
@@ -282,7 +283,7 @@ where
         Ok(())
     }
 
-    fn init_writers(&mut self, opt: &Config, i: usize) -> Result<(), Error> {
+    fn init_writers(&mut self, opt: &IoArgs, i: usize) -> Result<(), Error> {
         let add_pg = !opt.no_program_line;
         let threads = self.threads.into();
         self.output = opt

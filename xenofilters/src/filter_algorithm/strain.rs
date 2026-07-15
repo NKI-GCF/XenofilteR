@@ -5,6 +5,7 @@ use crate::{
     config::MatchingAlgorithm,
     Error,
 };
+use std::path::PathBuf;
 
 /// Within-species strain disambiguation: single alignment, two variant
 /// profiles (one per strain). No chimeric pairs, no multi-stream regions,
@@ -12,13 +13,13 @@ use crate::{
 /// single-pair here; --score-threads would only help with many fragments
 /// in flight, which the underlying engine already supports — exposed here
 /// as --threads only, kept simple).
-#[derive(Args, Debug)]
+#[derive(Args, Clone, Debug)]
 pub(crate) struct StrainArgs {
     /// Single alignment BAM/CRAM (duplicated internally into two logical
     /// streams, one scored against each strain's variant profile).
     #[arg(required = true, value_hint = clap::ValueHint::FilePath,
           help_heading = "Input")]
-    pub(crate) alignment: String,
+    pub(crate) alignment: PathBuf,
 
     #[command(flatten)]
     pub(crate) io: IoArgs,
@@ -41,15 +42,12 @@ pub(crate) struct StrainArgs {
 
 impl StrainArgs {
     pub(crate) fn into_run_config(self) -> Result<RunConfig, Error> {
-        if !has_profile_for(&self.variants, 0) {
-            return Err(Error::MissingVariantProfile(0));
-        }
-        if !has_profile_for(&self.variants, 1) {
-            return Err(Error::MissingVariantProfile(1));
+        if !self.variants.has_index(0)? || !self.variants.has_index(1)? {
+            return Err(Error::StrainMissingVariantProfile);
         }
         Ok(RunConfig {
             algorithm: MatchingAlgorithm::Namesorted,
-            alignment: vec![self.alignment.clone(), self.alignment], // duplicated stream
+            alignment: vec![self.alignment.clone().into(), self.alignment.into()], // duplicated stream
             single_alignment_mode: true,
             io: self.io,
             scoring: self.scoring,

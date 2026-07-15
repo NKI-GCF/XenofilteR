@@ -156,10 +156,10 @@ pub(crate) struct RegionArgsTabix {
 #[derive(Args, Debug, Clone, Default)]
 pub(crate) struct OutputArgsMulti {
     #[arg(short = 'o', long, num_args = 1..=32, help_heading = "Output")]
-    pub(crate) output: Vec<PathBuf>,
+    pub(crate) output: Vec<String>,
 
     #[arg(short = 'a', long, num_args = 0..=32, help_heading = "Output")]
-    pub(crate) ambiguous_output: Vec<PathBuf>,
+    pub(crate) ambiguous_output: Vec<String>,
 }
 
 /// Output paths for exactly-2-logical-stream subcommands (strain, hashlookup,
@@ -168,10 +168,10 @@ pub(crate) struct OutputArgsMulti {
 #[derive(Args, Debug, Clone, Default)]
 pub(crate) struct OutputArgsPair {
     #[arg(short = 'o', long, num_args = 1..=2, help_heading = "Output")]
-    pub(crate) output: Vec<PathBuf>,
+    pub(crate) output: Vec<String>,
 
     #[arg(short = 'a', long, num_args = 0..=2, help_heading = "Output")]
-    pub(crate) ambiguous_output: Vec<PathBuf>,
+    pub(crate) ambiguous_output: Vec<String>,
 }
 
 // src/config/args.rs
@@ -285,6 +285,15 @@ impl ChimericArgs {
         n_streams: usize,
     ) -> Result<Vec<[usize; 2]>, Error> {
         parse_chimeric_pairs(&self.chimeric_pairs, n_streams)
+    }
+}
+
+impl Default for ParallelArgs {
+    fn default() -> Self {
+        Self {
+            threads: 1,
+            score_threads: 1,
+        }
     }
 }
 

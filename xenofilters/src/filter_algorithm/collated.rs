@@ -23,16 +23,14 @@ use crate::config::{CommonArgs, StripReadSuffix};
 use crate::filter_algorithm::line_by_line::{Scratch, ordering::Decision};
 use crate::penalty::Penalty;
 use crate::region::tabix_query::{TabixBed, TabixVcf};
-use noodles::sam::alignment::record::{cigar::Cigar, data::field::Tag};
+use noodles::sam::alignment::record::data::field::Tag;
 use noodles::sam::alignment::record_buf::{RecordBuf, data::field::Value};
 use reader::{CollatedReader, canonical_name};
-use smallvec::{SmallVec, smallvec};
+use smallvec::SmallVec;
 use std::collections::HashMap;
 use ahash::RandomState;
-use crate::region::ScoreFn;
 use crate::config::CollatedArgs;
-use crate::filter_algorithm::line_by_line::COUNTER_STRIDE;
-use crate::region::tabix_query::TabixScored;
+use crate::config::args::resolve_threshold;
 
 pub(crate) struct CollatedMatcher<R: SimpleRec> {
     a: CollatedReader<R>,
@@ -55,24 +53,27 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         aln:  SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>,
         bed:  [Option<TabixBed>; 2],
         vcf:  [Option<TabixVcf>; 2],
-        pos:  [Option<(TabixScored, ScoreFn)>; 2],
     ) -> Result<Self, Error> {
         let ambiguous_log_threshold = resolve_threshold(
             args.common.scoring.ambiguous_threshold, false,
         );
         let mut it = aln.into_iter();
-        let (a0, a1) = (it.next().unwrap(), it.next().unwrap());
+        let a0 = it.next().unwrap();
+        let a1 = it.next().unwrap();
+        let strip = args.common.io.strip_read_suffix;
+        let bisulfite = args.common.scoring.bisulfite; 
         Ok(Self {
-            a: CollatedReader::new(a0, args.common.io.strip_read_suffix, 0),
-            b: CollatedReader::new(a1, args.common.io.strip_read_suffix, 1),
+            a: CollatedReader::new(a0, strip, bisulfite, 0),
+            b: CollatedReader::new(a1, strip, bisulfite, 1),
             waiting_a: HashMap::with_hasher(RandomState::new()),
             waiting_b: HashMap::with_hasher(RandomState::new()),
             penalties: args.common.scoring.to_penalty(),
             scratch: Scratch::new(),
-            routing_counters: SmallVec::from_elem(0, 2 * COUNTER_STRIDE),
+            routing_counters: SmallVec::from_elem(0, 2 * 4), // 2 streams × 4 counters per stream
             add_decision_tag: args.common.io.add_decision_tag,
             ambiguous_log_threshold,
-            bed, vcf, positive: pos,
+            bed,
+            vcf,
         })
     }
     pub(crate) fn new(
@@ -86,13 +87,13 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             2,
             "CollatedMatcher requires exactly 2 alignment streams"
         );
-        let ambiguous_log_threshold = match config.ambiguous_threshold {
+        let ambiguous_log_threshold = match config.scoring.ambiguous_threshold {
             0 => 0.0,
             t => (t as f64) * std::f64::consts::LN_10 / 10.0,
         };
         let penalties = config.to_penalties();
-        let strip = config.strip_read_suffix;
-        let add_decision_tag = config.add_decision_tag;
+        let strip = config.io.strip_read_suffix;
+        let add_decision_tag = config.io.add_decision_tag;
 
         let aln_len = aln.len();
         for (i, a) in aln.iter_mut().enumerate() {
@@ -102,10 +103,12 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         let mut iter = aln.into_iter();
         let stream0 = iter.next().unwrap();
         let stream1 = iter.next().unwrap();
+        let strip = config.io.strip_read_suffix;
+        let bisulfite = config.scoring.bisulfite; 
 
         Ok(Self {
-            a: CollatedReader::new(stream0, config, 0),
-            b: CollatedReader::new(stream1, config, 1),
+            a: CollatedReader::new(stream0, strip, bisulfite, 0),
+            b: CollatedReader::new(stream1, strip, bisulfite, 1),
             waiting_a: HashMap::with_hasher(RandomState::new()),
             waiting_b: HashMap::with_hasher(RandomState::new()),
             penalties,

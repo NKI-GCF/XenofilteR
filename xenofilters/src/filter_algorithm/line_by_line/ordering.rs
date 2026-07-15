@@ -42,7 +42,6 @@ use crate::alignment::{
     mate_slot, segment_id, BaseOp, FragmentState, MateClassifiable, MateKind, MdCigFlags,
     ScoreOpIter, SimpleRec,
 };
-use crate::config::Config;
 use crate::filter_algorithm::line_by_line::{
     chimeric::{detect_chimeric_mate_complement, ChimericKind},
     detect_chimeric_event, ChimericDecision, MAX_STREAMS, READ_CT,
@@ -54,6 +53,7 @@ use noodles::sam::alignment::RecordBuf;
 use smallvec::{smallvec, SmallVec};
 use std::f64::consts::LN_10;
 use std::sync::Arc;
+use crate::config::NamesortedArgs;
 
 pub(crate) fn compute_cancel_slot<R: SimpleRec>(best: &FragmentBuffer<R>) -> [bool; 2] {
     // -- Pass 0: per-mate classification (cheap, borrow-only) -----------
@@ -501,7 +501,7 @@ fn score_candidate_owned(
 
 impl<R: SimpleRec> LineByLine<R> {
     /// Original single-threaded process loop.
-    pub(crate) fn process_sequential(&mut self, config: &Config) -> Result<(), Error> {
+    pub(crate) fn process_sequential(&mut self, config: &NamesortedArgs) -> Result<(), Error> {
         let mut best: FragmentBuffer<R> = smallvec![];
         let mut i = 0;
         let aln_len = self.aln.len();
