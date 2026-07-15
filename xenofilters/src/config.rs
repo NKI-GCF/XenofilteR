@@ -1,12 +1,12 @@
-use crate::Error;
-use crate::filter_algorithm::line_by_line::{MAX_STREAMS, core::COUNTER_STRIDE};
 use crate::{
+    filter_algorithm::line_by_line::{core::COUNTER_STRIDE, MAX_STREAMS},
+    Error,
+    regions::ScoreFn,
     bam::AlnFormat,
-    penalty::{Penalty, ErrorModel},
+    penalty::{ErrorModel, Penalty},
 };
-use clap::{Parser, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
-use crate::region::ScoreFn;
 
 const ARG_MAX: usize = 4;
 
@@ -40,669 +40,281 @@ pub enum MatchingAlgorithm {
     Hashlookup,
 }
 
+// -- Top-level CLI --------------------------------------------------------------
+
+/// Fast multi-stream read classifier for xenograft, PDX, viral integration,
+/// and cross-species sequencing experiments.
 #[derive(Parser, Debug, Default, Clone)]
 #[command(
     author, version,
-    about = "Fast alignment-based read classifier for xenograft / PDX sequencing data",
+    about = "Disambiguate reads from multiple sequence alignments",
     long_about = None,
+    subcommand_required = true,
+    arg_required_else_help = true,
 )]
-pub struct Config {
-    // -- Input ----------------------------------------------------------------
-
-    /// Input alignments to compare. If the same readnames are consecutive and in the same order for
-    /// all inputs, a low memory non-hashing strategy is adopted.
-    #[arg(required = true, num_args = 1..MAX_STREAMS, help_heading = "Input")]
-    pub alignment: Vec<String>,
-
-    /// Fragment-matching algorithm.
-    ///
-    /// namesorted (default): streaming merge; requires identical query-name order across
-    /// all input BAMs; lowest memory; fastest; supports -t/--threads.
-    ///
-    /// collated: each BAM must be collated (all records for a read name contiguous) but
-    /// the two BAMs may present fragments in different orders; memory proportional to
-    /// name-order skew; single-threaded only; output order not guaranteed.
-    ///
-    /// hashlookup: works on arbitrary (non-sorted, non-collated) BAM input; highest
-    /// memory usage; single-threaded only; preserves driving-stream (stream 0) output order.
-    #[arg(long, default_value = "namesorted",
-          env = "XENOFILTERS_ALGORITHM",
-          help_heading = "Input")]
-    pub matching_algorithm: MatchingAlgorithm,
-
-    /// Input format. Must match actual file content.
-    #[arg(long, default_value = "bam", help_heading = "Input")]
-    pub input_format: AlnFormat,
-
-    /// Strip fastq-style /1 and /2 from read names when comparing
-    #[arg(short = 'R', long, default_value = "auto", help_heading = "Input")]
-    pub strip_read_suffix: StripReadSuffix,
-
-    /// Read first alignment from stdin; enforced with only one input alignment
-    #[arg(short, long, default_value = "false", help_heading = "Input")]
-    pub read_from_stdin: bool,
-
-    /// Required explicit flag to allow running with only a single alignment stream
-    /// using strain-specific variant profiles.
-    #[arg(long, help_heading = "Input")]
-    pub single_alignment_mode: bool,
-
-    // FIXME: what if there are multiple CRAM inputs?  TODO: allow multiple references.
-    /// Reference FASTA for CRAM decoding (required when --input-format cram).
-    #[arg(long, help_heading = "Input")]
-    pub reference: Option<PathBuf>,
-
-    /// Explicitly indicate that reads are paired-end
-    #[arg(short, long, help_heading = "Input")]
-    pub is_paired: Option<bool>,
-
-    // -- Output ---------------------------------------------------------------
-
-    /// Assign fragments matching alignment to these respective files. Writes first alignment to stdout when omitted
-    #[arg(short, long, num_args = 1..MAX_STREAMS, help_heading = "Output")]
-    pub output: Vec<PathBuf>,
-
-    /// Write ambiguous reads (equally good mappings) to these files. Default: do not write
-    #[arg(short, long, num_args = 0..ARG_MAX, help_heading = "Output")]
-    pub ambiguous_output: Vec<PathBuf>,
-
-    /// Output format of stdout
-    #[arg(short = 'O', long, default_value = "sam", help_heading = "Output")]
-    pub stdout_format: AlnFormat,
-
-    /// Add an XF tag to the records.
-    #[arg(short = 'A', long, default_value = "false", help_heading = "Output")]
-    pub add_decision_tag: bool,
-
-    /// Don't add a PG line to the output BAM header.
-    #[arg(short = 'P', long, default_value = "false", help_heading = "Output")]
-    pub no_program_line: bool,
-
-    /// Write JSON summary statistics to this path (MultiQC-compatible).
-    #[arg(long,
-          env = "XENOFILTERS_STATS_OUTPUT",
-          help_heading = "Output")]
-    pub stats_output: Option<PathBuf>,
-
-    // -- Scoring --------------------------------------------------------------
-
-    /// Platform error model. Sets defaults for gap penalties and quality
-    /// calibration. Individual penalty flags override model defaults.
-    /// illumina (default) | hifi | ont
-    #[arg(long, default_value = "illumina",
-          help_heading = "Scoring")]
-    pub error_model: ErrorModel,
-
-    /// Enable bisulfite/WGBS scoring mode.
-    ///
-    /// C→T mismatches on the forward strand and G→A mismatches on the
-    /// reverse strand are treated as zero-penalty bisulfite conversions
-    /// rather than true substitution errors.
-    ///
-    /// Requires a bisulfite-aware aligner (bismark, bwa-meth, bsbolt).
-    /// Works correctly with both directional (lister) and non-directional
-    /// WGBS libraries.
-    ///
-    /// Suppresses the Tier-2 perfect-match fast path for all reads to
-    /// ensure conversion-aware scoring is always applied.
-    #[arg(long, default_value = "false",
-          help_heading = "Scoring")]
-    pub bisulfite: bool,
-
-    /// Mismatch penalty (affects mismatches)
-    #[arg(short, long, default_value = "4", value_parser = clap::value_parser!(f64), help_heading = "Scoring")]
-    pub mismatch_penalty: f64,
-
-    /// Gap open penalty for deletions and insertions
-    #[arg(short, long, default_value = "6", value_parser = clap::value_parser!(f64), help_heading = "Scoring")]
-    pub gap_open: f64,
-
-    /// Gap extend penalty (affects indels)
-    #[arg(short = 'e', long, default_value = "1", value_parser = clap::value_parser!(f64), help_heading = "Scoring")]
-    pub gap_extend: f64,
-
-    /// Penalty for 5'- and 3'-end clipping
-    #[arg(short = 'c', long, default_value = "5", value_parser = clap::value_parser!(f64), help_heading = "Scoring")]
-    pub clipping_penalty: f64,
-
-    /// Threshold (in phred scale) for considering two alignments equally good and thus ambiguous.
-    /// default (auto) selects 10 for pass 1, 0 for pass 2. In pass 2 input RGs contain _xenoambig.
-    #[arg(long, default_value_t = u32::MAX, help_heading = "Scoring")]
-    pub ambiguous_threshold: u32,
-
-    /// Warn when ambiguous fraction exceeds this value after scoring.
-    /// Default 0.05 (5%). Set 1.0 to disable.
-    #[arg(long, default_value = "0.05", value_parser = clap::value_parser!(f64), help_heading = "Scoring")]
-    pub warn_ambig_fraction: f64,
-
-    /// Base-length constant used in the supplementary-alignment chimeric-junction
-    /// penalty:  penalty = gap_open + chimeric_junction_bases × gap_extend.
-    ///
-    /// This value replaces the per-record non-clipped base count used in earlier
-    /// versions.  The default of 20 is chosen to make one supplementary alignment
-    /// of typical chimeric span costlier than a 20-base insertion but cheaper
-    /// than mapping to the wrong species entirely.
-    #[arg(short = 'J', long, default_value = "20", value_parser = clap::value_parser!(u32).range(0..=10000), help_heading = "Scoring")]
-    pub chimeric_junction_bases: u32,
-
-    // -- Variants -------------------------------------------------------------
-
-    /// Sample-specific variants used for variant-aware scoring.
-    /// For single alignments, prefix with index (e.g., '0:file.vcf').
-    #[arg(short, long, num_args = 0..ARG_MAX, help_heading = "Variants")]
-    pub sample_variants: Vec<String>,
-
-    /// Population variants used for variant-aware scoring.
-    /// For single alignments, prefix with index (e.g., '1:file.vcf').
-    #[arg(short, long, num_args = 0..ARG_MAX, help_heading = "Variants")]
-    pub population_variants: Vec<String>,
-
-    /// Enable indel equivalence expansion for --sample-variants,
-    /// --population-variants, and --diagnostic-variants.
-    ///
-    /// When active, each insertion or deletion in the supplied VCF files is
-    /// expanded into all mathematically equivalent CIGAR/MD representations
-    /// by sliding the indel through the local repeat context.  This fixes
-    /// false-negative variant rescue in un-realigned BAMs.
-    ///
-    /// Requires --reference.  Silent no-op for SNPs and complex alleles.
-    #[arg(
-        long,
-        default_value = "false",
-        requires = "reference",
-        help_heading = "Variants"
-    )]
-    pub expand_indels: bool,
-
-    /// Padding (bp) added on each side of ambiguous-region BED intervals
-    /// when --expand-indels is active.  Extends the masking window to catch
-    /// reads whose aligner placed an indel up to this many bases outside
-    /// the annotated region boundary.
-    ///
-    /// Default 50.  Set 0 to disable BED padding.
-    #[arg(
-        long,
-        default_value = "50",
-        value_parser = clap::value_parser!(usize),
-        help_heading = "Variants"
-    )]
-    pub indel_expand_padding: usize,
-
-    /// VCF/BCF of species-diagnostic positions per stream (positional: stream 0, then 1).
-    /// Reads overlapping these positions are forced through full scoring.
-    /// Same indexing and compression rules as --ambiguous-regions.
-    #[arg(long, num_args = 0..=2, help_heading = "Regions")]
-    pub diagnostic_variants: Vec<String>,
-
-    // -- Regions --------------------------------------------------------------
-
-    /// BED file(s) of regions where read overlap forces full NW scoring
-    /// (strand-aware when BED column 6 present). One per stream.
-    /// Reads overlapping these regions are forced through full log-likelihood scoring.
-    /// Collated: must be bgzf-compressed and tabix-indexed (.bed.gz + .tbi).
-    /// HashLookup: loaded fully into memory.
-    #[arg(long, num_args = 0..=2, help_heading = "Regions")]
-    pub ambiguous_regions: Vec<String>,
-
-    /// BED file(s) of regions where overlapping reads receive a positive
-    /// score bonus (strand-aware when BED column 6 present). One per stream.
-    #[arg(long, num_args = 0..=32, help_heading = "Regions")]
-    pub positive_regions: Vec<String>,
-
-    /// Score function applied to --positive-regions BED score column.
-    /// Format: fn[:weight]  where fn ∈ {linear, log, constant, overlap_fraction}
-    /// Default: linear:1.0
-    #[arg(long, default_value = "linear:1.0", help_heading = "Regions")]
-    pub region_score_fn: ScoreFn,
-
-    // -- Parallelism -----------------------------------------------------------
-
-    /// Number of bgzf (de)compression threads per reader/writer.
-    #[arg(short = 't', long, default_value = "4",
-          env = "XENOFILTERS_THREADS",
-          help_heading = "Parallelism")]
-    pub threads: usize,
-
-    /// Number of parallel scoring worker threads.
-    ///
-    /// Each worker owns its own DP scratch space and scores fragments
-    /// independently.  The IO thread (reading + writing) is always single-
-    /// threaded; only the log-likelihood and variant-aware scoring is
-    /// parallelised.
-    ///
-    /// Set to 1 (the default) for deterministic output order.
-    /// Set to 0 to use all available logical CPUs.
-    #[arg(short = 'S', long, default_value = "1",
-          env = "XENOFILTERS_SCORE_THREADS",
-          help_heading = "Parallelism")]
-    pub score_threads: usize,
-
-    // -- Chimeric -------------------------------------------------------------
-
-    /// Pairs of stream indices that may produce chimeric (cross-species) fragments.
-    ///
-    /// Format: "A:B" where A and B are 0-based stream indices.
-    /// When a paired-end fragment has mates that split across a configured pair
-    /// (some mates mapped only in stream A, complementary mates only in stream B),
-    /// both streams' records are written to their assigned outputs with an `XC:Z:`
-    /// SAM tag identifying the other stream — no stream is discarded.
-    ///
-    /// Example: `--chimeric-pairs 0:1` for human + HPV integration analysis.
-    ///          `--chimeric-pairs 0:1 --chimeric-pairs 1:2` for human + HPV + mouse
-    ///          where HPV can integrate into human and human+HPV tissue is xenografted
-    ///          in mouse.  Pairs not listed compete normally in the tournament.
-    #[arg(long, num_args = 0.., help_heading = "Chimeric")]
-    pub chimeric_pairs: Vec<String>,
-
-    /// Human-readable labels for each alignment stream (positional: stream 0, 1, …).
-    ///
-    /// Used as the value of the `XC:Z:` SAM aux tag written to chimeric reads.
-    /// The tag on a read from stream N reads `XC:Z:<label of the other stream>`.
-    /// Defaults to `stream_N` when not supplied.
-    ///
-    /// Example: `--stream-labels human hpv mouse`
-    #[arg(long, num_args = 0.., help_heading = "Chimeric")]
-    pub stream_labels: Vec<String>,
-
-    // -- Filters ---------------------------------------------------------------
-    /// Skip secondary mappings even if the primary mapping is written
-    #[arg(short, long, default_value = "false", help_heading = "Filters")]
-    pub skip_secondary: bool,
-
-    /// Include discarded read(pair)s, in ambiguous output.
-    #[arg(short = 'U', long, default_value = "false", hide = true)]
-    pub write_discarded: bool,
-
-    /// Exclude read(pair)s, unmapped in both alignments, from ambiguous output.
-    #[arg(short = 'U', long, default_value = "true", hide = true)]
-    pub discard_unmapped: bool,
-
-    // -- Verbosity -------------------------------------------------------------
-
-    /// Increase log verbosity (-v = INFO, -vv = DEBUG). Overridden by RUST_LOG.
-    #[arg(short, long, action = clap::ArgAction::Count, help_heading = "Verbosity")]
-    pub verbose: u8,
-
-    /// Suppress per-fragment progress output to stderr.
-    #[arg(long, help_heading = "Filters")]
-    pub quiet: bool,
-
-    // -- Internal --------------------------------------------------------------
-
-    /// Parsed and validated chimeric stream pairs.
-    /// Stored in canonical order (lower index first) so lookups are O(pairs).
-    #[arg(skip)]
-    pub parsed_chimeric_pairs: Vec<[usize; 2]>,
-
-    #[arg(skip)]
-    pub is_pass2: bool,
-
-    #[arg(skip)]
-    pub resolved_ambiguous_log_threshold: f64,
+pub(crate) struct Cli {
+    #[command(subcommand)]
+    pub(crate) command: AlgorithmCommand,
 }
 
-impl Config {
-    pub(super) fn validate_and_init(&mut self) -> Result<(), Error> {
-        // Detect pass 2: any input BAM whose header contains _xenoambig RG.
-        // Detection is done at stream-open time; store result for threshold selection.
-        // self.is_pass2 is set in AlnStream::new() after reading the header.
+#[derive(Subcommand, Debug)]
+pub(crate) enum AlgorithmCommand {
+    /// Disambiguate name-sorted BAM/CRAM streams (default for most pipelines).
+    ///
+    /// All input files must be sorted by query name in identical order.
+    /// Supports up to 32 simultaneous alignment streams, parallel scoring,
+    /// chimeric-pair detection, and stdin BAM input.
+    Namesorted(NamesortedArgs),
 
-        // Resolve threshold.
-        self.resolved_ambiguous_log_threshold = self.ambiguous_threshold_to_log_likelihood();
+    /// Disambiguate coordinate-sorted BAMs without re-sorting.
+    ///
+    /// Two-pass algorithm: pass 1 indexes fragment names via BGZF virtual
+    /// offsets; pass 2 retrieves and emits records in driving-stream order.
+    /// Requires exactly 2 BAM streams. Single-threaded. In-memory BED/VCF
+    /// region files force full NW scoring on overlapping reads.
+    Hashlookup(HashlookupArgs),
 
-        if self.is_pass2 {
-            tracing::info!(
-                threshold_phred = match self.ambiguous_threshold {
-                    u32::MAX => if self.is_pass2 { 0 } else { 10 },
-                    phred => phred,
-                },
-                "Pass 2 detected via _xenoambig read groups"
-            );
-        }
+    /// Disambiguate collated BAM streams (records grouped by name, any order).
+    ///
+    /// Each input BAM must be collated (all records for a fragment contiguous)
+    /// but the two streams need not present fragments in the same order.
+    /// Requires exactly 2 streams. Supports tabix-indexed BED/VCF regions.
+    Collated(CollatedArgs),
+}
 
-        let aln_count = self.alignment.len();
-        // -- Chimeric pair parsing --------------------------------------------
-        let mut parsed_chimeric_pairs: Vec<[usize; 2]> = Vec::new();
-        for raw in &self.chimeric_pairs {
-            let (a_str, b_str) = raw
-                .split_once(':')
-                .ok_or(Error::ChimericPairsInvalidFormat { raw: raw.clone() })?;
-            let a =
-                a_str
-                    .trim()
-                    .parse::<usize>()
-                    .map_err(|_| Error::ChimericPairsInvalidIndex {
-                        index_str: a_str.to_string(),
-                    })?;
-            let b =
-                b_str
-                    .trim()
-                    .parse::<usize>()
-                    .map_err(|_| Error::ChimericPairsInvalidIndex {
-                        index_str: b_str.to_string(),
-                    })?;
-
-            if a == b {
-                return Err(Error::ChimericPairsIdenticalIndices { raw: raw.clone() });
-            }
-            if self.matching_algorithm != MatchingAlgorithm::Namesorted {
-                return Err(Error::ChimericPairsRequiresNamesorted);
-            }
-            // Canonical order: lower index first.
-            parsed_chimeric_pairs.push([a.min(b), a.max(b)]);
-        }
-        // Deduplicate.
-        parsed_chimeric_pairs.sort_unstable();
-        parsed_chimeric_pairs.dedup();
-        self.parsed_chimeric_pairs = parsed_chimeric_pairs;
-
-        if !self.parsed_chimeric_pairs.is_empty() {
-            tracing::info!(
-                pairs = ?self.parsed_chimeric_pairs,
-                "Chimeric pair detection enabled"
-            );
-        }
-        if self.warn_ambig_fraction < 0.0 || self.warn_ambig_fraction > 1.0 {
-            return Err(Error::WarnAmbigFractionOutOfRange {
-                value: self.warn_ambig_fraction,
-            });
-        }
-
-        if self.input_format == AlnFormat::Cram && self.reference.is_none() {
-            return Err(Error::CramRequiresReference);
-        }
-        if self.input_format == AlnFormat::Cram
-            && self.matching_algorithm != MatchingAlgorithm::Namesorted
-        {
-            return Err(Error::CramNamesortedOnly);
-        }
-        // Stdin: path "-" implies SAM unless explicitly overridden.
-        if self.alignment.iter().any(|p| p == "-") {
-            if self.alignment.iter().filter(|p| p.as_str() == "-").count() > 1 {
-                return Err(Error::MultipleStdinStreams);
-            }
-            if self.matching_algorithm != MatchingAlgorithm::Namesorted {
-                return Err(Error::StdinRequiresNamesorted);
-            }
-        }
-
-        // Reject multi-threaded modes for non-namesorted algorithms.
-        if self.matching_algorithm == MatchingAlgorithm::Namesorted {
-            if !self.ambiguous_regions.is_empty() || !self.diagnostic_variants.is_empty() {
-                return Err(Error::NamesortedUnsupportedOptions);
-            }
-            // Resolve score_threads = 0 → available logical CPUs with a max of 16.
-            if self.score_threads == 0 {
-                self.score_threads = std::thread::available_parallelism()
-                    .map(|n| n.get().min(16))
-                    .unwrap_or(1);
-                tracing::info!(
-                    score_threads = self.score_threads,
-                    "score_threads=0: using all available logical CPUs"
-                );
-            }
-        } else {
-            if self.score_threads != 1 {
-                return Err(Error::MultiThreadedScoringRequiresNamesorted);
-            }
-        }
-
-        // 1. Guard against single-stream niche execution accidents first
-        if aln_count == 1 {
-            if !self.single_alignment_mode {
-                return Err(Error::SingleStreamMissingFlag);
-            }
-            if self.read_from_stdin {
-                return Err(Error::SingleStreamStdinUnsupported);
-            }
-            if self.matching_algorithm != MatchingAlgorithm::Namesorted {
-                return Err(Error::SingleStreamRequiresNamesorted);
-            }
-        } else {
-            if self.single_alignment_mode {
-                return Err(Error::SingleAlignmentModeExpectsOneStream { count: aln_count });
-            }
-            if aln_count < 2 {
-                return Err(Error::InsufficientAlignmentStreams { count: aln_count });
-            }
-            if aln_count > 2 {
-                if self.matching_algorithm != MatchingAlgorithm::Namesorted {
-                    return Err(Error::MultiStreamRequiresNamesorted);
-                }
-                if aln_count > MAX_STREAMS {
-                    return Err(Error::MaxStreamsExceeded {
-                        count: aln_count,
-                        max: MAX_STREAMS,
-                    });
-                }
-            }
-        }
-
-        // --expand-indels without --reference: clap `requires` already catches
-        // this at parse time; validate_common provides a friendlier message.
-        if self.expand_indels && self.reference.is_none() {
-            return Err(Error::ExpandIndelsRequiresReference);
-        }
-
-        // If any VCF path is supplied and --expand-indels is off, warn that
-        // un-realigned indels may be missed.  Only warn when the VCF likely
-        // contains indels (we can't know without reading it, so warn always).
-        if (!self.expand_indels
-            && !self.sample_variants.is_empty()
-            || !self.population_variants.is_empty()
-            || !self.diagnostic_variants.is_empty())
-            && self.reference.is_none() {
-                tracing::debug!(
-                    "Variant files supplied without --reference; \
-                     indel equivalence expansion disabled. \
-                     Add --reference and --expand-indels to handle un-realigned indels."
-                );
-            }
-
-        if self.ambiguous_regions.len() > 2 {
-            return Err(Error::TooManyAmbiguousRegionsFiles {
-                count: self.ambiguous_regions.len(),
-            });
-        }
-        if self.diagnostic_variants.len() > 2 {
-            return Err(Error::TooManyDiagnosticVariantsFiles {
-                count: self.diagnostic_variants.len(),
-            });
-        }
-        // Determine effective dimensions (logical comparisons)
-        let logical_len = if aln_count == 1 { 2 } else { aln_count };
-
-        // 2. Parse, validate, and normalize variant arrays to size matching comparisons
-        let mut normalized_samples = vec![PathBuf::new(); logical_len];
-        let mut normalized_populations = vec![PathBuf::new(); logical_len];
-
-        let mut stream_has_variants = vec![false; logical_len];
-
-        for (i, arg) in self.sample_variants.iter().enumerate() {
-            let (idx, path) = Self::parse_variant_string(arg, i)?;
-            if idx >= logical_len {
-                return Err(Error::SampleVariantIndexOutOfBounds {
-                    idx,
-                    max: logical_len,
-                });
-            }
-            normalized_samples[idx] = path;
-            stream_has_variants[idx] = true;
-        }
-
-        for (i, arg) in self.population_variants.iter().enumerate() {
-            let (idx, path) = Self::parse_variant_string(arg, i)?;
-            if idx >= logical_len {
-                return Err(Error::PopulationVariantIndexOutOfBounds {
-                    idx,
-                    max: logical_len,
-                });
-            }
-            normalized_populations[idx] = path;
-            stream_has_variants[idx] = true;
-        }
-
-        if aln_count == 1
-            && (!stream_has_variants[0] || !stream_has_variants[1]) {
-                return Err(Error::SingleStreamMissingVariantProfiles);
-            }
-
-        self.sample_variants = normalized_samples
-            .into_iter()
-            .map(|p| p.to_string_lossy().into_owned())
-            .collect();
-        self.population_variants = normalized_populations
-            .into_iter()
-            .map(|p| p.to_string_lossy().into_owned())
-            .collect();
-
-        // 3. Output bounds validation
-        if self.output.len() > logical_len {
-            return Err(Error::TooManyOutputPaths {
-                count: self.output.len(),
-                max: logical_len,
-            });
-        }
-
-        if aln_count == 1 {
-            if self.ambiguous_output.len() > 1 {
-                return Err(Error::SingleStreamTooManyAmbiguousOutputs {
-                    count: self.ambiguous_output.len(),
-                });
-            }
-        } else {
-            if self.ambiguous_output.len() > logical_len {
-                return Err(Error::TooManyAmbiguousOutputPaths {
-                    count: self.ambiguous_output.len(),
-                    max: logical_len,
-                });
-            }
-        }
-
-        if self.gap_open > 0.0 {
-            self.gap_open = -self.gap_open;
-        }
-        if self.gap_extend > 0.0 {
-            self.gap_extend = -self.gap_extend;
-        }
-
-        if self.gap_open == 0.0 || self.mismatch_penalty <= 0.0 {
-            return Err(Error::InvalidPenalties);
-        }
-
-        if self.bisulfite {
-            tracing::info!(
-                "Bisulfite mode enabled: C→T (forward) and G→A (reverse) \
-                 mismatches scored as zero-penalty conversions. \
-                 Tier-2 perfect-match fast path suppressed."
-            );
-        }
-        if self.error_model != ErrorModel::Illumina {
-            tracing::info!(
-                model = ?self.error_model,
-                quality_calibration = self.error_model.quality_calibration(),
-                gap_open = self.gap_open,
-                gap_extend = self.gap_extend,
-                "Non-default error model active"
-            );
-        }
-
-        tracing::debug!(
-            threads = self.threads,
-            score_threads = self.score_threads,
-            alignments = aln_count,
-            gap_open = self.gap_open,
-            gap_extend = self.gap_extend,
-            mismatch = self.mismatch_penalty,
-            "Configuration validated"
-        );
-
-        Ok(())
-    }
-
-    pub(crate) fn check_namesorted_header(&self, raw: &[u8]) -> Result<(), Error> {
-        if self.matching_algorithm == MatchingAlgorithm::Namesorted {
-            for parts in raw
-                .split(|&b| b == b'\n')
-                .map(|s| s.split(|&b| b == b'\t').collect::<Vec<_>>())
-            {
-                if parts.len() >= 3
-                    && parts[0] == b"@HD"
-                    && (parts[2] == b"SO:coordinate" || parts[2] == b"GO:reference")
-                {
-                    return Err(Error::CoordinateSortedInputDetected);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Parse `"<idx>:<path>"` or fall back to `(default_idx, path)`.
-    fn parse_variant_string(arg: &str, default_idx: usize) -> Result<(usize, PathBuf), Error> {
-        if let Some((idx_str, path_str)) = arg.split_once(':')
-            && let Ok(idx) = idx_str.parse::<usize>()
-        {
-            return Ok((idx, PathBuf::from(path_str)));
-        }
-        Ok((default_idx, PathBuf::from(arg)))
-    }
-
-    /// Build a [`Penalty`] from the current penalty parameters.
-    pub fn to_penalties(&self) -> Penalty {
-        Penalty::build(
-            self.gap_open,
-            self.gap_extend,
-            self.mismatch_penalty,
-            self.chimeric_junction_bases,
-            self.error_model,
-        )
-    }
-
-    pub(crate) fn print_routing_counters(&self, counters: &[u64], tag: &str) {
-        let stream_count = counters.len() / COUNTER_STRIDE;
-        for nr in 0..stream_count {
-            let b = nr * COUNTER_STRIDE;
-            tracing::info!(
-                stream    = nr,
-                backend   = tag,
-                discard   = counters[b],
-                out       = counters[b + 1],
-                ambiguous = counters[b + 2],
-                chimeric  = counters[b + 3],
-                "Stream summary"
-            );
-        }
-
-        let total: u64 = counters.iter().sum();
-        if total == 0 { return; }
-
-        let ambiguous: u64 = counters
-            .chunks_exact(COUNTER_STRIDE)
-            .map(|c| c[2])
-            .sum();
-        let ambig_fraction = ambiguous as f64 / total as f64;
-
-        if ambig_fraction > self.warn_ambig_fraction {
-            let threshold_phred = match self.ambiguous_threshold {
-                u32::MAX => if self.is_pass2 { 0 } else { 10 },
-                p        => p,
-            };
-            tracing::warn!(
-                ambiguous_pct    = format!("{:.1}", ambig_fraction * 100.0),
-                threshold_phred,
-                "Ambiguous fraction exceeds warning level. \
-                 Consider pass 2 with BQSR or lowering --ambiguous-threshold."
-            );
+impl AlgorithmCommand {
+    /// Extract the common args regardless of which subcommand was chosen.
+    pub(crate) fn common(&self) -> &CommonArgs {
+        match self {
+            AlgorithmCommand::Namesorted(a) => &a.common,
+            AlgorithmCommand::Hashlookup(a) => &a.common,
+            AlgorithmCommand::Collated(a) => &a.common,
         }
     }
-
-    fn ambiguous_threshold_to_log_likelihood(&self) -> f64 {
-        let phred = match self.ambiguous_threshold {
-            u32::MAX => if self.is_pass2 { 0 } else { 10 },
-            phred => phred,
-        };
-        (phred as f64) * std::f64::consts::LN_10 / 10.0
+    pub(crate) fn common_mut(&mut self) -> &mut CommonArgs {
+        match self {
+            AlgorithmCommand::Namesorted(a) => &mut a.common,
+            AlgorithmCommand::Hashlookup(a) => &mut a.common,
+            AlgorithmCommand::Collated(a) => &mut a.common,
+        }
     }
+}
+
+// ── Shared argument groups (flattened into each subcommand) ──────────────────
+
+/// Arguments shared by all three algorithms.
+#[derive(Args, Debug, Clone, Default)]
+pub(crate) struct CommonArgs {
+    // ── Input ────────────────────────────────────────────────────────────────
+    /// Input alignment files (BAM, CRAM, or - for stdin BAM).
+    #[arg(required = true, num_args = 1..=32, help_heading = "Input")]
+    pub(crate) alignment: Vec<String>,
+
+    /// Reference FASTA for CRAM decoding. Required when any input is CRAM.
+    #[arg(long, help_heading = "Input")]
+    pub(crate) reference: Option<PathBuf>,
+
+    /// Strip read-name suffix (/1, /2). auto | true | false | variable
+    #[arg(short = 'R', long, default_value = "auto", help_heading = "Input")]
+    pub(crate) strip_read_suffix: StripReadSuffix,
+
+    // ── Output ───────────────────────────────────────────────────────────────
+    /// Winner output, one file per stream.
+    #[arg(short = 'o', long, num_args = 1..=32, help_heading = "Output")]
+    pub(crate) output: Vec<PathBuf>,
+
+    /// Ambiguous and discarded output, one file per stream.
+    /// Both ambiguous and discarded reads go here; tagged _xenoambig /
+    /// _xenodiscard in RG:Z when configured.
+    #[arg(short = 'a', long, num_args = 0..=32, help_heading = "Output")]
+    pub(crate) ambiguous_output: Vec<PathBuf>,
+
+    /// Human-readable labels for each stream (positional: stream 0, 1, …).
+    /// Used in XC:Z chimeric tags and JSON stats output.
+    #[arg(long, num_args = 0..=32, help_heading = "Output")]
+    pub(crate) stream_labels: Vec<String>,
+
+    /// Write JSON summary statistics (MultiQC-compatible).
+    #[arg(long, help_heading = "Output")]
+    pub(crate) stats_output: Option<PathBuf>,
+
+    /// Add XF:C (confidence) or XR:C (variant-rescued) aux tags to records.
+    #[arg(short = 'A', long, default_value = "false", help_heading = "Output")]
+    pub(crate) add_decision_tag: bool,
+
+    /// Suppress @PG header line in output BAMs.
+    #[arg(short = 'P', long, default_value = "false", help_heading = "Output")]
+    pub(crate) no_program_line: bool,
+
+    /// Write JSON summary to this path (MultiQC generalstats format).
+    #[arg(long, env = "XENOFILTERS_STATS_OUTPUT", help_heading = "Output")]
+    pub(crate) stats_path: Option<PathBuf>,
+
+    // ── Scoring ───────────────────────────────────────────────────────────────
+    /// Platform error model. Sets gap/quality defaults.
+    /// illumina (default) | hifi | ont
+    #[arg(long, default_value = "illumina", help_heading = "Scoring")]
+    pub(crate) error_model: ErrorModel,
+
+    /// Mismatch penalty (positive; internally negated).
+    #[arg(short = 'm', long, default_value = "4.0", help_heading = "Scoring")]
+    pub(crate) mismatch_penalty: f64,
+
+    /// Gap-open penalty (positive; internally negated).
+    #[arg(short = 'g', long, default_value = "6.0", help_heading = "Scoring")]
+    pub(crate) gap_open: f64,
+
+    /// Gap-extend penalty (positive; internally negated).
+    #[arg(short = 'e', long, default_value = "1.0", help_heading = "Scoring")]
+    pub(crate) gap_extend: f64,
+
+    /// Chimeric-junction structural penalty constant (bases).
+    #[arg(short = 'J', long, default_value = "20",
+          value_parser = clap::value_parser!(u32).range(0..=10000),
+          help_heading = "Scoring")]
+    pub(crate) chimeric_junction_bases: u32,
+
+    /// Ambiguous threshold (Phred). u32::MAX = auto (10 for pass 1, 0 for pass 2).
+    #[arg(long, default_value_t = u32::MAX, value_name = "PHRED|auto",
+          help_heading = "Scoring")]
+    pub(crate) ambiguous_threshold: u32,
+
+    /// Warn when ambiguous fraction exceeds this fraction. Default 0.05 (5%).
+    #[arg(long, default_value = "0.05", help_heading = "Scoring")]
+    pub(crate) warn_ambig_fraction: f64,
+
+    /// Enable bisulfite/WGBS scoring: C→T (forward) and G→A (reverse)
+    /// mismatches scored as zero-penalty conversions.
+    #[arg(long, default_value = "false", help_heading = "Scoring")]
+    pub(crate) bisulfite: bool,
+
+    // ── Variants ──────────────────────────────────────────────────────────────
+    /// Sample VCF/BCF per stream ([IDX:]FILE). FORMAT/GT + FORMAT/GQ required.
+    #[arg(short = 's', long, num_args = 0..=32,
+          value_name = "[IDX:]FILE", help_heading = "Variants")]
+    pub(crate) sample_variants: Vec<String>,
+
+    /// Population VCF/BCF per stream ([IDX:]FILE). INFO/AF required.
+    #[arg(short = 'p', long, num_args = 0..=32,
+          value_name = "[IDX:]FILE", help_heading = "Variants")]
+    pub(crate) population_variants: Vec<String>,
+
+    // ── Misc ──────────────────────────────────────────────────────────────────
+    /// Suppress progress output to stderr.
+    #[arg(long, default_value = "false", help_heading = "Misc")]
+    pub(crate) quiet: bool,
+
+    /// Verbosity: -v = INFO, -vv = DEBUG. Respects RUST_LOG.
+    #[arg(short, long, action = clap::ArgAction::Count, help_heading = "Misc")]
+    pub(crate) verbose: u8,
+
+    /// Write unmapped reads to output. For testing only.
+    #[arg(long, default_value = "false", hide = true)]
+    pub(crate) write_unmapped: bool,
+
+    // ── Internal (skip) ───────────────────────────────────────────────────────
+    #[arg(skip)]
+    pub(crate) is_pass2: bool,
+
+    #[arg(skip)]
+    pub(crate) parsed_chimeric_pairs: Vec<[usize; 2]>,
+}
+
+// ── Per-algorithm arg structs ─────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub(crate) struct NamesortedArgs {
+    #[command(flatten)]
+    pub(crate) common: CommonArgs,
+
+    /// bgzf decompression worker threads.
+    #[arg(
+        short = 't',
+        long,
+        default_value = "4",
+        env = "XENOFILTERS_THREADS",
+        help_heading = "Parallelism"
+    )]
+    pub(crate) threads: usize,
+
+    /// Parallel fragment-scoring worker threads (0 = all logical CPUs, max 16).
+    #[arg(
+        short = 'S',
+        long,
+        default_value = "1",
+        env = "XENOFILTERS_SCORE_THREADS",
+        help_heading = "Parallelism"
+    )]
+    pub(crate) score_threads: usize,
+
+    /// Chimeric stream-index pairs (format: A:B).
+    /// Reads spanning species boundaries are tagged XC:Z:<other_label>
+    /// and written to both streams' outputs.
+    #[arg(long, num_args = 0.., value_name = "A:B",
+          help_heading = "Chimeric")]
+    pub(crate) chimeric_pairs: Vec<String>,
+
+    /// Name encoder for FragmentTable key compression.
+    /// illumina (strips machine:run:flowcell prefix) | passthrough
+    #[arg(long, default_value = "illumina", help_heading = "Advanced")]
+    pub(crate) name_encoder: NameEncoderKind,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct HashlookupArgs {
+    #[command(flatten)]
+    pub(crate) common: CommonArgs,
+
+    /// In-memory BED file(s) forcing full NW scoring on overlap.
+    /// One per stream (positional: stream 0, then 1).
+    /// Strand-aware when BED column 6 present.
+    #[arg(long, num_args = 0..=2, value_name = "FILE",
+          help_heading = "Regions")]
+    pub(crate) ambiguous_regions: Vec<String>,
+
+    /// In-memory VCF/BCF of diagnostic positions per stream.
+    #[arg(long, num_args = 0..=2, value_name = "FILE",
+          help_heading = "Regions")]
+    pub(crate) diagnostic_variants: Vec<String>,
+
+    /// BED file(s) of regions giving reads a positive score bonus.
+    #[arg(long, num_args = 0..=2, value_name = "FILE",
+          help_heading = "Regions")]
+    pub(crate) positive_regions: Vec<String>,
+
+    /// Score function for --positive-regions BED score column.
+    /// Format: fn[:weight]  fn ∈ {linear, log, constant, overlap_fraction}
+    #[arg(long, default_value = "linear:1.0", help_heading = "Regions")]
+    pub(crate) region_score_fn: ScoreFn,
+
+    /// Name encoder for key compression.
+    #[arg(long, default_value = "illumina", help_heading = "Advanced")]
+    pub(crate) name_encoder: NameEncoderKind,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct CollatedArgs {
+    #[command(flatten)]
+    pub(crate) common: CommonArgs,
+
+    /// Tabix-indexed BED.gz file(s) forcing full NW on overlap.
+    /// One per stream. Strand-aware when BED column 6 present.
+    #[arg(long, num_args = 0..=2, value_name = "FILE",
+          help_heading = "Regions")]
+    pub(crate) ambiguous_regions: Vec<String>,
+
+    /// Tabix-indexed VCF/BCF of diagnostic positions per stream.
+    #[arg(long, num_args = 0..=2, value_name = "FILE",
+          help_heading = "Regions")]
+    pub(crate) diagnostic_variants: Vec<String>,
+
+    /// BED.gz file(s) of positive-score regions. Tabix-indexed.
+    #[arg(long, num_args = 0..=2, value_name = "FILE",
+          help_heading = "Regions")]
+    pub(crate) positive_regions: Vec<String>,
+
+    #[arg(long, default_value = "linear:1.0", help_heading = "Regions")]
+    pub(crate) region_score_fn: ScoreFn,
 }
 
 #[cfg(test)]
