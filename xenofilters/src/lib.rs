@@ -14,10 +14,14 @@ pub mod reporting;
 pub mod stats;
 pub mod variant;
 
-use aln_stream::{open::open_streams_unified};
-use config::{args::parse_chimeric_pairs, AlgorithmCommand, Cli, CollatedArgs, HashlookupArgs, NamesortedArgs};
+use crate::aln_stream::open::open_streams_raw_bam;
+use crate::region::tabix_load::{open_tabix_bed, open_tabix_scored, open_tabix_vcf};
+use aln_stream::open::open_streams_unified;
 use clap::CommandFactory;
 use clap_complete::generate;
+use config::{
+    args::parse_chimeric_pairs, AlgorithmCommand, Cli, CollatedArgs, HashlookupArgs, NamesortedArgs,
+};
 pub use error::Error;
 use filter_algorithm::{
     collated::CollatedMatcher,
@@ -25,7 +29,13 @@ use filter_algorithm::{
     line_by_line::{LineByLine, MAX_STREAMS},
 };
 use noodles::sam::Header;
-use region::{AmbiguousRegions, DiagnosticVariants, load::{load_ambiguous_regions_memory, load_diagnostic_variants_memory, load_positive_regions_memory}};
+use region::{
+    load::{
+        load_ambiguous_regions_memory, load_diagnostic_variants_memory,
+        load_positive_regions_memory,
+    },
+    AmbiguousRegions, DiagnosticVariants,
+};
 use std::collections::HashMap;
 use std::path::Path;
 use tracing_subscriber::{fmt, EnvFilter};

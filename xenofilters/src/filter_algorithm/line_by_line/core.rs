@@ -7,18 +7,18 @@
 use crate::{
     alignment::{FragmentState, SimpleRec},
     aln_stream::AlignmentStream,
-    config::{NamesortedArgs, StripReadSuffix, args::resolve_threshold},
-    header_name_to_id,
+    config::{args::resolve_threshold, NamesortedArgs, StripReadSuffix},
     penalty::Penalty,
     progress::ProgressReporter,
     region::{ScoreFn, ScoredRegions},
+    variant::name_to_id::header_name_to_id,
     Error,
 };
+use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::alignment::Record;
 use smallvec::SmallVec;
 use std::path::Path;
 use std::sync::Arc;
-use noodles::sam::alignment::record_buf::RecordBuf;
 
 pub const READ_CT: usize = 8;
 pub(crate) const VNT_LEN: usize = 16;
@@ -136,7 +136,6 @@ pub(crate) struct LineByLine<R> {
 }
 
 impl<R: SimpleRec> LineByLine<R> {
-
     pub(crate) fn new(
         config: &NamesortedArgs,
         mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
