@@ -64,7 +64,7 @@ const TAG_RG: Tag = Tag::READ_GROUP;
 ///
 /// Returns the modified header.  The original header is consumed so that the
 /// caller does not accidentally use a header that is missing the new groups.
-pub(crate) fn expand_header(mut header: Header, opt: &Config) -> Header {
+pub(crate) fn expand_header(mut header: Header, write_discarded: bool) -> Header {
     // Collect additions first to avoid mutating while iterating.
     let additions: Vec<(String, Map<ReadGroup>)> = header
         .read_groups()
@@ -72,8 +72,7 @@ pub(crate) fn expand_header(mut header: Header, opt: &Config) -> Header {
         .flat_map(|(id, rg)| {
             let id_str = id.to_string();
             let ambiguous = (format!("{id_str}{SUFFIX_AMBIGUOUS}"), rg.clone());
-            let filtered = opt
-                .write_discarded
+            let filtered = write_discarded
                 .then(|| (format!("{id_str}{SUFFIX_FILTERED}"), rg.clone()));
             std::iter::once(ambiguous).chain(filtered)
         })
@@ -132,7 +131,7 @@ mod tests {
     fn expand_header_adds_two_entries_per_rg() {
         let h = make_header_with_rgs(&["rg0", "rg1"]);
         let mut config = Config::default();
-        let expanded1 = expand_header(h.clone(), &config);
+        let expanded1 = expand_header(h.clone(), false);
         let ids1 = rg_ids(&expanded1);
         // 2 original + 2 derived = 4
         assert_eq!(ids1.len(), 4);
@@ -141,8 +140,7 @@ mod tests {
         assert!(ids1.contains(&"rg1".to_string()));
         assert!(ids1.contains(&format!("rg1{SUFFIX_AMBIGUOUS}")));
 
-        config.write_discarded = true;
-        let expanded2 = expand_header(h, &config);
+        let expanded2 = expand_header(h, true);
         let ids2 = rg_ids(&expanded2);
         // 2 original + 4 derived = 6
         assert_eq!(ids2.len(), 6);
@@ -158,7 +156,7 @@ mod tests {
     fn expand_header_empty_rg_is_noop() {
         let h = Header::default();
         let config = Config::default();
-        let expanded = expand_header(h, &config);
+        let expanded = expand_header(h, true);
         assert!(expanded.read_groups().is_empty());
     }
 

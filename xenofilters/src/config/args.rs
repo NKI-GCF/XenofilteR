@@ -4,6 +4,8 @@ use crate::penalty::ErrorModel;
 use crate::region::ScoreFn;
 use clap::Args;
 use std::path::PathBuf;
+use crate::Error;
+use crate::config::{StripReadSuffix, Penalty};
 
 /// Shared by every subcommand. No arity-specific fields here.
 #[derive(Args, Debug, Clone)]

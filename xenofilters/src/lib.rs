@@ -26,7 +26,10 @@ use filter_algorithm::{
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::Header;
-use region::{AmbiguousRegions, DiagnosticVariants, ScoredRegions};
+use region::{AmbiguousRegions, DiagnosticVariants, ScoredRegions, load::{
+
+
+}};
 use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
 use std::path::Path;

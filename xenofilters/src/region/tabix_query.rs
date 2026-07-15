@@ -17,6 +17,7 @@ use noodles::{tabix, vcf};
 use std::fs::File;
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
+use crate::region::ScoreFn;
 
 pub(crate) struct TabixScored {
     inner: TabixBed,

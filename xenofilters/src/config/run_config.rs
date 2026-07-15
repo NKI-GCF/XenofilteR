@@ -1,3 +1,10 @@
+use crate::config::args::{
+    IoArgs, OutputArgsMulti, RegionArgsMemory,
+    RegionArgsTabix, ScoringArgs, VariantArgs,
+};
+use crate::Error;
+use crate::config::MatchingAlgorithm;
+
 /// Single flat struct consumed by all three engines. No Args-struct
 /// indirection survives past `into_run_config()`. This is what
 /// `LineByLine::new`, `HashLookup::new`, `CollatedMatcher::new` accept —

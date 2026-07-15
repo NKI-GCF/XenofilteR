@@ -1,4 +1,9 @@
 // src/region/load.rs
+use std::collections::HashMap;
+use crate::region::{AmbiguousRegions, DiagnosticVariants, ScoredRegions};
+use crate::region::ScoreFn;
+use std::path::Path;
+use crate::error::Error;
 
 pub(crate) fn load_ambiguous_regions_memory(
     specs: &[String],
@@ -33,7 +38,7 @@ pub(crate) fn load_positive_regions_memory(
 }
 
 /// Shared 2-slot loader: applies `f` to each of up to 2 file paths.
-fn load_pair<T, F>(specs: &[String], f: F) -> Result<[Option<T>; 2], Error>
+pub(crate) fn load_pair<T, F>(specs: &[String], f: F) -> Result<[Option<T>; 2], Error>
 where
     F: Fn(&str) -> Result<T, Error>,
 {

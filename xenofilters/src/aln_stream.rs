@@ -24,11 +24,13 @@ use crate::variant::{
 use crate::bam::reader::BgzfBamReader;
 use crate::Error;
 use noodles::bam::{io::Reader as BamReader, record::Record};
-use noodles::bgzf::{io::MultithreadedReader, VirtualPosition};
+use noodles::bgzf::{self, io::MultithreadedReader, VirtualPosition};
 use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::Header;
 use std::fs::File;
+use std::io::Read as ioRead;
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 use std::sync::Arc;
 use noodles::fasta::io::indexed_reader::Builder;
 use std::path::Path;
@@ -58,8 +60,8 @@ pub(crate) trait AlignmentStream<R: SimpleRec> {
 pub(crate) struct AlnStream<R> {
     pub(crate) bam: Option<BgzfBamReader>,
     next: Option<R>,
-    sample_variants: Option<Arc<dyn StoreTrait>>,
-    population_variants: Option<Arc<dyn StoreTrait>>,
+    sample_variants: Option<Arc<Store<Sample>>>,
+    population_variants: Option<Arc<Store<Population>>>,
     pub(crate) header: Header,
     output: Option<BamOutput>,
     ambiguous: Option<BamOutput>,
