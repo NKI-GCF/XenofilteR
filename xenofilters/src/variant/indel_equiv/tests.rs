@@ -162,31 +162,25 @@ mod tests {
             pos_0based: 0,
             ref_a: b"G",
             alt_a: b"GA",
-            n: Some(3), // anchors at 0, 1, 2
-            positions: Some(&[0, 1, 2]),
+            n: Some(4),
+            positions: Some(&[0, 1, 2, 3]),
         }];
         run_cases(&cases);
     }
 
     #[test]
     fn tandem_repeat_dinucleotide_deletion() {
-        // Reference: CACACACAG
-        // Delete one AC unit (2 bases).
-        // Left-normalized: pos=0, ref=CAC, alt=C
-        //   First deleted = AC; next 2 bases after deletion = AC → slides
-        //   Anchor moves to 2: ref=CAC, alt=C
-        //   Next 2 after that = AG → first char A matches first deleted A?
-        //   Check: cur_ref[1]='A' == ref[cur_pos+del_len+1]=ref[2+2+1]=ref[5]='A' YES
-        //   → slides again to pos=4: ref=CAG, alt=C?
-        //   No: ref[4..7] = 'CAG'; next after del: ref[6]='G' ≠ 'C' = cur_ref[1]
+        // Reference: CACACACAG — delete one AC unit.
+        // right_shift_deletion moves 1 position at a time, generating
+        // both CAC/C and ACA/A forms → 6 equivalents at positions 0..5.
         let cases = [Case {
             label: "dinucleotide AC repeat deletion",
             reference: b"CACACACAG",
             pos_0based: 0,
-            ref_a: b"CAC", // anchor C, delete AC
+            ref_a: b"CAC",
             alt_a: b"C",
-            n: Some(3), // slides twice through CACAC
-            positions: Some(&[0, 2, 4]),
+            n: Some(6),
+            positions: Some(&[0, 1, 2, 3, 4, 5]),
         }];
         run_cases(&cases);
     }
@@ -311,7 +305,7 @@ mod tests {
         // New: pos=1, ref=AACG..., wait I need to think about this more carefully.
         // Just verify semantic equivalence.
         let reference = b"AACAACAAG";
-        assert_all_equivalent(reference, 0, b"AAAC", b"A", 0);
+        assert_all_equivalent(reference, 0, b"AACA", b"A", 0);
     }
 
     #[test]

@@ -23,8 +23,7 @@ use crate::{
 use fasta::io::IndexedReader;
 use noodles::{
     core::Region,
-    fasta,
-    vcf,
+    fasta, vcf,
     vcf::variant::record::{
         samples::{Sample, Series},
         AlternateBases, ReferenceBases,
@@ -188,36 +187,35 @@ fn left_normalize(
     let mut a = alt_a.to_vec();
 
     loop {
+        // Step 1: trim matching suffix while both sides have length > 1.
+        while r.len() > 1 && a.len() > 1 && r.last() == a.last() {
+            r.pop();
+            a.pop();
+        }
+        // Last chars differ → done.
+        if r.last() != a.last() {
+            break;
+        }
+        // Both last chars still match but one side is length 1.
+        // Extend left if possible.
         if pos == 0 {
             break;
         }
-
-        // Chromosome index of the base preceding the current anchor.
         let prev_chrom = pos - 1;
-        let prev_ctx = match prev_chrom.checked_sub(ctx_start) {
-            Some(i) if i < ref_ctx.len() => ref_ctx[i],
-            _ => break,
+        let Some(prev_idx) = prev_chrom.checked_sub(ctx_start) else {
+            break;
         };
-
-        // Left-shift condition: payload's last base == preceding ref base.
-        // For deletion payload is r[1:]; for insertion payload is a[1:].
-        let last_payload = if r.len() > a.len() {
-            *r.last().expect("ref non-empty")
-        } else {
-            *a.last().expect("alt non-empty")
-        };
-
-        if last_payload != prev_chrom_base_to_u8(prev_ctx) {
+        if prev_idx >= ref_ctx.len() {
             break;
         }
-
-        // Perform shift: prepend preceding base, drop the last base.
-        r.insert(0, prev_ctx);
+        let prev_base = ref_ctx[prev_idx];
         r.pop();
-        a.insert(0, prev_ctx);
         a.pop();
+        r.insert(0, prev_base);
+        a.insert(0, prev_base);
         pos -= 1;
     }
+
     (pos, r, a)
 }
 

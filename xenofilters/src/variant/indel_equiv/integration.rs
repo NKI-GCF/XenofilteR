@@ -182,7 +182,7 @@ mod indel_expansion_integration {
     fn insertion_equivalents_all_found_by_store() {
         let reference = b"GAAAG";
         let equivalents = enumerate_equivalents(0, b"G", b"GA", reference, 0);
-        assert_eq!(equivalents.len(), 3, "3 insertion equivalents in GAAAG");
+        assert_eq!(equivalents.len(), 4, "4 insertion equivalents in GAAAG");
 
         let mut store = Store::<Population>::new();
         for eq in &equivalents {
@@ -200,7 +200,7 @@ mod indel_expansion_integration {
         store.dedup();
 
         let hits = store.overlapping_multi(0, 0, 4);
-        assert_eq!(hits.len(), 3, "all 3 insertion equivalents queryable");
+        assert_eq!(hits.len(), 4, "all 4 insertion equivalents queryable");
     }
 
     // -- Test 8: two-stream routing agrees for shifted and canonical read ------
@@ -214,7 +214,19 @@ mod indel_expansion_integration {
     fn two_stream_routing_with_expanded_stores() {
         let reference = b"GGGGGAAAAGCCCCCCCCCCC";
         let human_equivalents = enumerate_equivalents(4, b"GA", b"G", reference, 0);
-        let mouse_equivalents = enumerate_equivalents(2, b"GA", b"G", reference, 0);
+        let mouse_equivalents = enumerate_equivalents(7, b"AA", b"A", reference, 0);
+
+        // With fixed left_normalize both expand to positions [4, 5, 6, 7].
+        let human_positions: Vec<usize> = human_equivalents.iter().map(|e| e.pos).collect();
+        let mouse_positions: Vec<usize> = mouse_equivalents.iter().map(|e| e.pos).collect();
+        assert_eq!(
+            human_positions, mouse_positions,
+            "human and mouse expansions must cover identical positions"
+        );
+        assert!(
+            mouse_positions.contains(&4),
+            "expanded mouse equivalents must include human canonical position (pos=4)"
+        );
 
         let build_store = |equivalents: &[EquivalentAlleles]| -> Arc<dyn StoreTrait> {
             let mut store = Store::<Population>::new();
