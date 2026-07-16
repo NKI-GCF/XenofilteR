@@ -22,6 +22,7 @@ pub(crate) mod tests;
 use crate::alignment::{mate_slot, segment_id, Fragment, MateKind, MdCigFlags, SimpleRec};
 use crate::alignment::{pre_assess_scoring_records, PreAssessResult};
 use crate::aln_stream::AlignmentStream;
+use crate::config::args::resolve_threshold;
 use crate::config::HashlookupArgs;
 use crate::config::StripReadSuffix;
 use crate::filter_algorithm::collated::reader::canonical_name;
@@ -46,7 +47,6 @@ use noodles::sam::alignment::record_buf::{
 use smallvec::SmallVec;
 use stage::StagedOutput;
 use std::cmp::Ordering;
-use crate::config::args::resolve_threshold;
 
 // ---------------------------------------------------------------------------
 // ScoredFragment
@@ -97,10 +97,10 @@ impl<R: SimpleRec> HashLookup<R> {
         bed: [Option<AmbiguousRegions>; 2],
         vcf: [Option<DiagnosticVariants>; 2],
         pos: [Option<(ScoredRegions, ScoreFn)>; 2],
-    ) -> Result<Self, Error> {
+    ) -> Result<HashLookup<RecordBuf>, Error> {
         let ambiguous_log_threshold =
             resolve_threshold(args.common.scoring.ambiguous_threshold, false);
-        Ok(Self {
+        Ok(HashLookup {
             aln,
             table: new_fragment_table(),
             staged: StagedOutput::new(),

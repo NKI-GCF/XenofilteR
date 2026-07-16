@@ -308,6 +308,16 @@ impl OutputArgsPair {
     }
 }
 
+impl From<OutputArgsPair> for OutputArgsMulti {
+    fn from(p: OutputArgsPair) -> Self {
+        Self {
+            output: p.output,
+            ambiguous_output: p.ambiguous_output,
+            ..Default::default()
+        }
+    }
+}
+
 impl ChimericArgs {
     pub(crate) fn parse_pairs(&self, n_streams: usize) -> Result<Vec<[usize; 2]>, Error> {
         parse_chimeric_pairs(&self.chimeric_pairs, n_streams)

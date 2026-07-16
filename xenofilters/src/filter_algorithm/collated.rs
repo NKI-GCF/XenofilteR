@@ -53,7 +53,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         aln:  SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>,
         bed:  [Option<TabixBed>; 2],
         vcf:  [Option<TabixVcf>; 2],
-    ) -> Result<Self, Error> {
+    ) -> Result<CollatedMatcher<RecordBuf>, Error> {
         let ambiguous_log_threshold = resolve_threshold(
             args.common.scoring.ambiguous_threshold, false,
         );
@@ -61,7 +61,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         let a0 = it.next().unwrap();
         let a1 = it.next().unwrap();
         let bisulfite = args.common.scoring.bisulfite; 
-        Ok(Self {
+        Ok(CollatedMatcher {
             a: CollatedReader::new(a0, bisulfite, 0),
             b: CollatedReader::new(a1, bisulfite, 1),
             waiting_a: HashMap::with_hasher(RandomState::new()),

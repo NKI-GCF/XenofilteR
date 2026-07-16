@@ -5,6 +5,7 @@ use crate::{
     config::run_config::RunConfig,
     filter_algorithm::{strain::StrainArgs, viral_integration::ViralIntegrationArgs},
     region::ScoreFn,
+    Error,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
@@ -134,27 +135,35 @@ pub(crate) enum AlgorithmCommand {
     Completion(CompletionArgs),
 }
 
-/*impl AlgorithmCommand {
+impl AlgorithmCommand {
+    pub(crate) fn validate_and_init(&mut self) -> Result<(), Error> {
+        match self {
+            Self::Namesorted(a) => a.common.validate_and_init(),
+            Self::Hashlookup(a) => a.common.validate_and_init(),
+            Self::Collated(a) => a.common.validate_and_init(),
+            Self::Strain(a) => a.validate_and_init(),
+            Self::ViralIntegration(a) => a.validate_and_init(),
+            Self::Completion(_) => Ok(()),
+        }
+    }
     /// Extract the common args regardless of which subcommand was chosen.
     pub(crate) fn common(&self) -> &CommonArgs {
         match self {
-            AlgorithmCommand::Namesorted(a) => &a.common,
-            AlgorithmCommand::Hashlookup(a) => &a.common,
-            AlgorithmCommand::Collated(a) => &a.common,
-            AlgorithmCommand::Strain(a) => &a.common,
-            AlgorithmCommand::ViralIntegration(a) => &a.common,
+            Self::Namesorted(a) => &a.common,
+            Self::Hashlookup(a) => &a.common,
+            Self::Collated(a) => &a.common,
+            _ => unreachable!("common() not available for this subcommand"),
         }
     }
     pub(crate) fn common_mut(&mut self) -> &mut CommonArgs {
         match self {
-            AlgorithmCommand::Namesorted(a) => &mut a.common,
-            AlgorithmCommand::Hashlookup(a) => &mut a.common,
-            AlgorithmCommand::Collated(a) => &mut a.common,
-            AlgorithmCommand::Strain(a) => &mut a.common,
-            AlgorithmCommand::ViralIntegration(a) => &mut a.common,
+            Self::Namesorted(a) => &mut a.common,
+            Self::Hashlookup(a) => &mut a.common,
+            Self::Collated(a) => &mut a.common,
+            _ => unreachable!("common_mut() not available for this subcommand"),
         }
     }
-}*/
+}
 
 impl Default for AlgorithmCommand {
     fn default() -> Self {
@@ -180,6 +189,54 @@ pub(crate) struct CommonArgs {
     pub(crate) variants: crate::config::args::VariantArgs,
     #[command(flatten)]
     pub(crate) output: crate::config::args::OutputArgsMulti,
+}
+
+impl CommonArgs {
+    pub(crate) fn validate_and_init(&mut self) -> Result<(), crate::Error> {
+        self.scoring.validate()?;
+        self.io.validate()?;
+        Ok(())
+    }
+
+    pub(crate) fn print_routing_counters(&self, counters: &[u64], tag: &str) {
+        use crate::filter_algorithm::line_by_line::core::COUNTER_STRIDE;
+        let stream_count = counters.len() / COUNTER_STRIDE;
+        for nr in 0..stream_count {
+            let b = nr * COUNTER_STRIDE;
+            tracing::info!(
+                stream = nr,
+                backend = tag,
+                discard = counters[b],
+                out = counters[b + 1],
+                ambiguous = counters[b + 2],
+                chimeric = counters[b + 3],
+                "Stream summary"
+            );
+        }
+        let total: u64 = counters.iter().sum();
+        if total == 0 {
+            return;
+        }
+        let ambiguous: u64 = counters.chunks_exact(COUNTER_STRIDE).map(|c| c[2]).sum();
+        let frac = ambiguous as f64 / total as f64;
+        if frac > self.scoring.warn_ambig_fraction {
+            let threshold_phred = match self.scoring.ambiguous_threshold {
+                u32::MAX => {
+                    if self.io.is_pass2 {
+                        0
+                    } else {
+                        10
+                    }
+                }
+                p => p,
+            };
+            tracing::warn!(
+                ambiguous_pct = format!("{:.1}", frac * 100.0),
+                threshold_phred,
+                "Ambiguous fraction exceeds warning level."
+            );
+        }
+    }
 }
 
 // -- Per-algorithm arg structs -------------------------------------------------

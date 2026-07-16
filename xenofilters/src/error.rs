@@ -104,7 +104,6 @@ pub enum Error {
     #[error("CRAM index seeking not yet implemented (see ROADMAP)")]
     CramSeekingNotImplemented,
 
-
     #[error("stdin requires --input-format sam")]
     StdinRequiresSamFormat,
 
@@ -184,17 +183,13 @@ pub enum Error {
     #[error("--ambiguous-output accepts at most 2 paths for this subcommand")]
     TooManyAmbiguousPathsPair,
 
-    #[error(
-        "--chimeric-pairs: expected format 'A:B' (e.g. '0:1'), got '{raw}'"
-    )]
+    #[error("--chimeric-pairs: expected format 'A:B' (e.g. '0:1'), got '{raw}'")]
     InvalidChimericPairFormat { raw: String },
 
     #[error("--chimeric-pairs: '{raw}' — stream index must differ")]
     ChimericPairSameIndex { raw: String },
 
-    #[error(
-        "--chimeric-pairs: index out of range for {streams} streams, got '{raw}'"
-    )]
+    #[error("--chimeric-pairs: index out of range for {streams} streams, got '{raw}'")]
     ChimericPairIndexOutOfRange { raw: String, streams: usize },
 
     #[error("invalid stream index in variant spec '{spec}'")]
@@ -224,6 +219,10 @@ pub enum Error {
 
     #[error("strain requires exactly 1 stream, got {got}")]
     ViralIntegrationStreamCount { got: usize },
+
+    #[error(
+        "viral-integration labels count ({labels}) does not match alignment streams count ({alignments})")]
+    ViralIntegrationLabelCount { alignments: usize, labels: usize },
 
     #[error("{algorithm} does not support --score-threads > 1")]
     AlgorithmNotParallel { algorithm: &'static str },

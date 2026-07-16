@@ -46,7 +46,7 @@ impl StrainArgs {
         if !self.variants.has_index(0) || !self.variants.has_index(1) {
             return Err(Error::StrainMissingVariantProfile);
         }
-        let alignment = self.alignment[0];
+        let alignment = self.alignment[0].clone();
         Ok(RunConfig {
             algorithm: MatchingAlgorithm::Namesorted,
             alignment: vec![alignment.clone(), alignment], // duplicated stream
@@ -61,5 +61,15 @@ impl StrainArgs {
             stream_labels: vec![],
             ..Default::default()
         })
+    }
+    pub(crate) fn validate_and_init(&mut self) -> Result<(), Error> {
+        let got = self.alignment.len();
+        if got != 1 {
+            return Err(Error::StrainStreamCount { got });
+        }
+        if !self.variants.has_index(0) || !self.variants.has_index(1) {
+            return Err(Error::StrainMissingVariantProfile);
+        }
+        Ok(())
     }
 }

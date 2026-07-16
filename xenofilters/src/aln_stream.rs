@@ -194,6 +194,46 @@ where
     }
 }
 
+impl AlnStream<RecordBuf> {
+    pub(crate) fn new_unified(args: &mut NamesortedArgs, i: usize) -> Result<Self, Error> {
+        let mut cfg = RunConfig {
+            algorithm: MatchingAlgorithm::Namesorted,
+            alignment: args.alignment.clone(),
+            io: args.common.io.clone(),
+            scoring: args.common.scoring.clone(),
+            variants: args.common.variants.clone(),
+            output: args.common.output.clone(),
+            threads: args.parallel.threads,
+            score_threads: args.parallel.score_threads,
+            chimeric_pairs: args.chimeric.chimeric_pairs.clone(),
+            stream_labels: args.chimeric.stream_labels.clone(),
+            ..Default::default()
+        };
+        let stream = Self::new(&mut cfg, i)?;
+        // Sync back mutable state written during stream init
+        args.common.io.is_pass2 = cfg.is_pass2;
+        args.common.io.is_paired = cfg.is_paired;
+        args.common.io.strip_read_suffix = cfg.io.strip_read_suffix;
+        Ok(stream)
+    }
+
+    pub(crate) fn new_raw_bam(args: &mut HashlookupArgs, i: usize) -> Result<Self, Error> {
+        let mut cfg = RunConfig {
+            algorithm: MatchingAlgorithm::Hashlookup,
+            alignment: args.alignment.clone(),
+            io: args.common.io.clone(),
+            scoring: args.common.scoring.clone(),
+            variants: args.common.variants.clone(),
+            output: args.common.output.clone(),
+            ..Default::default()
+        };
+        let stream = Self::new(&mut cfg, i)?;
+        args.common.io.is_pass2 = cfg.is_pass2;
+        args.common.io.is_paired = cfg.is_paired;
+        Ok(stream)
+    }
+}
+
 pub(crate) trait FromBamRecord: Sized {
     fn from_bam_record(header: &Header, rec: Record) -> std::io::Result<Self>;
 }
