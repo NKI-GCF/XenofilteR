@@ -30,10 +30,13 @@ def get_current_branch():
     )
     return res.stdout.strip()
 
-def get_git_diff(main_branch, feature_branch):
+def get_git_diff(main_branch, feature_branch, extra_args=None):
+    if extra_args is None:
+        extra_args = []
     try:
+        cmd = ["git", "diff", "-p"] + extra_args + [f"{main_branch}...{feature_branch}"]
         res = subprocess.run(
-            ["git", "diff", "-p", f"{main_branch}...{feature_branch}"],
+            cmd,
             capture_output=True,
             text=True,
             check=True
@@ -73,7 +76,7 @@ def parse_diff(diff_text):
             new_start = int(m.group(3))
             new_len = int(m.group(4)) if m.group(4) is not None else 1
             
-            hunk_lines = [line]
+            hunk_lines = []
             i += 1
             while i < len(lines) and not lines[i].startswith('@@ ') and not lines[i].startswith('diff --git '):
                 hunk_lines.append(lines[i])
@@ -99,7 +102,10 @@ def main():
     parser = argparse.ArgumentParser(description="Extract git diff hunks covering specific file:line numbers.")
     parser.add_argument("-b", "--feature-branch", help="Feature branch to compare (defaults to current branch)")
     parser.add_argument("-m", "--main-branch", default="master", help="Main branch to compare against (defaults to master)")
-    args = parser.parse_args()
+    parser.add_argument("--original", action="store_true", help="Keep original diff format")
+    parser.add_argument("--comments", action="store_true", help="Keep comment lines")
+    parser.add_argument("--space", action="store_true", help="Keep empty lines")
+    args, unknown_args = parser.parse_known_args()
 
     git_root = get_git_root()
 
@@ -145,9 +151,71 @@ def main():
                     if hunk_key not in printed_hunks:
                         header_key = tuple(hunk['file_header'])
                         if header_key not in printed_headers:
-                            print('\n'.join(hunk['file_header']))
+                            if not args.original:
+                                a_file, b_file = None, None
+                                for fhl in hunk['file_header']:
+                                    if fhl.startswith('--- '):
+                                        path = fhl[4:].strip()
+                                        if path.startswith('a/'):
+                                            path = path[2:]
+                                        if path.startswith('"') and path.endswith('"'):
+                                            path = path[1:-1]
+                                        a_file = path
+                                    elif fhl.startswith('+++ '):
+                                        path = fhl[4:].strip()
+                                        if path.startswith('b/'):
+                                            path = path[2:]
+                                        if path.startswith('"') and path.endswith('"'):
+                                            path = path[1:-1]
+                                        b_file = path
+                                if a_file and b_file and a_file == b_file and a_file != '/dev/null':
+                                    print(f"-/+ {a_file}")
+                                else:
+                                    for fhl in hunk['file_header']:
+                                        if fhl.startswith('--- ') or fhl.startswith('+++ '):
+                                            print(fhl)
+                            else:
+                                print('\n'.join(hunk['file_header']))
                             printed_headers.add(header_key)
-                        print('\n'.join(hunk['lines']))
+
+                        lines_to_print = hunk['lines']
+                        if not args.original:
+                            lines_to_print = list(lines_to_print)
+                            while lines_to_print and lines_to_print[0].startswith(' '):
+                                lines_to_print.pop(0)
+
+                            processed = []
+                            in_tracing = False
+                            for line in lines_to_print:
+                                if not line: continue
+                                prefix = line[0]
+                                text = line[1:]
+                                text_stripped = text.strip()
+
+                                if not args.space and not text_stripped:
+                                    continue
+                                if not args.comments and (text_stripped.startswith('//') or text_stripped.startswith('#')):
+                                    continue
+
+                                if in_tracing:
+                                    if ');' in text_stripped:
+                                        in_tracing = False
+                                    continue
+                                elif 'tracing::' in text_stripped:
+                                    if ');' not in text_stripped:
+                                        in_tracing = True
+                                    continue
+
+                                processed.append(line)
+                            lines_to_print = processed
+
+                        if not args.original:
+                            print('@')
+                        else:
+                            print(hunk['header'])
+
+                        if lines_to_print:
+                            print('\n'.join(lines_to_print))
                         printed_hunks.add(hunk_key)
 
 if __name__ == '__main__':
