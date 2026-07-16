@@ -6,6 +6,7 @@ pub mod aln_stream;
 pub mod bam;
 pub mod config;
 pub mod error;
+pub mod file_spec;
 pub mod filter_algorithm;
 pub mod penalty;
 pub mod progress;
@@ -28,6 +29,7 @@ use filter_algorithm::{
     hash_lookup::HashLookup,
     line_by_line::{LineByLine, MAX_STREAMS},
 };
+use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::Header;
 use region::{
     load::{
@@ -138,22 +140,20 @@ fn get_log_level(verbose_count: u8) -> &'static str {
 // Name-sorted — streaming merge, sequential or parallel
 // ---------------------------------------------------------------------------
 fn run_namesorted(mut args: NamesortedArgs) -> Result<(), Error> {
-    let stats_path     = args.common.output.stats_output.clone();
-    let stream_labels  = args.chimeric.stream_labels.clone();
-    let score_threads  = args.parallel.score_threads;
-    let is_pass2_ref   = &mut args.common.io.is_pass2; // updated after stream open
+    let stats_path = args.common.output.stats_output.clone();
+    let stream_labels = args.chimeric.stream_labels.clone();
+    let score_threads = args.parallel.score_threads;
+    let is_pass2_ref = &mut args.common.io.is_pass2; // updated after stream open
 
     let aln = open_streams_unified(&mut args)?;
-    let n   = aln.len();
+    let n = aln.len();
     let is_pass2 = args.common.io.is_pass2;
 
     if score_threads > 1 {
         let mut lbl = LineByLine::new(&args, aln)?;
-        let result  = lbl.process_parallel(&args);
+        let result = lbl.process_parallel(&args);
         if let Some(p) = stats_path {
-            crate::stats::write_stats(
-                &p, &lbl.routing_counters, n, &stream_labels, "sample",
-            )?;
+            crate::stats::write_stats(&p, &lbl.routing_counters, n, &stream_labels, "sample")?;
         }
         result
     } else {
@@ -166,10 +166,8 @@ fn run_namesorted(mut args: NamesortedArgs) -> Result<(), Error> {
 // ---------------------------------------------------------------------------
 
 fn run_hashlookup(mut args: HashlookupArgs) -> Result<(), Error> {
-    let aln        = open_streams_raw_bam(&mut args)?;
-    let name_to_id = crate::variant::name_to_id::header_name_to_id(
-        aln[0].header()
-    );
+    let aln = open_streams_raw_bam(&mut args.to_runconfig())?;
+    let name_to_id = crate::variant::name_to_id::header_name_to_id(aln[0].header());
     let bed = load_ambiguous_regions(&args.ambiguous_regions, &name_to_id)?;
     let vcf = load_diagnostic_variants(&args.diagnostic_variants, &name_to_id)?;
 
@@ -187,29 +185,46 @@ fn run_collated(mut args: CollatedArgs) -> Result<(), Error> {
     // Reuse open_streams_raw_bam pattern via a temporary RunConfig.
     let mut run_cfg = crate::config::run_config::RunConfig {
         algorithm: crate::config::MatchingAlgorithm::Collated,
-        alignment:  args.common.alignment.clone(),
-        io:         args.common.io.clone(),
-        scoring:    args.common.scoring.clone(),
-        variants:   args.common.variants.clone(),
-        output:     args.common.output.clone(),
+        alignment: args.common.io.alignment.clone(),
+        io: args.common.io.clone(),
+        scoring: args.common.scoring.clone(),
+        variants: args.common.variants.clone(),
+        output: args.common.output.clone(),
         ..Default::default()
     };
-    let mut aln: smallvec::SmallVec<[Box<dyn crate::aln_stream::AlignmentStream<noodles::sam::alignment::record_buf::RecordBuf>>; 2]> = smallvec::smallvec![];
+    let mut aln: smallvec::SmallVec<[Box<dyn crate::aln_stream::AlignmentStream<RecordBuf>>; 2]> =
+        smallvec::smallvec![];
     for i in 0..2 {
-        aln.push(Box::new(crate::aln_stream::AlnStream::<noodles::sam::alignment::record_buf::RecordBuf>::new(&mut run_cfg, i, None)?));
+        aln.push(Box::new(crate::aln_stream::AlnStream::<RecordBuf>::new(
+            &mut run_cfg,
+            i,
+            None,
+        )?));
     }
 
     let bed: [Option<TabixBed>; 2] = [
-        args.ambiguous_regions.first().filter(|s| !s.is_empty())
-            .map(|s| TabixBed::open(Path::new(s))).transpose()?,
-        args.ambiguous_regions.get(1).filter(|s| !s.is_empty())
-            .map(|s| TabixBed::open(Path::new(s))).transpose()?,
+        args.ambiguous_regions
+            .first()
+            .filter(|s| !s.is_empty())
+            .map(|s| TabixBed::open(Path::new(s)))
+            .transpose()?,
+        args.ambiguous_regions
+            .get(1)
+            .filter(|s| !s.is_empty())
+            .map(|s| TabixBed::open(Path::new(s)))
+            .transpose()?,
     ];
     let vcf: [Option<TabixVcf>; 2] = [
-        args.diagnostic_variants.first().filter(|s| !s.is_empty())
-            .map(|s| TabixVcf::open(Path::new(s))).transpose()?,
-        args.diagnostic_variants.get(1).filter(|s| !s.is_empty())
-            .map(|s| TabixVcf::open(Path::new(s))).transpose()?,
+        args.diagnostic_variants
+            .first()
+            .filter(|s| !s.is_empty())
+            .map(|s| TabixVcf::open(Path::new(s)))
+            .transpose()?,
+        args.diagnostic_variants
+            .get(1)
+            .filter(|s| !s.is_empty())
+            .map(|s| TabixVcf::open(Path::new(s)))
+            .transpose()?,
     ];
 
     crate::filter_algorithm::collated::CollatedMatcher::new_from_collated(&args, aln, bed, vcf)?

@@ -2,6 +2,7 @@ pub(crate) mod args;
 pub(crate) mod run_config;
 
 use crate::{
+    config::run_config::RunConfig,
     filter_algorithm::{strain::StrainArgs, viral_integration::ViralIntegrationArgs},
     region::ScoreFn,
 };
@@ -53,7 +54,6 @@ pub enum MatchingAlgorithm {
     /// Equivalent to `namesorted --chimeric-pairs 0:1` with --stream-labels
     /// required and output arity restricted to the streams involved.
     ViralIntegration,
-
 }
 
 // -- Top-level CLI -------------------------------------------------------------
@@ -76,8 +76,8 @@ pub(crate) struct Cli {
 #[derive(Copy, Clone, Debug, ValueEnum, Default)]
 pub(crate) enum NameEncoderKind {
     #[default]
-    Illumina,     // strip machine:run:flowcell prefix
-    Passthrough,  // full name (PacBio, ONT, custom)
+    Illumina, // strip machine:run:flowcell prefix
+    Passthrough, // full name (PacBio, ONT, custom)
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -134,7 +134,7 @@ pub(crate) enum AlgorithmCommand {
     Completion(CompletionArgs),
 }
 
-impl AlgorithmCommand {
+/*impl AlgorithmCommand {
     /// Extract the common args regardless of which subcommand was chosen.
     pub(crate) fn common(&self) -> &CommonArgs {
         match self {
@@ -154,7 +154,7 @@ impl AlgorithmCommand {
             AlgorithmCommand::ViralIntegration(a) => &mut a.common,
         }
     }
-}
+}*/
 
 impl Default for AlgorithmCommand {
     fn default() -> Self {
@@ -241,6 +241,20 @@ pub(crate) struct HashlookupArgs {
     /// Name encoder for key compression.
     #[arg(long, default_value = "illumina", help_heading = "Advanced")]
     pub(crate) name_encoder: NameEncoderKind,
+}
+
+impl HashlookupArgs {
+    pub(crate) fn to_runconfig(&self) -> RunConfig {
+        crate::config::run_config::RunConfig {
+            algorithm: crate::config::MatchingAlgorithm::Hashlookup,
+            alignment: self.common.io.alignment.clone(),
+            io: self.common.io.clone(),
+            scoring: self.common.scoring.clone(),
+            variants: self.common.variants.clone(),
+            output: self.common.output.clone().into(),
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Args, Clone, Debug)]

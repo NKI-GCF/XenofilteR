@@ -1,12 +1,12 @@
-use clap::Args;
 use crate::{
-    config::args::{IoArgs, ScoringArgs, VariantArgs, OutputArgsPair},
+    config::args::{IoArgs, OutputArgsPair, ScoringArgs, VariantArgs},
     config::run_config::RunConfig,
     config::MatchingAlgorithm,
     Error,
 };
-use std::path::PathBuf;
+use clap::Args;
 use smallvec::{smallvec, SmallVec};
+use std::path::PathBuf;
 
 /// Within-species strain disambiguation: single alignment, two variant
 /// profiles (one per strain). No chimeric pairs, no multi-stream regions,
@@ -20,7 +20,7 @@ pub(crate) struct StrainArgs {
     /// streams, one scored against each strain's variant profile).
     #[arg(required = true, value_hint = clap::ValueHint::FilePath,
           help_heading = "Input")]
-    pub(crate) alignment: SmallVec<[PathBuf; 2]>,
+    pub(crate) alignment: Vec<PathBuf>,
 
     #[command(flatten)]
     pub(crate) io: IoArgs,
@@ -43,12 +43,13 @@ pub(crate) struct StrainArgs {
 
 impl StrainArgs {
     pub(crate) fn into_run_config(self) -> Result<RunConfig, Error> {
-        if !self.variants.has_index(0)? || !self.variants.has_index(1)? {
+        if !self.variants.has_index(0) || !self.variants.has_index(1) {
             return Err(Error::StrainMissingVariantProfile);
         }
+        let alignment = self.alignment[0];
         Ok(RunConfig {
             algorithm: MatchingAlgorithm::Namesorted,
-            alignment: smallvec![self.alignment.clone().into(), self.alignment.into()], // duplicated stream
+            alignment: vec![alignment.clone(), alignment], // duplicated stream
             single_alignment_mode: true,
             io: self.io,
             scoring: self.scoring,

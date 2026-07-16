@@ -203,8 +203,21 @@ impl<R: SimpleRec> LineByLine<R> {
         let chimeric_pairs = config.chimeric.parse_pairs(aln_len)?;
 
         let mut positive_regions: [Option<Arc<ScoredRegions>>; MAX_STREAMS] = Default::default();
-        for (i, path) in config.common.variants.positive_regions.iter().enumerate() {
-            if !path.is_empty() && i < MAX_STREAMS {
+        for (i, path) in config
+            .common
+            .variants
+            .positive_regions
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                if let Some(idx) = f.idx {
+                    (idx, &f.path)
+                } else {
+                    (i, &f.path)
+                }
+            })
+        {
+            if i < MAX_STREAMS {
                 positive_regions[i] = Some(Arc::new(ScoredRegions::from_bed(
                     Path::new(path),
                     &header_name_to_id(aln[i].header()),

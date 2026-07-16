@@ -1,10 +1,11 @@
-use clap::Args;
 use crate::{
-    config::args::{IoArgs, ScoringArgs, VariantArgs, OutputArgsMulti},
+    config::args::{IoArgs, OutputArgsMulti, ScoringArgs, VariantArgs},
     config::run_config::RunConfig,
     config::MatchingAlgorithm,
     Error,
 };
+use clap::Args;
+use std::path::PathBuf;
 
 /// Preconfigured chimeric-pair detection for viral integration studies.
 /// Requires exactly 2 or 3 alignment streams: host, virus, [optional xenograft host].
@@ -14,7 +15,7 @@ pub(crate) struct ViralIntegrationArgs {
     /// xenograft-host (3 streams, e.g. HPV+human tumour grafted in mouse).
     #[arg(required = true, num_args = 2..=3, value_hint = clap::ValueHint::FilePath,
           help_heading = "Input")]
-    pub(crate) alignment: Vec<String>,
+    pub(crate) alignment: Vec<PathBuf>,
 
     /// Labels for host/virus[/xenograft] streams. REQUIRED — used in XC:Z tags.
     #[arg(long, required = true, num_args = 2..=3, help_heading = "Chimeric")]
@@ -44,9 +45,12 @@ impl ViralIntegrationArgs {
         Ok(RunConfig {
             algorithm: MatchingAlgorithm::Namesorted,
             alignment: self.alignment,
-            io: self.io, scoring: self.scoring, variants: self.variants,
+            io: self.io,
+            scoring: self.scoring,
+            variants: self.variants,
             output: self.output,
-            threads: self.threads, score_threads: self.score_threads,
+            threads: self.threads,
+            score_threads: self.score_threads,
             // Preset: streams 0 and 1 are always the host↔virus chimeric pair.
             chimeric_pairs: vec!["0:1".to_string()],
             stream_labels: self.stream_labels,

@@ -91,8 +91,8 @@ impl<R: SimpleRec> CollatedMatcher<R> {
     // N-STREAM: scales to N waiting maps; memory is O(name-order skew × streams).
     pub(crate) fn process(&mut self, config: &CommonArgs) -> Result<(), Error> {
         loop {
-            let fa = self.a.next_fragment()?;
-            let fb = self.b.next_fragment()?;
+            let fa = self.a.next_fragment(config.io.strip_read_suffix)?;
+            let fb = self.b.next_fragment(config.io.strip_read_suffix)?;
             match (fa, fb) {
                 (None, None) => break,
                 (Some(fa), Some(fb)) => {

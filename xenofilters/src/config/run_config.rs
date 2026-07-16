@@ -2,6 +2,7 @@ use crate::config::args::{
     IoArgs, OutputArgsMulti, RegionArgsMemory, RegionArgsTabix, ScoringArgs, VariantArgs,
 };
 use crate::config::{MatchingAlgorithm, NameEncoderKind};
+use crate::file_spec::path_for_stream;
 use crate::{filter_algorithm::line_by_line::MAX_STREAMS, Error};
 use std::path::PathBuf;
 
@@ -80,7 +81,12 @@ impl RunConfig {
         }
 
         // CRAM sanity: any .cram input requires --reference.
-        if self.alignment.iter().any(|p| p.ends_with(".cram")) && self.io.reference.is_none() {
+        if self
+            .alignment
+            .iter()
+            .enumerate()
+            .any(|(i, p)| p.ends_with(".cram") && path_for_stream(&self.io.reference, i).is_none())
+        {
             return Err(Error::CramRequiresReference);
         }
 

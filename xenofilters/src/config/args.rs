@@ -1,19 +1,26 @@
 // src/config/args.rs
 
+use crate::bam::AlnFormat;
+use crate::config::StripReadSuffix;
+use crate::file_spec::{path_for_stream, FileSpec};
+use crate::filter_algorithm::line_by_line::MAX_STREAMS;
 use crate::penalty::ErrorModel;
 use crate::region::ScoreFn;
+use crate::Error;
 use clap::Args;
 use std::path::PathBuf;
-use crate::Error;
-use crate::config::StripReadSuffix;
-use crate::bam::AlnFormat;
 
 /// Shared by every subcommand. No arity-specific fields here.
 #[derive(Args, Debug, Clone, Default)]
 pub(crate) struct IoArgs {
+    /// Input alignments to compare. If the same readnames are consecutive and in the same order for
+    /// all inputs, a low memory non-hashing strategy is adopted.
+    #[arg(required = true, num_args = 1..MAX_STREAMS, help_heading = "Input")]
+    pub alignment: Vec<PathBuf>,
+
     /// Reference FASTA for CRAM decoding.
-    #[arg(long, help_heading = "Input")]
-    pub(crate) reference: Option<PathBuf>,
+    #[arg(long, help_heading = "Input", value_name = "[IDX:]FILE")]
+    pub(crate) reference: Vec<FileSpec>,
 
     /// Strip /1 /2 read-name suffix. auto | true | false | variable
     #[arg(short = 'R', long, default_value = "auto", help_heading = "Input")]
@@ -105,13 +112,13 @@ pub(crate) struct ScoringArgs {
 /// themselves are identical everywhere.
 #[derive(Args, Debug, Clone, Default)]
 pub(crate) struct VariantArgs {
-    #[arg(short = 's', long, num_args = 0..=32, value_name = "[IDX:]FILE",
+    #[arg(short = 's', long, num_args = 0..=MAX_STREAMS, value_name = "[IDX:]FILE",
           help_heading = "Variants")]
-    pub(crate) sample_variants: Vec<PathBuf>,
+    pub(crate) sample_variants: Vec<FileSpec>,
 
-    #[arg(short = 'p', long, num_args = 0..=32, value_name = "[IDX:]FILE",
+    #[arg(short = 'p', long, num_args = 0..=MAX_STREAMS, value_name = "[IDX:]FILE",
           help_heading = "Variants")]
-    pub(crate) population_variants: Vec<PathBuf>,
+    pub(crate) population_variants: Vec<FileSpec>,
 
     #[arg(long, default_value_t = false, requires = "reference")]
     pub(crate) expand_indels: bool,
@@ -119,8 +126,8 @@ pub(crate) struct VariantArgs {
     #[arg(long, default_value_t = 50)]
     pub(crate) indel_expand_padding: usize,
 
-    #[arg(long, num_args = 0..=32, value_name = "[IDX:]FILE")]
-    pub(crate) positive_regions: Vec<PathBuf>,
+    #[arg(long, num_args = 0..=MAX_STREAMS, value_name = "[IDX:]FILE")]
+    pub(crate) positive_regions: Vec<FileSpec>,
 }
 
 /// Parallelism — only meaningful for namesorted (hashlookup/collated force 1).
@@ -155,68 +162,68 @@ pub(crate) struct ChimericArgs {
     pub(crate) chimeric_pairs: Vec<String>,
 
     /// Labels per stream, used in XC:Z tags and stats JSON.
-    #[arg(long, num_args = 0..=32, help_heading = "Chimeric")]
+    #[arg(long, num_args = 0..=MAX_STREAMS, help_heading = "Chimeric")]
     pub(crate) stream_labels: Vec<String>,
 }
 
 /// In-memory region flags (hashlookup).
 #[derive(Args, Debug, Clone, Default)]
 pub(crate) struct RegionArgsMemory {
-    #[arg(long, num_args = 0..=2, value_name = "FILE", help_heading = "Regions")]
-    pub(crate) ambiguous_regions: Vec<PathBuf>,
+    // only for hashlookup or collated, so 2 streams max.
+    #[arg(long, num_args = 0..=2, value_name = "[IDX:]FILE", help_heading = "Regions")]
+    pub(crate) ambiguous_regions: Vec<FileSpec>,
 
-    #[arg(long, num_args = 0..=2, value_name = "FILE", help_heading = "Regions")]
-    pub(crate) diagnostic_variants: Vec<PathBuf>,
+    #[arg(long, num_args = 0..=MAX_STREAMS, value_name = "[IDX:]FILE", help_heading = "Regions")]
+    pub(crate) diagnostic_variants: Vec<FileSpec>,
 
-    #[arg(long, num_args = 0..=2, value_name = "FILE", help_heading = "Regions")]
-    pub(crate) positive_regions: Vec<PathBuf>,
+    #[arg(long, num_args = 0..=MAX_STREAMS, value_name = "[IDX:]FILE", help_heading = "Regions")]
+    pub(crate) positive_regions: Vec<FileSpec>,
 
     #[arg(long, default_value = "linear:1.0", help_heading = "Regions")]
     pub(crate) region_score_fn: ScoreFn,
 }
 
+// FIXME:
 /// Tabix-indexed region flags (collated). Same flag *names*, different
 /// runtime loader (TabixBed vs AmbiguousRegions::from_bed). Kept as a
 /// separate struct only because the doc strings differ (tabix requirement).
 #[derive(Args, Debug, Clone, Default)]
 pub(crate) struct RegionArgsTabix {
-    #[arg(long, num_args = 0..=2, value_name = "FILE.bed.gz",
+    #[arg(long, num_args = 0..=2, value_name = "[IDX:]FILE.bed.gz",
           help_heading = "Regions")]
-    pub(crate) ambiguous_regions: Vec<PathBuf>,
+    pub(crate) ambiguous_regions: Vec<FileSpec>,
 
-    #[arg(long, num_args = 0..=2, value_name = "FILE.vcf.gz",
+    #[arg(long, num_args = 0..=MAX_STREAMS, value_name = "[IDX:]FILE.vcf.gz",
           help_heading = "Regions")]
-    pub(crate) diagnostic_variants: Vec<PathBuf>,
+    pub(crate) diagnostic_variants: Vec<FileSpec>,
 
-    #[arg(long, num_args = 0..=2, value_name = "FILE.bed.gz",
+    #[arg(long, num_args = 0..=MAX_STREAMS, value_name = "[IDX:]FILE.bed.gz",
           help_heading = "Regions")]
-    pub(crate) positive_regions: Vec<PathBuf>,
+    pub(crate) positive_regions: Vec<FileSpec>,
 
     #[arg(long, default_value = "linear:1.0", help_heading = "Regions")]
     pub(crate) region_score_fn: ScoreFn,
 }
 
-/// Output paths: arity is 1..=32 for general multi-stream use.
+/// Output paths: arity is 1..=MAX_STREAMS for general multi-stream use.
 /// Kept separate from IoArgs because strain/viral variants want stricter caps.
 #[derive(Args, Debug, Clone, Default)]
 pub(crate) struct OutputArgsMulti {
-    #[arg(short = 'o', long, num_args = 1..=32, help_heading = "Output")]
+    #[arg(short = 'o', long, num_args = 1..=MAX_STREAMS, help_heading = "Output")]
     pub(crate) output: Vec<PathBuf>,
 
-    #[arg(short = 'a', long, num_args = 0..=32, help_heading = "Output")]
+    #[arg(short = 'a', long, num_args = 0..=MAX_STREAMS, help_heading = "Output")]
     pub(crate) ambiguous_output: Vec<PathBuf>,
 
-    #[arg(long, num_args = 0..)]
+    #[arg(long, num_args = 0..=MAX_STREAMS)]
     pub(crate) discarded_output: Vec<PathBuf>,
-    #[arg(long)]
-    pub(crate) merged_output: Option<PathBuf>,
     #[arg(long)]
     pub(crate) stats_output: Option<PathBuf>,
 }
 
 /// Output paths for exactly-2-logical-stream subcommands (strain, hashlookup,
 /// collated, viral-integration). Same flags, tighter arity — better --help
-/// and earlier validation than a shared 1..=32 bound.
+/// and earlier validation than a shared 1..=MAX_STREAMS bound.
 #[derive(Args, Debug, Clone, Default)]
 pub(crate) struct OutputArgsPair {
     #[arg(short = 'o', long, num_args = 1..=2, help_heading = "Output")]
@@ -230,10 +237,10 @@ pub(crate) struct OutputArgsPair {
 
 impl IoArgs {
     pub(crate) fn validate(&self) -> Result<(), Error> {
-        if let Some(ref p) = self.reference {
-            if !p.exists() {
+        for path in &self.alignment {
+            if !path.exists() {
                 return Err(Error::ReferenceNotFound {
-                    path: p.display().to_string(),
+                    path: path.display().to_string(),
                 });
             }
         }
@@ -241,13 +248,9 @@ impl IoArgs {
     }
 }
 
-
 impl ScoringArgs {
     pub(crate) fn validate(&mut self) -> Result<(), Error> {
-        if self.mismatch_penalty <= 0.0
-            || self.gap_open <= 0.0
-            || self.gap_extend < 0.0
-        {
+        if self.mismatch_penalty <= 0.0 || self.gap_open <= 0.0 || self.gap_extend < 0.0 {
             return Err(Error::InvalidPenalties);
         }
         if !(0.0..=1.0).contains(&self.warn_ambig_fraction) {
@@ -270,32 +273,8 @@ impl ScoringArgs {
 }
 
 impl VariantArgs {
-    pub(crate) fn parse_indexed(
-        specs: &[String],
-    ) -> Result<Vec<(usize, std::path::PathBuf)>, Error> {
-        specs.iter().enumerate().map(|(i, s)| {
-            match s.split_once(':') {
-                Some((idx_str, path))
-                    if idx_str.chars().all(|c| c.is_ascii_digit()) =>
-                {
-                    let idx = idx_str
-                        .parse::<usize>()
-                        .map_err(|_| Error::InvalidVariantStreamIndex {
-                            spec: s.clone(),
-                        })?;
-                    Ok((idx, std::path::PathBuf::from(path)))
-                }
-                _ => Ok((i, std::path::PathBuf::from(s))),
-            }
-        }).collect()
-    }
-
-    pub(crate) fn has_index(&self, idx: usize) -> Result<bool, Error> {
-        let s = Self::parse_indexed(&self.sample_variants)?
-            .iter().any(|(i, _)| *i == idx);
-        let p = Self::parse_indexed(&self.population_variants)?
-            .iter().any(|(i, _)| *i == idx);
-        Ok(s || p)
+    pub(crate) fn has_index(&self, idx: usize) -> bool {
+        path_for_stream(&self.sample_variants, idx).is_some()
     }
 }
 
@@ -307,9 +286,7 @@ impl OutputArgsMulti {
                 max: n_streams,
             });
         }
-        if !self.ambiguous_output.is_empty()
-            && self.ambiguous_output.len() > n_streams
-        {
+        if !self.ambiguous_output.is_empty() && self.ambiguous_output.len() > n_streams {
             return Err(Error::TooManyAmbiguousPaths {
                 given: self.ambiguous_output.len(),
                 streams: n_streams,
@@ -332,10 +309,7 @@ impl OutputArgsPair {
 }
 
 impl ChimericArgs {
-    pub(crate) fn parse_pairs(
-        &self,
-        n_streams: usize,
-    ) -> Result<Vec<[usize; 2]>, Error> {
+    pub(crate) fn parse_pairs(&self, n_streams: usize) -> Result<Vec<[usize; 2]>, Error> {
         parse_chimeric_pairs(&self.chimeric_pairs, n_streams)
     }
 }
@@ -355,10 +329,9 @@ pub(crate) fn parse_chimeric_pairs(
 ) -> Result<Vec<[usize; 2]>, Error> {
     let mut pairs = Vec::with_capacity(specs.len());
     for raw in specs {
-        let (a_str, b_str) =
-            raw.split_once(':').ok_or_else(|| Error::InvalidChimericPairFormat {
-                raw: raw.clone(),
-            })?;
+        let (a_str, b_str) = raw
+            .split_once(':')
+            .ok_or_else(|| Error::InvalidChimericPairFormat { raw: raw.clone() })?;
         let a = a_str
             .trim()
             .parse::<usize>()
@@ -385,8 +358,14 @@ pub(crate) fn parse_chimeric_pairs(
 
 pub(crate) fn resolve_threshold(phred: u32, is_pass2: bool) -> f64 {
     let p = match phred {
-        u32::MAX => if is_pass2 { 0 } else { 10 },
-        p        => p,
+        u32::MAX => {
+            if is_pass2 {
+                0
+            } else {
+                10
+            }
+        }
+        p => p,
     };
     (p as f64) * std::f64::consts::LN_10 / 10.0
 }

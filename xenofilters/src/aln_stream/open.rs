@@ -1,11 +1,12 @@
 // src/aln_stream/open.rs
-use smallvec::{smallvec, SmallVec};
-use noodles::sam::alignment::record_buf::RecordBuf;
+use crate::file_spec::path_for_stream;
 use crate::{
     aln_stream::{AlignmentStream, AlnStream},
     config::run_config::RunConfig,
     Error,
 };
+use noodles::sam::alignment::record_buf::RecordBuf;
+use smallvec::{smallvec, SmallVec};
 
 /// Open all streams for namesorted/collated (unified reader path).
 /// `bgzf_threads` applies to BAM decompression; ignored for SAM/CRAM.
@@ -17,9 +18,14 @@ pub(crate) fn open_streams_unified(
     let n = run.alignment.len();
     for i in 0..n {
         let path = &run.alignment[i];
-        tracing::debug!(stream = i, path, "Opening stream");
+        let path_str = path.to_string_lossy().to_string();
+        tracing::debug!(stream = i, path_str, "Opening stream");
         let stream = AlnStream::<RecordBuf>::new_unified(
-            path, run.io.reference.as_deref(), bgzf_threads, i, run,
+            path,
+            path_for_stream(&run.io.reference, i),
+            bgzf_threads,
+            i,
+            run,
         )?;
         aln.push(Box::new(stream));
         if i > 0 {
