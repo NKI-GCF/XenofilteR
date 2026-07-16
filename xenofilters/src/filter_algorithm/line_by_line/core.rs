@@ -140,11 +140,11 @@ impl<R: SimpleRec> LineByLine<R> {
         config: &NamesortedArgs,
         mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
     ) -> Result<Self, Error> {
-        let is_unmapped_skipped = match config.discard_unmapped {
+        let is_unmapped_skipped = match config.common.io.discard_unmapped {
             true => unmapped_and_mate_unmapped,
             false => always_false,
         };
-        let is_secondary_skipped = match config.skip_secondary {
+        let is_secondary_skipped = match config.common.io.skip_secondary {
             true => is_secondary,
             false => always_false,
         };
@@ -200,9 +200,10 @@ impl<R: SimpleRec> LineByLine<R> {
             true => None,
             false => Some(ProgressReporter::new()),
         };
+        let chimeric_pairs = config.chimeric.parse_pairs(aln_len)?;
 
         let mut positive_regions: [Option<Arc<ScoredRegions>>; MAX_STREAMS] = Default::default();
-        for (i, path) in config.positive_regions.iter().enumerate() {
+        for (i, path) in config.common.variants.positive_regions.iter().enumerate() {
             if !path.is_empty() && i < MAX_STREAMS {
                 positive_regions[i] = Some(Arc::new(ScoredRegions::from_bed(
                     Path::new(path),
@@ -217,16 +218,16 @@ impl<R: SimpleRec> LineByLine<R> {
             is_unmapped_skipped,
             is_new_qname,
             add_decision_tag: config.common.io.add_decision_tag,
-            penalties: config.to_penalties(),
+            penalties: config.common.scoring.to_penalty(),
             ambiguous_log_threshold,
             scratch: Scratch::new(),
-            chimeric_pairs: config.parsed_chimeric_pairs.clone(),
+            chimeric_pairs,
             stream_labels: config.chimeric.stream_labels.clone(),
             score_threads,
             progress,
             bisulfite: config.common.scoring.bisulfite,
             positive_regions,
-            region_score_fn: config.region_score_fn,
+            region_score_fn: config.common.scoring.region_score_fn,
         })
     }
 }

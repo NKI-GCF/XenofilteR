@@ -25,6 +25,8 @@ pub(crate) struct RunConfig {
     pub(crate) region_memory: RegionArgsMemory,
     pub(crate) region_tabix: RegionArgsTabix,
     pub(crate) name_encoder: NameEncoderKind,
+    pub(crate) is_pass2: bool,
+    pub(crate) is_paired: Option<bool>,
 }
 
 impl RunConfig {
@@ -68,6 +70,12 @@ impl RunConfig {
                     return Err(Error::StrainStreamCount { got: n });
                 }
                 self.output.validate(1)?;
+            }
+            MatchingAlgorithm::ViralIntegration => {
+                if n < 2 {
+                    return Err(Error::ViralIntegrationStreamCount { got: n });
+                }
+                self.output.validate(n)?;
             }
         }
 

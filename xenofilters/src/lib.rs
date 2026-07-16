@@ -138,28 +138,27 @@ fn get_log_level(verbose_count: u8) -> &'static str {
 // Name-sorted — streaming merge, sequential or parallel
 // ---------------------------------------------------------------------------
 fn run_namesorted(mut args: NamesortedArgs) -> Result<(), Error> {
-    let n = args.common.alignment.len();
-    if n == 0 {
-        return Err(Error::InsufficientAlignmentStreams { count: n });
-    }
-    if n > MAX_STREAMS {
-        return Err(Error::MaxStreamsExceeded {
-            count: n,
-            max: MAX_STREAMS,
-        });
-    }
+    let stats_path     = args.common.output.stats_output.clone();
+    let stream_labels  = args.chimeric.stream_labels.clone();
+    let score_threads  = args.parallel.score_threads;
+    let is_pass2_ref   = &mut args.common.io.is_pass2; // updated after stream open
 
-    // Parse chimeric pairs
-    args.common.parsed_chimeric_pairs = parse_chimeric_pairs(&args.chimeric.chimeric_pairs, n)?;
+    let aln = open_streams_unified(&mut args)?;
+    let n   = aln.len();
+    let is_pass2 = args.common.io.is_pass2;
 
-    let aln = open_streams_unified(&mut args.common, args.threads)?;
-    let counters = if args.parallel.score_threads > 1 {
-        LineByLine::new_from_namesorted(&args, aln)?.process_parallel()?
+    if score_threads > 1 {
+        let mut lbl = LineByLine::new(&args, aln)?;
+        let result  = lbl.process_parallel(&args);
+        if let Some(p) = stats_path {
+            crate::stats::write_stats(
+                &p, &lbl.routing_counters, n, &stream_labels, "sample",
+            )?;
+        }
+        result
     } else {
-        LineByLine::new_from_namesorted(&args, aln)?.process_sequential()?
-    };
-    run_report.print_routing_counters("namesorted", &args.common);
-    write_stats_if_configured(&counters, &args.common, n, "namesorted")
+        LineByLine::new(&args, aln)?.process_sequential(&args)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -167,23 +166,14 @@ fn run_namesorted(mut args: NamesortedArgs) -> Result<(), Error> {
 // ---------------------------------------------------------------------------
 
 fn run_hashlookup(mut args: HashlookupArgs) -> Result<(), Error> {
-    let n = args.common.alignment.len();
-    if n < 2 {
-        return Err(Error::InsufficientAlignmentStreams { count: n });
-    }
+    let aln        = open_streams_raw_bam(&mut args)?;
+    let name_to_id = crate::variant::name_to_id::header_name_to_id(
+        aln[0].header()
+    );
+    let bed = load_ambiguous_regions(&args.ambiguous_regions, &name_to_id)?;
+    let vcf = load_diagnostic_variants(&args.diagnostic_variants, &name_to_id)?;
 
-    let header_name_to_id = open_first_header_name_to_id(&args.common)?;
-    let bed = load_ambiguous_regions_memory(&args.ambiguous_regions, &header_name_to_id)?;
-    let vcf = load_diagnostic_variants_memory(&args.diagnostic_variants, &header_name_to_id)?;
-    let pos = load_positive_regions_memory(
-        &args.positive_regions,
-        &header_name_to_id,
-        args.region_score_fn,
-    )?;
-    let aln = open_streams_raw_bam(&mut args.common)?;
-    let counters = HashLookup::new_from_hashlookup(&args, aln, bed, vcf, pos)?.process()?;
-    print_routing_counters(&counters, "hashlookup", &args.common);
-    write_stats_if_configured(&counters, &args.common, n, "hashlookup")
+    HashLookup::new_from_hashlookup(&args, aln, bed, vcf, [None, None])?.process(&args)
 }
 
 // ---------------------------------------------------------------------------
@@ -191,18 +181,39 @@ fn run_hashlookup(mut args: HashlookupArgs) -> Result<(), Error> {
 // ---------------------------------------------------------------------------
 
 fn run_collated(mut args: CollatedArgs) -> Result<(), Error> {
-    let n = args.common.alignment.len();
-    if n < 2 {
-        return Err(Error::InsufficientAlignmentStreams { count: n });
+    use crate::region::tabix_query::{TabixBed, TabixVcf};
+    use std::path::Path;
+
+    // Reuse open_streams_raw_bam pattern via a temporary RunConfig.
+    let mut run_cfg = crate::config::run_config::RunConfig {
+        algorithm: crate::config::MatchingAlgorithm::Collated,
+        alignment:  args.common.alignment.clone(),
+        io:         args.common.io.clone(),
+        scoring:    args.common.scoring.clone(),
+        variants:   args.common.variants.clone(),
+        output:     args.common.output.clone(),
+        ..Default::default()
+    };
+    let mut aln: smallvec::SmallVec<[Box<dyn crate::aln_stream::AlignmentStream<noodles::sam::alignment::record_buf::RecordBuf>>; 2]> = smallvec::smallvec![];
+    for i in 0..2 {
+        aln.push(Box::new(crate::aln_stream::AlnStream::<noodles::sam::alignment::record_buf::RecordBuf>::new(&mut run_cfg, i, None)?));
     }
 
-    let bed = open_tabix_bed(&args.ambiguous_regions)?;
-    let vcf = open_tabix_vcf(&args.diagnostic_variants)?;
-    let pos = open_tabix_scored(&args.positive_regions, args.region_score_fn)?;
-    let aln = open_streams_unified(&mut args.common, 1)?;
-    let counters = CollatedMatcher::new_from_collated(&args, aln, bed, vcf, pos)?.process()?;
-    print_routing_counters(&counters, "collated", &args.common);
-    write_stats_if_configured(&counters, &args.common, n, "collated")
+    let bed: [Option<TabixBed>; 2] = [
+        args.ambiguous_regions.first().filter(|s| !s.is_empty())
+            .map(|s| TabixBed::open(Path::new(s))).transpose()?,
+        args.ambiguous_regions.get(1).filter(|s| !s.is_empty())
+            .map(|s| TabixBed::open(Path::new(s))).transpose()?,
+    ];
+    let vcf: [Option<TabixVcf>; 2] = [
+        args.diagnostic_variants.first().filter(|s| !s.is_empty())
+            .map(|s| TabixVcf::open(Path::new(s))).transpose()?,
+        args.diagnostic_variants.get(1).filter(|s| !s.is_empty())
+            .map(|s| TabixVcf::open(Path::new(s))).transpose()?,
+    ];
+
+    crate::filter_algorithm::collated::CollatedMatcher::new_from_collated(&args, aln, bed, vcf)?
+        .process(&args)
 }
 
 // ---------------------------------------------------------------------------

@@ -219,6 +219,12 @@ pub enum Error {
     #[error("collated requires exactly 2 streams, got {got}")]
     CollatedStreamCount { got: usize },
 
+    #[error("strain requires exactly 1 stream, got {got}")]
+    StrainStreamCount { got: usize },
+
+    #[error("strain requires exactly 1 stream, got {got}")]
+    ViralIntegrationStreamCount { got: usize },
+
     #[error("{algorithm} does not support --score-threads > 1")]
     AlgorithmNotParallel { algorithm: &'static str },
 

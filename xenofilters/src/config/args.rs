@@ -6,6 +6,7 @@ use clap::Args;
 use std::path::PathBuf;
 use crate::Error;
 use crate::config::StripReadSuffix;
+use crate::bam::AlnFormat;
 
 /// Shared by every subcommand. No arity-specific fields here.
 #[derive(Args, Debug, Clone, Default)]
@@ -26,6 +27,26 @@ pub(crate) struct IoArgs {
     #[arg(short = 'P', long, default_value = "false", help_heading = "Output")]
     pub(crate) no_program_line: bool,
 
+    /// Keep discarded reads alongside ambiguous.
+    #[arg(long, default_value_t = false, hide = true)]
+    pub(crate) write_discarded: bool,
+
+    /// Discard unmapped reads (default true). Hidden because it's a
+    #[arg(short = 'U', long, default_value_t = true, hide = true)]
+    pub(crate) discard_unmapped: bool,
+
+    /// Skip secondary alignments (default false).
+    #[arg(short, long, default_value_t = false, hide = true)]
+    pub(crate) skip_secondary: bool,
+
+    /// Input format: sam | bam | cram. Default: bam.
+    #[arg(long, default_value = "bam")]
+    pub(crate) input_format: AlnFormat,
+
+    /// Output format: sam | bam | cram. Default: bam.
+    #[arg(short = 'O', long, default_value = "bam")]
+    pub(crate) stdout_format: AlnFormat,
+
     /// Write JSON summary statistics (MultiQC-compatible).
     #[arg(long, env = "XENOFILTERS_STATS_OUTPUT", help_heading = "Output")]
     pub(crate) stats_output: Option<PathBuf>,
@@ -37,6 +58,12 @@ pub(crate) struct IoArgs {
     /// Verbosity: -v = INFO, -vv = DEBUG.
     #[arg(short, long, action = clap::ArgAction::Count, help_heading = "Misc")]
     pub(crate) verbose: u8,
+
+    // Mutable state set during stream init — not CLI args.
+    #[arg(skip)]
+    pub(crate) is_pass2: bool,
+    #[arg(skip)]
+    pub(crate) is_paired: Option<bool>,
 }
 
 /// Scoring flags, shared everywhere.
@@ -54,6 +81,12 @@ pub(crate) struct ScoringArgs {
     #[arg(short = 'e', long, default_value = "1.0", help_heading = "Scoring")]
     pub(crate) gap_extend: f64,
 
+    #[arg(short = 'c', long, default_value_t = 5.0)]
+    pub(crate) clipping_penalty: f64,
+
+    #[arg(short = 'J', long, default_value_t = 20)]
+    pub(crate) chimeric_junction_bases: u32,
+
     #[arg(long, default_value_t = u32::MAX, value_name = "PHRED|auto",
           help_heading = "Scoring")]
     pub(crate) ambiguous_threshold: u32,
@@ -63,6 +96,9 @@ pub(crate) struct ScoringArgs {
 
     #[arg(long, default_value = "false", help_heading = "Scoring")]
     pub(crate) bisulfite: bool,
+
+    #[arg(long, default_value = "linear:1.0")]
+    pub(crate) region_score_fn: ScoreFn,
 }
 
 /// Variant-rescue flags. Arity varies (see AlignmentArgs*); the flags
@@ -71,11 +107,20 @@ pub(crate) struct ScoringArgs {
 pub(crate) struct VariantArgs {
     #[arg(short = 's', long, num_args = 0..=32, value_name = "[IDX:]FILE",
           help_heading = "Variants")]
-    pub(crate) sample_variants: Vec<String>,
+    pub(crate) sample_variants: Vec<PathBuf>,
 
     #[arg(short = 'p', long, num_args = 0..=32, value_name = "[IDX:]FILE",
           help_heading = "Variants")]
-    pub(crate) population_variants: Vec<String>,
+    pub(crate) population_variants: Vec<PathBuf>,
+
+    #[arg(long, default_value_t = false, requires = "reference")]
+    pub(crate) expand_indels: bool,
+
+    #[arg(long, default_value_t = 50)]
+    pub(crate) indel_expand_padding: usize,
+
+    #[arg(long, num_args = 0..=32, value_name = "[IDX:]FILE")]
+    pub(crate) positive_regions: Vec<PathBuf>,
 }
 
 /// Parallelism — only meaningful for namesorted (hashlookup/collated force 1).
@@ -118,13 +163,13 @@ pub(crate) struct ChimericArgs {
 #[derive(Args, Debug, Clone, Default)]
 pub(crate) struct RegionArgsMemory {
     #[arg(long, num_args = 0..=2, value_name = "FILE", help_heading = "Regions")]
-    pub(crate) ambiguous_regions: Vec<String>,
+    pub(crate) ambiguous_regions: Vec<PathBuf>,
 
     #[arg(long, num_args = 0..=2, value_name = "FILE", help_heading = "Regions")]
-    pub(crate) diagnostic_variants: Vec<String>,
+    pub(crate) diagnostic_variants: Vec<PathBuf>,
 
     #[arg(long, num_args = 0..=2, value_name = "FILE", help_heading = "Regions")]
-    pub(crate) positive_regions: Vec<String>,
+    pub(crate) positive_regions: Vec<PathBuf>,
 
     #[arg(long, default_value = "linear:1.0", help_heading = "Regions")]
     pub(crate) region_score_fn: ScoreFn,
@@ -137,15 +182,15 @@ pub(crate) struct RegionArgsMemory {
 pub(crate) struct RegionArgsTabix {
     #[arg(long, num_args = 0..=2, value_name = "FILE.bed.gz",
           help_heading = "Regions")]
-    pub(crate) ambiguous_regions: Vec<String>,
+    pub(crate) ambiguous_regions: Vec<PathBuf>,
 
     #[arg(long, num_args = 0..=2, value_name = "FILE.vcf.gz",
           help_heading = "Regions")]
-    pub(crate) diagnostic_variants: Vec<String>,
+    pub(crate) diagnostic_variants: Vec<PathBuf>,
 
     #[arg(long, num_args = 0..=2, value_name = "FILE.bed.gz",
           help_heading = "Regions")]
-    pub(crate) positive_regions: Vec<String>,
+    pub(crate) positive_regions: Vec<PathBuf>,
 
     #[arg(long, default_value = "linear:1.0", help_heading = "Regions")]
     pub(crate) region_score_fn: ScoreFn,
@@ -156,10 +201,17 @@ pub(crate) struct RegionArgsTabix {
 #[derive(Args, Debug, Clone, Default)]
 pub(crate) struct OutputArgsMulti {
     #[arg(short = 'o', long, num_args = 1..=32, help_heading = "Output")]
-    pub(crate) output: Vec<String>,
+    pub(crate) output: Vec<PathBuf>,
 
     #[arg(short = 'a', long, num_args = 0..=32, help_heading = "Output")]
-    pub(crate) ambiguous_output: Vec<String>,
+    pub(crate) ambiguous_output: Vec<PathBuf>,
+
+    #[arg(long, num_args = 0..)]
+    pub(crate) discarded_output: Vec<PathBuf>,
+    #[arg(long)]
+    pub(crate) merged_output: Option<PathBuf>,
+    #[arg(long)]
+    pub(crate) stats_output: Option<PathBuf>,
 }
 
 /// Output paths for exactly-2-logical-stream subcommands (strain, hashlookup,
@@ -168,10 +220,10 @@ pub(crate) struct OutputArgsMulti {
 #[derive(Args, Debug, Clone, Default)]
 pub(crate) struct OutputArgsPair {
     #[arg(short = 'o', long, num_args = 1..=2, help_heading = "Output")]
-    pub(crate) output: Vec<String>,
+    pub(crate) output: Vec<PathBuf>,
 
     #[arg(short = 'a', long, num_args = 0..=2, help_heading = "Output")]
-    pub(crate) ambiguous_output: Vec<String>,
+    pub(crate) ambiguous_output: Vec<PathBuf>,
 }
 
 // src/config/args.rs

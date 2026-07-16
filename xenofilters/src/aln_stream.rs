@@ -5,7 +5,7 @@ use crate::bam::{
     expand_header, out_from_file, path_unicode_ok, rewrite_rg, BamOutput, SUFFIX_AMBIGUOUS,
     SUFFIX_FILTERED,
 };
-use crate::config::{Config, StripReadSuffix, MatchingAlgorithm};
+use crate::config::{StripReadSuffix, MatchingAlgorithm};
 use crate::region::{PositiveRegions, ScoreFn, diagnostic::DiagnosticVariants};
 use crate::variant::{
     build_diagnostic_store_expanded,
@@ -141,7 +141,7 @@ where
         };
 
         let name = test_record.name().ok_or(Error::RecordHasNoReadName)?;
-        opt.strip_read_suffix = match opt.strip_read_suffix {
+        opt.io.strip_read_suffix = match opt.io.strip_read_suffix {
             StripReadSuffix::True => {
                 if !name.ends_with(b"/1") && !name.ends_with(b"/2") {
                     return Err(Error::ReadNamesMissingSuffixes);
@@ -174,8 +174,8 @@ where
 
         let (sample_variants, population_variants) = build_variant_stores(opt, i)?;
 
-        opt.output.get(i).map(path_unicode_ok).transpose()?;
-        opt.ambiguous_output
+        opt.output.output.get(i).map(path_unicode_ok).transpose()?;
+        opt.output.ambiguous_output
             .get(i)
             .map(path_unicode_ok)
             .transpose()?;
@@ -191,7 +191,7 @@ where
             output: None,
             ambiguous: None,
             positive_regions,
-            write_discarded: opt.write_discarded,
+            write_discarded: opt.io.write_discarded,
             threads,
         })
     }
@@ -291,7 +291,7 @@ where
             .get(i)
             .map(|f| out_from_file(f, &self.header, add_pg, threads))
             .transpose()?;
-        let expanded = expand_header(self.header.clone(), opt.write_discarded);
+        let expanded = expand_header(self.header.clone(), opt.io.write_discarded);
         self.ambiguous = opt
             .output.ambiguous_output
             .get(i)
@@ -337,14 +337,14 @@ where
 /// The diagnostic store for HashLookup is built as an in-memory
 /// `AmbiguousRegions`-style struct; see `build_diagnostic_store_expanded`.
 fn build_variant_stores(
-    config: &Config,
+    config: &RunConfig,
     stream_idx: usize,
 ) -> Result<(Option<Arc<dyn StoreTrait>>, Option<Arc<dyn StoreTrait>>), Error> {
     // Resolve the VCF paths for this stream index.
-    let sample_vcf_path = variant_path_for_stream(&config.sample_variants, stream_idx);
-    let population_vcf_path = variant_path_for_stream(&config.population_variants, stream_idx);
+    let sample_vcf_path = variant_path_for_stream(&config.variants.sample_variants, stream_idx);
+    let population_vcf_path = variant_path_for_stream(&config.variants.population_variants, stream_idx);
 
-    if !config.expand_indels {
+    if !config.variants.expand_indels {
         // -- Plain path: existing behavior, unchanged -------------------------
         let sample_store: Option<Arc<dyn StoreTrait>> = sample_vcf_path
             .map(|p| {
@@ -362,7 +362,7 @@ fn build_variant_stores(
     }
 
     // -- Expanded path: requires --reference ----------------------------------
-    let fasta_path = config
+    let fasta_path = config.io
         .reference
         .as_deref()
         .ok_or(crate::Error::ExpandIndelsRequiresReference)?;
@@ -404,22 +404,22 @@ fn build_variant_stores(
 /// a different type (`DiagnosticVariants`) and is consumed by different
 /// code paths (HashLookup BED/VCF region check).
 pub(crate) fn build_diagnostic_store_for_stream(
-    config: &Config,
+    config: &RunConfig,
     header: &Header,
     stream_idx: usize,
 ) -> Result<Option<crate::region::diagnostic::DiagnosticVariants>, Error> {
 
-    let diag_vcf_path = variant_path_for_stream(&config.diagnostic_variants, stream_idx);
+    let diag_vcf_path = variant_path_for_stream(&config.region_memory.diagnostic_variants, stream_idx);
     let Some(path) = diag_vcf_path else {
         return Ok(None);
     };
 
-    if !config.expand_indels {
+    if !config.variants.expand_indels {
         // Plain diagnostic loading: existing behavior.
         return DiagnosticVariants::from_vcf(path, &header_name_to_id(header)).map(Some);
     }
 
-    let fasta_path = config
+    let fasta_path = config.io
         .reference
         .as_deref()
         .ok_or(crate::Error::ExpandIndelsRequiresReference)?;

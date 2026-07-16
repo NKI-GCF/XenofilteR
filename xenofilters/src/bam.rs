@@ -33,7 +33,6 @@ mod format;
 mod io;
 pub(crate) mod reader;
 
-use crate::config::Config;
 use crate::Error;
 pub(crate) use format::AlnFormat;
 pub(crate) use io::{out_from_file, path_unicode_ok, BamOutput};
@@ -130,7 +129,6 @@ mod tests {
     #[test]
     fn expand_header_adds_two_entries_per_rg() {
         let h = make_header_with_rgs(&["rg0", "rg1"]);
-        let mut config = Config::default();
         let expanded1 = expand_header(h.clone(), false);
         let ids1 = rg_ids(&expanded1);
         // 2 original + 2 derived = 4
@@ -155,7 +153,6 @@ mod tests {
     #[test]
     fn expand_header_empty_rg_is_noop() {
         let h = Header::default();
-        let config = Config::default();
         let expanded = expand_header(h, true);
         assert!(expanded.read_groups().is_empty());
     }

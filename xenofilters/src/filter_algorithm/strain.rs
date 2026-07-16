@@ -6,6 +6,7 @@ use crate::{
     Error,
 };
 use std::path::PathBuf;
+use smallvec::{smallvec, SmallVec};
 
 /// Within-species strain disambiguation: single alignment, two variant
 /// profiles (one per strain). No chimeric pairs, no multi-stream regions,
@@ -19,7 +20,7 @@ pub(crate) struct StrainArgs {
     /// streams, one scored against each strain's variant profile).
     #[arg(required = true, value_hint = clap::ValueHint::FilePath,
           help_heading = "Input")]
-    pub(crate) alignment: PathBuf,
+    pub(crate) alignment: SmallVec<[PathBuf; 2]>,
 
     #[command(flatten)]
     pub(crate) io: IoArgs,
@@ -47,7 +48,7 @@ impl StrainArgs {
         }
         Ok(RunConfig {
             algorithm: MatchingAlgorithm::Namesorted,
-            alignment: vec![self.alignment.clone().into(), self.alignment.into()], // duplicated stream
+            alignment: smallvec![self.alignment.clone().into(), self.alignment.into()], // duplicated stream
             single_alignment_mode: true,
             io: self.io,
             scoring: self.scoring,

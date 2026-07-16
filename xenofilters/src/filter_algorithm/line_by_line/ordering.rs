@@ -580,7 +580,7 @@ impl<R: SimpleRec> LineByLine<R> {
         if let Some(p) = self.progress.as_ref() {
             p.finish()
         }
-        config.print_routing_counters(&self.routing_counters, "namesorted");
+        config.common.print_routing_counters(&self.routing_counters, "namesorted");
         Ok(())
     }
 
