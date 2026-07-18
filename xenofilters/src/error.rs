@@ -540,3 +540,12 @@ pub enum Error {
     #[error("no merged writer configured")]
     NoMergedWriter,
 }
+
+#[macro_export]
+macro_rules! ensure {
+    ($cond:expr, $err:expr) => {
+        if !$cond {
+            return Err($err);
+        }
+    };
+}

@@ -137,7 +137,7 @@ pub(crate) struct LineByLine<R> {
 
 impl<R: SimpleRec> LineByLine<R> {
     pub(crate) fn new(
-        config: &NamesortedArgs,
+        config: &Runconfig,
         mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
     ) -> Result<Self, Error> {
         let is_unmapped_skipped = match config.common.io.discard_unmapped {
@@ -181,7 +181,7 @@ impl<R: SimpleRec> LineByLine<R> {
         let aln_len = aln.len();
         for i in 0..aln_len {
             if let Some(a) = aln.get_mut(i) {
-                a.init_writers(config, i)?;
+                a.init_writers(&config.to_runconfig(), i)?;
             }
         }
 
@@ -260,6 +260,62 @@ impl LineByLine<RecordBuf> {
             true => None,
             false => Some(ProgressReporter::new()),
         };
+        let is_new_qname: fn(&FragmentBuffer<RecordBuf>, &[u8]) -> Option<bool> =
+            match args.common.io.strip_read_suffix {
+                StripReadSuffix::True => |best: &FragmentBuffer<RecordBuf>, qname2: &[u8]| {
+                    best.first()
+                        .map(|b| b.first_qname())
+                        .map(|q1| q1[..q1.len() - 2] != qname2[..qname2.len() - 2])
+                },
+                StripReadSuffix::False => |best: &FragmentBuffer<RecordBuf>, qname2: &[u8]| {
+                    best.first().map(|b| b.first_qname()).map(|q1| q1 != qname2)
+                },
+                StripReadSuffix::Variable => |best: &FragmentBuffer<RecordBuf>, qname2: &[u8]| {
+                    best.first().map(|b| b.first_qname()).map(|q1| {
+                        if q1.ends_with(b"/1") || q1.ends_with(b"/2") {
+                            q1[..q1.len() - 2] != qname2[..qname2.len() - 2]
+                        } else {
+                            q1 != qname2
+                        }
+                    })
+                },
+                StripReadSuffix::Auto => {
+                    #[cfg(not(test))]
+                    unreachable!("Auto mode should be resolved during AlnStream initialization");
+                    #[cfg(test)]
+                    debug_new_qname_fn()
+                }
+            };
+        let is_unmapped_skipped = match args.common.io.discard_unmapped {
+            true => unmapped_and_mate_unmapped,
+            false => always_false,
+        };
+        let is_secondary_skipped = match args.common.io.skip_secondary {
+            true => is_secondary,
+            false => always_false,
+        };
+        let mut positive_regions: [Option<Arc<ScoredRegions>>; MAX_STREAMS] = Default::default();
+        for (i, path) in args
+            .common
+            .variants
+            .positive_regions
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                if let Some(idx) = f.idx {
+                    (idx, &f.path)
+                } else {
+                    (i, &f.path)
+                }
+            })
+        {
+            if i < MAX_STREAMS {
+                positive_regions[i] = Some(Arc::new(ScoredRegions::from_bed(
+                    Path::new(path),
+                    &header_name_to_id(aln[i].header()),
+                )?));
+            }
+        }
         Ok(Self {
             aln,
             routing_counters: SmallVec::from_elem(0, n * COUNTER_STRIDE),
@@ -271,6 +327,12 @@ impl LineByLine<RecordBuf> {
             chimeric_pairs,
             stream_labels: args.chimeric.stream_labels.clone(),
             progress,
+            is_new_qname,
+            is_secondary_skipped,
+            is_unmapped_skipped,
+            scratch: Scratch::new(),
+            region_score_fn: args.common.scoring.region_score_fn,
+            positive_regions,
         })
     }
 }

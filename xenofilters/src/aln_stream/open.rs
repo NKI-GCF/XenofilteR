@@ -7,6 +7,8 @@ use crate::{
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::{smallvec, SmallVec};
+use std::num::NonZeroUsize;
+use crate::file_spec::path_from_stream;
 
 /// Open all streams for namesorted/collated (unified reader path).
 /// `bgzf_threads` applies to BAM decompression; ignored for SAM/CRAM.
@@ -15,18 +17,22 @@ pub(crate) fn open_streams_unified(
     bgzf_threads: usize,
 ) -> Result<SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>, Error> {
     let mut aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> = smallvec![];
+
+    // MultithreadedReader parallelises bgzf block decompression.
+    // Requires threads > 1 AND a non-seeking backend (namesorted / collated).
+    // HashLookup pass-2 uses seek_vpos → must use Single.
+    let threads = NonZeroUsize::new(bgzf_threads).unwrap_or(NonZeroUsize::MIN);
+
     let n = run.alignment.len();
     for i in 0..n {
         let path = &run.alignment[i];
         let path_str = path.to_string_lossy().to_string();
         tracing::debug!(stream = i, path_str, "Opening stream");
-        let stream = AlnStream::<RecordBuf>::new_unified(
-            path,
-            path_for_stream(&run.io.reference, i),
-            bgzf_threads,
-            i,
-            run,
-        )?;
+        let positive_regions = path_for_stream(specs, 0)
+            .map(|s| 
+
+
+        let stream = AlnStream::<RecordBuf>::new(run, i, threads.clone(), positive_regions)?;
         aln.push(Box::new(stream));
         if i > 0 {
             if aln[i].next_qname() != aln[0].next_qname() {
@@ -57,7 +63,7 @@ pub(crate) fn open_streams_raw_bam(
     }
     let mut aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> = smallvec![];
     for i in 0..2 {
-        let stream = AlnStream::<RecordBuf>::new_raw_bam(&run.alignment[i], i, run)?;
+        let stream = AlnStream::<RecordBuf>::new_raw_bam(i, run)?;
         aln.push(Box::new(stream));
     }
     Ok(aln)

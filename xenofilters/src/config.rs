@@ -3,14 +3,15 @@ pub(crate) mod run_config;
 
 use crate::{
     config::run_config::RunConfig,
-    filter_algorithm::{strain::StrainArgs, viral_integration::ViralIntegrationArgs},
+    file_spec::{path_for_stream, FileSpec},
+    filter_algorithm::{
+        line_by_line::MAX_STREAMS, strain::StrainArgs, viral_integration::ViralIntegrationArgs,
+    },
     region::ScoreFn,
     Error,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
-
-const ARG_MAX: usize = 4;
 
 #[derive(Copy, Clone, Debug, ValueEnum, PartialEq, Default)]
 pub enum StripReadSuffix {
@@ -261,11 +262,19 @@ pub(crate) struct NamesortedArgs {
 
     #[command(flatten)]
     pub(crate) chimeric: crate::config::args::ChimericArgs,
+}
 
-    /// Name encoder for FragmentTable key compression.
-    /// illumina (strips machine:run:flowcell prefix) | passthrough
-    #[arg(long, default_value = "illumina", help_heading = "Advanced")]
-    pub(crate) name_encoder: NameEncoderKind,
+impl NamesortedArgs {
+    pub(crate) fn to_runconfig(self) -> Result<RunConfig, Error> {
+        RunConfig::new(
+            self.common,
+            Some(self.chimeric),
+            None,
+            None,
+            self.threads,
+            1..=MAX_STREAMS,
+        )
+    }
 }
 
 #[derive(Args, Clone, Debug)]
@@ -277,18 +286,18 @@ pub(crate) struct HashlookupArgs {
     /// One per stream (positional: stream 0, then 1).
     /// Strand-aware when BED column 6 present.
     #[arg(long, num_args = 0..=2, value_name = "FILE",
-          help_heading = "Regions", value_hint = clap::ValueHint::FilePath)]
-    pub(crate) ambiguous_regions: Vec<String>,
+          help_heading = "Regions", value_name = "[IDX:]FILE")]
+    pub(crate) ambiguous_regions: Vec<FileSpec>,
 
     /// In-memory VCF/BCF of diagnostic positions per stream.
-    #[arg(long, num_args = 0..=2, value_name = "FILE",
+    #[arg(long, num_args = 0..=2, value_name = "[IDX:]FILE",
           help_heading = "Regions", value_hint = clap::ValueHint::FilePath)]
-    pub(crate) diagnostic_variants: Vec<String>,
+    pub(crate) diagnostic_variants: Vec<FileSpec>,
 
     /// BED file(s) of regions giving reads a positive score bonus.
     #[arg(long, num_args = 0..=2, value_name = "FILE",
-          help_heading = "Regions", value_hint = clap::ValueHint::FilePath)]
-    pub(crate) positive_regions: Vec<String>,
+          help_heading = "Regions", value_name = "[IDX:]FILE")]
+    pub(crate) positive_regions: Vec<FileSpec>,
 
     /// Score function for --positive-regions BED score column.
     /// Format: fn[:weight]  fn ∈ {linear, log, constant, overlap_fraction}
@@ -301,16 +310,8 @@ pub(crate) struct HashlookupArgs {
 }
 
 impl HashlookupArgs {
-    pub(crate) fn to_runconfig(&self) -> RunConfig {
-        crate::config::run_config::RunConfig {
-            algorithm: crate::config::MatchingAlgorithm::Hashlookup,
-            alignment: self.common.io.alignment.clone(),
-            io: self.common.io.clone(),
-            scoring: self.common.scoring.clone(),
-            variants: self.common.variants.clone(),
-            output: self.common.output.clone().into(),
-            ..Default::default()
-        }
+    pub(crate) fn to_runconfig(&self) -> Result<RunConfig, Error> {
+        RunConfig::new(self.common, None, self.name_encoder, 1, 2..=2)
     }
 }
 
@@ -321,22 +322,28 @@ pub(crate) struct CollatedArgs {
 
     /// Tabix-indexed BED.gz file(s) forcing full NW on overlap.
     /// One per stream. Strand-aware when BED column 6 present.
-    #[arg(long, num_args = 0..=2, value_name = "FILE",
+    #[arg(long, num_args = 0..=2, value_name = "[IDX:]FILE",
           help_heading = "Regions", value_hint = clap::ValueHint::FilePath)]
-    pub(crate) ambiguous_regions: Vec<String>,
+    pub(crate) ambiguous_regions: Vec<FileSpec>,
 
     /// Tabix-indexed VCF/BCF of diagnostic positions per stream.
-    #[arg(long, num_args = 0..=2, value_name = "FILE",
+    #[arg(long, num_args = 0..=2, value_name = "[IDX:]FILE",
           help_heading = "Regions", value_hint = clap::ValueHint::FilePath)]
-    pub(crate) diagnostic_variants: Vec<String>,
+    pub(crate) diagnostic_variants: Vec<FileSpec>,
 
     /// BED.gz file(s) of positive-score regions. Tabix-indexed.
-    #[arg(long, num_args = 0..=2, value_name = "FILE",
+    #[arg(long, num_args = 0..=2, value_name = "[IDX:]FILE",
           help_heading = "Regions", value_hint = clap::ValueHint::FilePath)]
-    pub(crate) positive_regions: Vec<String>,
+    pub(crate) positive_regions: Vec<FileSpec>,
 
     #[arg(long, default_value = "linear:1.0", help_heading = "Regions")]
     pub(crate) region_score_fn: ScoreFn,
+}
+
+impl CollatedArgs {
+    pub(crate) fn to_runconfig(self) -> Result<RunConfig, Error> {
+        RunConfig::new(self.common, None, None, 1, 2..=2)
+    }
 }
 
 #[derive(Args, Debug, Clone, PartialEq)]

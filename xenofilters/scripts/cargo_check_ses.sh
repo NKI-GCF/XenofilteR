@@ -1,4 +1,10 @@
-cargo check --message-format short 2>&1| grep error | xclip -selection clipboard
+
+
+cargo check --message-format short 2>&1 | grep error | python scripts/cargo_check_short_parser.py | tee /dev/stderr | xclip -selection clipboard
+
+python scripts/find_conflicts.py --comments |  xclip -selection clipboard
+
+git ls-files | grep -E '(\.rs|\.toml)' | ctags --fields=+n -L /dev/stdin
 
 ctags --excmd=nr -R src
 

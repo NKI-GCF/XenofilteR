@@ -10,13 +10,13 @@ use super::chimeric::{
 };
 use super::core::{FragmentBuffer, LineByLine, Scratch};
 use super::ordering::{score_bundle, ScoringContext};
+use crate::config::NamesortedArgs;
 use crate::{variant::StoreTrait, Error};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::{smallvec, SmallVec};
 use std::sync::Arc;
 use std::thread;
-use crate::config::NamesortedArgs;
 
 /// Everything a scoring worker needs for one fragment.
 /// All data is owned or `Arc`-wrapped; no lifetime entanglement.
@@ -216,7 +216,9 @@ impl LineByLine<RecordBuf> {
             }
         }
 
-        config.print_routing_counters(&self.routing_counters, "namesorted-parallel");
+        config
+            .common
+            .print_routing_counters(&self.routing_counters, "namesorted-parallel");
         for i in 0..aln_len {
             if self.aln[i].next_rec()?.is_some() {
                 return Err(Error::AlignmentStillHasReadsAfterParallelProcessing { j: i });

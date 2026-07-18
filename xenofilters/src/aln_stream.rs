@@ -23,6 +23,7 @@ use crate::variant::{
     StoreTrait,
 };
 use crate::Error;
+use crate::{HashlookupArgs, NamesortedArgs};
 use noodles::bam::{io::Reader as BamReader, record::Record};
 use noodles::bgzf::{io::MultithreadedReader, VirtualPosition};
 use noodles::fasta::io::indexed_reader::Builder;
@@ -30,6 +31,7 @@ use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::Header;
 use std::fs::File;
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub(crate) trait AlignmentStream<R: SimpleRec> {
@@ -74,6 +76,7 @@ where
     pub(crate) fn new(
         opt: &mut RunConfig,
         i: usize,
+        threads: NonZeroUsize,
         positive_regions: Option<(PositiveRegions, ScoreFn)>,
     ) -> Result<Self, Error> {
         let path = opt.alignment[i].to_string_lossy();
@@ -81,15 +84,10 @@ where
 
         let file = File::open(&opt.alignment[i])?;
 
-        // MultithreadedReader parallelises bgzf block decompression.
-        // Requires threads > 1 AND a non-seeking backend (namesorted / collated).
-        // HashLookup pass-2 uses seek_vpos → must use Single.
-        let threads = NonZeroUsize::new(opt.threads).unwrap_or(NonZeroUsize::MIN);
-
-        let mut bam = if !seekable_required && opt.threads > 1 {
+        let mut bam = if !seekable_required && usize::from(threads) > 1 {
             tracing::debug!(
                 stream = i,
-                threads = opt.threads,
+                threads = usize::from(threads),
                 "Using MultithreadedReader for bgzf decompression"
             );
             BgzfBamReader::Multi(BamReader::from(MultithreadedReader::with_worker_count(
@@ -191,46 +189,6 @@ where
             write_discarded: opt.io.write_discarded,
             threads,
         })
-    }
-}
-
-impl AlnStream<RecordBuf> {
-    pub(crate) fn new_unified(args: &mut NamesortedArgs, i: usize) -> Result<Self, Error> {
-        let mut cfg = RunConfig {
-            algorithm: MatchingAlgorithm::Namesorted,
-            alignment: args.alignment.clone(),
-            io: args.common.io.clone(),
-            scoring: args.common.scoring.clone(),
-            variants: args.common.variants.clone(),
-            output: args.common.output.clone(),
-            threads: args.parallel.threads,
-            score_threads: args.parallel.score_threads,
-            chimeric_pairs: args.chimeric.chimeric_pairs.clone(),
-            stream_labels: args.chimeric.stream_labels.clone(),
-            ..Default::default()
-        };
-        let stream = Self::new(&mut cfg, i)?;
-        // Sync back mutable state written during stream init
-        args.common.io.is_pass2 = cfg.is_pass2;
-        args.common.io.is_paired = cfg.is_paired;
-        args.common.io.strip_read_suffix = cfg.io.strip_read_suffix;
-        Ok(stream)
-    }
-
-    pub(crate) fn new_raw_bam(args: &mut HashlookupArgs, i: usize) -> Result<Self, Error> {
-        let mut cfg = RunConfig {
-            algorithm: MatchingAlgorithm::Hashlookup,
-            alignment: args.alignment.clone(),
-            io: args.common.io.clone(),
-            scoring: args.common.scoring.clone(),
-            variants: args.common.variants.clone(),
-            output: args.common.output.clone(),
-            ..Default::default()
-        };
-        let stream = Self::new(&mut cfg, i)?;
-        args.common.io.is_pass2 = cfg.is_pass2;
-        args.common.io.is_paired = cfg.is_paired;
-        Ok(stream)
     }
 }
 

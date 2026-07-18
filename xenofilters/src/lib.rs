@@ -15,9 +15,9 @@ pub mod reporting;
 pub mod stats;
 pub mod variant;
 
-use crate::aln_stream::open::open_streams_raw_bam;
+use crate::file_spec::{path_for_stream, FileSpec};
+use crate::filter_algorithm::{strain::StrainArgs, viral_integration::ViralIntegrationArgs};
 use crate::region::tabix_load::{open_tabix_bed, open_tabix_scored, open_tabix_vcf};
-use aln_stream::open::open_streams_unified;
 use clap::CommandFactory;
 use clap_complete::generate;
 use config::{
@@ -83,6 +83,8 @@ pub fn run(mut cli: Cli) -> Result<(), Error> {
         AlgorithmCommand::Namesorted(args) => run_namesorted(args),
         AlgorithmCommand::Hashlookup(args) => run_hashlookup(args),
         AlgorithmCommand::Collated(args) => run_collated(args),
+        AlgorithmCommand::Strain(args) => run_strain(args),
+        AlgorithmCommand::ViralIntegration(args) => run_viral_integration(args),
         AlgorithmCommand::Completion(_) => unreachable!(),
     }
 }
@@ -139,15 +141,13 @@ fn get_log_level(verbose_count: u8) -> &'static str {
 // ---------------------------------------------------------------------------
 // Name-sorted — streaming merge, sequential or parallel
 // ---------------------------------------------------------------------------
-fn run_namesorted(mut args: NamesortedArgs) -> Result<(), Error> {
+fn run_namesorted(args: NamesortedArgs) -> Result<(), Error> {
     let stats_path = args.common.output.stats_output.clone();
     let stream_labels = args.chimeric.stream_labels.clone();
     let score_threads = args.parallel.score_threads;
-    let is_pass2_ref = &mut args.common.io.is_pass2; // updated after stream open
-
-    let aln = open_streams_unified(&mut args)?;
+    let mut runconfig = args.to_runconfig();
+    let aln = runconfig.open_streams_unified(args.parallel.threads)?;
     let n = aln.len();
-    let is_pass2 = args.common.io.is_pass2;
 
     if score_threads > 1 {
         let mut lbl = LineByLine::new(&args, aln)?;
@@ -166,12 +166,16 @@ fn run_namesorted(mut args: NamesortedArgs) -> Result<(), Error> {
 // ---------------------------------------------------------------------------
 
 fn run_hashlookup(mut args: HashlookupArgs) -> Result<(), Error> {
-    let aln = open_streams_raw_bam(&mut args.to_runconfig())?;
-    let name_to_id = crate::variant::name_to_id::header_name_to_id(aln[0].header());
     let bed = load_ambiguous_regions(&args.ambiguous_regions, &name_to_id)?;
     let vcf = load_diagnostic_variants(&args.diagnostic_variants, &name_to_id)?;
+    let mut runconfig = args.to_runconfig()?;
+    let aln = runconfig.open_streams_raw_bam()?;
+    let name_to_id = aln
+        .iter()
+        .map(|s| crate::variant::name_to_id::header_name_to_id(s.header()))
+        .collect::<Vec<HashMap<_, _>>>();
 
-    HashLookup::new_from_hashlookup(&args, aln, bed, vcf, [None, None])?.process(&args)
+    HashLookup::<RecordBuf>::new_from_hashlookup(&args, aln, bed, vcf, [None, None])?.process(&args)
 }
 
 // ---------------------------------------------------------------------------
@@ -182,16 +186,8 @@ fn run_collated(mut args: CollatedArgs) -> Result<(), Error> {
     use crate::region::tabix_query::{TabixBed, TabixVcf};
     use std::path::Path;
 
-    // Reuse open_streams_raw_bam pattern via a temporary RunConfig.
-    let mut run_cfg = crate::config::run_config::RunConfig {
-        algorithm: crate::config::MatchingAlgorithm::Collated,
-        alignment: args.common.io.alignment.clone(),
-        io: args.common.io.clone(),
-        scoring: args.common.scoring.clone(),
-        variants: args.common.variants.clone(),
-        output: args.common.output.clone(),
-        ..Default::default()
-    };
+    let mut runconfig = args.to_runconfig()?;
+
     let mut aln: smallvec::SmallVec<[Box<dyn crate::aln_stream::AlignmentStream<RecordBuf>>; 2]> =
         smallvec::smallvec![];
     for i in 0..2 {
@@ -203,66 +199,112 @@ fn run_collated(mut args: CollatedArgs) -> Result<(), Error> {
     }
 
     let bed: [Option<TabixBed>; 2] = [
-        args.ambiguous_regions
-            .first()
-            .filter(|s| !s.is_empty())
+        path_for_stream(&args.ambiguous_regions, 0)
             .map(|s| TabixBed::open(Path::new(s)))
             .transpose()?,
-        args.ambiguous_regions
-            .get(1)
-            .filter(|s| !s.is_empty())
+        path_for_stream(&args.ambiguous_regions, 1)
             .map(|s| TabixBed::open(Path::new(s)))
             .transpose()?,
     ];
     let vcf: [Option<TabixVcf>; 2] = [
-        args.diagnostic_variants
-            .first()
-            .filter(|s| !s.is_empty())
+        path_for_stream(&args.diagnostic_variants, 0)
             .map(|s| TabixVcf::open(Path::new(s)))
             .transpose()?,
-        args.diagnostic_variants
-            .get(1)
-            .filter(|s| !s.is_empty())
+        path_for_stream(&args.diagnostic_variants, 1)
             .map(|s| TabixVcf::open(Path::new(s)))
             .transpose()?,
     ];
 
-    crate::filter_algorithm::collated::CollatedMatcher::new_from_collated(&args, aln, bed, vcf)?
-        .process(&args)
+    crate::filter_algorithm::collated::CollatedMatcher::<RecordBuf>::new_from_collated(
+        &args, aln, bed, vcf,
+    )?
+    .process(&args.common)
+}
+
+// ---------------------------------------------------------------------------
+// Strain — specialized collated matcher for strain detection
+// ---------------------------------------------------------------------------
+
+fn run_strain(mut args: StrainArgs) -> Result<(), Error> {
+    let mut run = args.into_run_config()?;
+    let threads = run.threads;
+    let aln = open_streams_unified(&mut run, threads)?;
+    let n = aln.len();
+    let score_threads = run.score_threads;
+    let stats_path = run.output.stats_output.clone();
+    let stream_labels = run.stream_labels.clone();
+    if score_threads > 1 {
+        let mut lbl = LineByLine::new(&run, aln)?;
+        let result = lbl.process_parallel(&run);
+        if let Some(p) = stats_path {
+            crate::stats::write_stats(&p, &lbl.routing_counters, n, &stream_labels, "sample")?;
+        }
+        result
+    } else {
+        LineByLine::new(&run, aln)?.process_sequential(&run)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Viral integration — specialized collated matcher for virus-host chimeras
+// ---------------------------------------------------------------------------
+
+fn run_viral_integration(mut args: ViralIntegrationArgs) -> Result<(), Error> {
+    let mut run = args.into_run_config()?;
+    let threads = run.threads;
+    let aln = open_streams_unified(&mut run, threads)?;
+    let n = aln.len();
+    let score_threads = run.score_threads;
+    let stats_path = run.output.stats_output.clone();
+    let stream_labels = run.stream_labels.clone();
+    if score_threads > 1 {
+        let mut lbl = LineByLine::new(&run, aln)?;
+        let result = lbl.process_parallel(&run);
+        if let Some(p) = stats_path {
+            crate::stats::write_stats(&p, &lbl.routing_counters, n, &stream_labels, "sample")?;
+        }
+        result
+    } else {
+        LineByLine::new(&run, aln)?.process_sequential(&run)
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-fn load_specs<T, F>(specs: &[String], mut load_fn: F) -> Result<[Option<T>; 2], Error>
+fn load_specs<T, F>(
+    specs: &[FileSpec],
+    name_to_id: &[HashMap<String, usize>],
+    mut load_fn: F,
+) -> Result<[Option<T>; 2], Error>
 where
-    F: FnMut(&Path) -> Result<T, Error>,
+    F: FnMut(&Path, &HashMap<String, usize>) -> Result<T, Error>,
 {
     Ok([
-        specs
-            .first()
-            .filter(|s| !s.is_empty())
-            .map(|s| load_fn(Path::new(s)))
+        path_for_stream(specs, 0)
+            .map(|s| load_fn(Path::new(s), &name_to_id[0]))
             .transpose()?,
-        specs
-            .get(1)
-            .filter(|s| !s.is_empty())
-            .map(|s| load_fn(Path::new(s)))
+        path_for_stream(specs, 1)
+            .map(|s| load_fn(Path::new(s), &name_to_id[1]))
             .transpose()?,
     ])
 }
 
 fn load_ambiguous_regions(
-    specs: &[String],
-    name_to_id: &HashMap<String, usize>,
+    specs: &[FileSpec],
+    name_to_id: &[HashMap<String, usize>],
 ) -> Result<[Option<AmbiguousRegions>; 2], Error> {
-    load_specs(specs, |p| AmbiguousRegions::from_bed(p, name_to_id))
+    load_specs(specs, name_to_id, |p, name_to_id| {
+        AmbiguousRegions::from_bed(p, name_to_id)
+    })
 }
 
 fn load_diagnostic_variants(
-    specs: &[String],
-    name_to_id: &HashMap<String, usize>,
+    specs: &[FileSpec],
+    name_to_id: &Vec<HashMap<String, usize>>,
 ) -> Result<[Option<DiagnosticVariants>; 2], Error> {
-    load_specs(specs, |p| DiagnosticVariants::from_vcf(p, name_to_id))
+    load_specs(specs, name_to_id, |p, name_to_id| {
+        DiagnosticVariants::from_vcf(p, name_to_id)
+    })
 }

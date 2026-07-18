@@ -155,7 +155,9 @@ impl<R: SimpleRec> HashLookup<R> {
             &mut self.routing_counters,
             self.add_decision_tag,
         )?;
-        config.print_routing_counters(&self.routing_counters, "Hash-lookup");
+        config
+            .common
+            .print_routing_counters(&self.routing_counters, "Hash-lookup");
         Ok(())
     }
 
