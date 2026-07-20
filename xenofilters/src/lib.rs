@@ -16,8 +16,8 @@ pub mod stats;
 pub mod variant;
 
 use crate::file_spec::{path_for_stream, FileSpec};
-use crate::filter_algorithm::{strain::StrainArgs, viral_integration::ViralIntegrationArgs};
 use crate::region::tabix_load::{open_tabix_bed, open_tabix_scored, open_tabix_vcf};
+use crate::region::tabix_query::{TabixBed, TabixVcf};
 use clap::CommandFactory;
 use clap_complete::generate;
 use config::{
@@ -25,6 +25,7 @@ use config::{
 };
 pub use error::Error;
 use filter_algorithm::{
+    strain::StrainArgs, viral_integration::ViralIntegrationArgs,
     collated::CollatedMatcher,
     hash_lookup::HashLookup,
     line_by_line::{LineByLine, MAX_STREAMS},
@@ -75,9 +76,6 @@ pub fn run(mut cli: Cli) -> Result<(), Error> {
     }
     let common = cli.command.common_mut();
     init_tracing(common.io.verbose);
-
-    // Validate common args, detect pass 2, resolve thresholds.
-    common.validate_and_init()?;
 
     match cli.command {
         AlgorithmCommand::Namesorted(args) => run_namesorted(args),
@@ -145,19 +143,19 @@ fn run_namesorted(args: NamesortedArgs) -> Result<(), Error> {
     let stats_path = args.common.output.stats_output.clone();
     let stream_labels = args.chimeric.stream_labels.clone();
     let score_threads = args.parallel.score_threads;
-    let mut runconfig = args.to_runconfig();
-    let aln = runconfig.open_streams_unified(args.parallel.threads)?;
+    let mut run = args.to_runconfig()?;
+    let aln = run.open_streams_unified(run.parallel.threads)?;
     let n = aln.len();
 
     if score_threads > 1 {
-        let mut lbl = LineByLine::new(&args, aln)?;
-        let result = lbl.process_parallel(&args);
+        let mut lbl = LineByLine::new(&run, aln)?;
+        let result = lbl.process_parallel(&run);
         if let Some(p) = stats_path {
             crate::stats::write_stats(&p, &lbl.routing_counters, n, &stream_labels, "sample")?;
         }
         result
     } else {
-        LineByLine::new(&args, aln)?.process_sequential(&args)
+        LineByLine::new(&run, aln)?.process_sequential(&run)
     }
 }
 
@@ -166,37 +164,37 @@ fn run_namesorted(args: NamesortedArgs) -> Result<(), Error> {
 // ---------------------------------------------------------------------------
 
 fn run_hashlookup(mut args: HashlookupArgs) -> Result<(), Error> {
-    let bed = load_ambiguous_regions(&args.ambiguous_regions, &name_to_id)?;
-    let vcf = load_diagnostic_variants(&args.diagnostic_variants, &name_to_id)?;
-    let mut runconfig = args.to_runconfig()?;
-    let aln = runconfig.open_streams_raw_bam()?;
+    let bed: [Option<TabixBed>; 2] = [
+        path_for_stream(&args.ambiguous_regions, 0)
+            .map(|s| TabixBed::open(Path::new(s)))
+            .transpose()?,
+        path_for_stream(&args.ambiguous_regions, 1)
+            .map(|s| TabixBed::open(Path::new(s)))
+            .transpose()?,
+    ];
+    let vcf: [Option<TabixVcf>; 2] = [
+        path_for_stream(&args.diagnostic_variants, 0)
+            .map(|s| TabixVcf::open(Path::new(s)))
+            .transpose()?,
+        path_for_stream(&args.diagnostic_variants, 1)
+            .map(|s| TabixVcf::open(Path::new(s)))
+            .transpose()?,
+    ];
+    let mut run = args.to_runconfig()?;
+    let aln = run.open_indexed_streams()?;
     let name_to_id = aln
         .iter()
         .map(|s| crate::variant::name_to_id::header_name_to_id(s.header()))
         .collect::<Vec<HashMap<_, _>>>();
 
-    HashLookup::<RecordBuf>::new_from_hashlookup(&args, aln, bed, vcf, [None, None])?.process(&args)
+    HashLookup::<RecordBuf>::new_from_hashlookup(&run, aln, bed, vcf, [None, None])?.process(&run)
 }
 
 // ---------------------------------------------------------------------------
-// Collated — individually name-sorted streams, tabix-indexed region queries
+// Collated — individually name-sorted streams
 // ---------------------------------------------------------------------------
 
 fn run_collated(mut args: CollatedArgs) -> Result<(), Error> {
-    use crate::region::tabix_query::{TabixBed, TabixVcf};
-    use std::path::Path;
-
-    let mut runconfig = args.to_runconfig()?;
-
-    let mut aln: smallvec::SmallVec<[Box<dyn crate::aln_stream::AlignmentStream<RecordBuf>>; 2]> =
-        smallvec::smallvec![];
-    for i in 0..2 {
-        aln.push(Box::new(crate::aln_stream::AlnStream::<RecordBuf>::new(
-            &mut run_cfg,
-            i,
-            None,
-        )?));
-    }
 
     let bed: [Option<TabixBed>; 2] = [
         path_for_stream(&args.ambiguous_regions, 0)
@@ -214,11 +212,14 @@ fn run_collated(mut args: CollatedArgs) -> Result<(), Error> {
             .map(|s| TabixVcf::open(Path::new(s)))
             .transpose()?,
     ];
+    let mut run = args.to_runconfig()?;
+    let aln = run.open_streams()?;
+
 
     crate::filter_algorithm::collated::CollatedMatcher::<RecordBuf>::new_from_collated(
-        &args, aln, bed, vcf,
+        &run, aln, bed, vcf,
     )?
-    .process(&args.common)
+    .process(&run)
 }
 
 // ---------------------------------------------------------------------------
@@ -228,7 +229,7 @@ fn run_collated(mut args: CollatedArgs) -> Result<(), Error> {
 fn run_strain(mut args: StrainArgs) -> Result<(), Error> {
     let mut run = args.into_run_config()?;
     let threads = run.threads;
-    let aln = open_streams_unified(&mut run, threads)?;
+    let aln = run.open_streams_unified(threads)?;
     let n = aln.len();
     let score_threads = run.score_threads;
     let stats_path = run.output.stats_output.clone();
@@ -252,7 +253,7 @@ fn run_strain(mut args: StrainArgs) -> Result<(), Error> {
 fn run_viral_integration(mut args: ViralIntegrationArgs) -> Result<(), Error> {
     let mut run = args.into_run_config()?;
     let threads = run.threads;
-    let aln = open_streams_unified(&mut run, threads)?;
+    let aln = run.open_streams_unified(threads)?;
     let n = aln.len();
     let score_threads = run.score_threads;
     let stats_path = run.output.stats_output.clone();

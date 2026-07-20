@@ -1,5 +1,3 @@
-pub(crate) mod open;
-
 use crate::alignment::SimpleRec;
 use crate::bam::reader::BgzfBamReader;
 use crate::bam::{
@@ -79,10 +77,10 @@ where
         threads: NonZeroUsize,
         positive_regions: Option<(PositiveRegions, ScoreFn)>,
     ) -> Result<Self, Error> {
-        let path = opt.alignment[i].to_string_lossy();
+        let path = opt.io.alignment[i].to_string_lossy();
         let seekable_required = MatchingAlgorithm::Hashlookup == opt.algorithm;
 
-        let file = File::open(&opt.alignment[i])?;
+        let file = File::open(&opt.io.alignment[i])?;
 
         let mut bam = if !seekable_required && usize::from(threads) > 1 {
             tracing::debug!(

@@ -1,7 +1,6 @@
 use crate::{
     config::args::{IoArgs, OutputArgsMulti, ScoringArgs, VariantArgs},
     config::run_config::RunConfig,
-    config::MatchingAlgorithm,
     Error,
 };
 use clap::Args;
@@ -43,8 +42,6 @@ pub(crate) struct ViralIntegrationArgs {
 impl ViralIntegrationArgs {
     pub(crate) fn into_run_config(self) -> Result<RunConfig, Error> {
         Ok(RunConfig {
-            algorithm: MatchingAlgorithm::Namesorted,
-            alignment: self.alignment,
             io: self.io,
             scoring: self.scoring,
             variants: self.variants,

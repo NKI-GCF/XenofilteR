@@ -1,22 +1,24 @@
 use crate::{
     aln_stream::{AlignmentStream, AlnStream},
     config::{
+        CommonArgs,
         args::{
-            IoArgs, OutputArgsMulti, RegionArgsMemory, RegionArgsTabix, ScoringArgs, VariantArgs,
+            IoArgs, OutputArgsMulti, RegionArgsTabix, ScoringArgs, VariantArgs, ChimericArgs
         },
-        run_config::RunConfig,
         MatchingAlgorithm, NameEncoderKind,
     },
     file_spec::path_for_stream,
     filter_algorithm::line_by_line::MAX_STREAMS,
     Error,
+    variant::name_to_id::header_name_to_id,
+    region::{ScoreFn, ScoredRegions},
     ensure,
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::{smallvec, SmallVec};
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
-use std::ops::Range;
+use std::ops::RangeInclusive;
 
 /// Single flat struct consumed by all three engines. No Args-struct
 /// indirection survives past `into_run_config()`. This is what
@@ -24,7 +26,6 @@ use std::ops::Range;
 /// identical to before subcommands were introduced.
 #[derive(Debug, Default)]
 pub(crate) struct RunConfig {
-    pub(crate) single_alignment_mode: bool,
     pub(crate) io: IoArgs,
     pub(crate) scoring: ScoringArgs,
     pub(crate) variants: VariantArgs,
@@ -33,7 +34,6 @@ pub(crate) struct RunConfig {
     pub(crate) score_threads: usize,
     pub(crate) chimeric_pairs: Vec<String>,
     pub(crate) stream_labels: Vec<String>,
-    pub(crate) region_memory: RegionArgsMemory,
     pub(crate) region_tabix: RegionArgsTabix,
     pub(crate) name_encoder: Option<NameEncoderKind>,
     pub(crate) is_pass2: bool,
@@ -46,115 +46,35 @@ impl RunConfig {
         chimeric: Option<ChimericArgs>,
         name_encoder: Option<NameEncoderKind>,
         threads: usize,
-        rng: Range<usize>,
-    } -> Result<Self, Error> {
-        let n = common.io.alignment.len();
-        let max = rng.end;
-        ensure!(rng.contains(n), Error::InvalidStreamCount { n, min: rng.start, max });
+        streams: RangeInclusive<usize>,
+        max_stdin: usize,
+    ) -> Result<Self, Error> {
+        let io = common.io;
 
-        let output = common.output.clone();
+        // validate number of streams
+        let n = io.validate(max_stdin)?;
+        common.scoring.validate()?;
+        let max = *streams.end();
+        ensure!(streams.contains(&n), Error::InvalidStreamCount { n, min: *streams.start(), max });
+
+        let output = common.output;
         output.validate(if max == 1 { 2 } else { n })?;
 
-        // CRAM sanity: any .cram input requires --reference.
-        let cram_lacks_ref = common.io.alignment
-            .iter()
-            .enumerate()
-            .any(|(i, p)| p.ends_with(".cram") && path_for_stream(&common.io.reference, i).is_none());
-        ensure!(!cram_lacks_ref, Error::CramRequiresReference);
-
-        let mut config = RunConfig {
-            algorithm: common.algorithm,
-            single_alignment_mode: common.single_alignment_mode,
-            io: common.io,
+        Ok(RunConfig {
+            io,
             scoring: common.scoring,
             variants: common.variants,
             output,
             threads,
             score_threads: common.score_threads,
-            chimeric_pairs: chimeric.map_or(vec![], |c| c.pairs),
+            chimeric_pairs: chimeric.map_or(vec![], |c| c.chimeric_pairs),
             stream_labels: chimeric.map_or(vec![], |c| c.stream_labels),
-            region_memory: common.region_memory,
             region_tabix: common.region_tabix,
             name_encoder,
-            ...Default::default()
-        };
-        Ok(config)
+            ..Default::default()
+        })
     }
 
-    pub(crate) fn validate_and_init(&mut self) -> Result<(), Error> {
-        self.io.validate()?;
-        self.scoring.validate()?;
-
-        let n = self.alignment.len();
-
-        match self.algorithm {
-            MatchingAlgorithm::Namesorted => {
-                if n < 1 || n > MAX_STREAMS {
-                    return Err(Error::NamesortedStreamCount { got: n });
-                }
-                self.output.validate(n)?;
-            }
-            MatchingAlgorithm::Hashlookup => {
-                if n != 2 {
-                    return Err(Error::HashlookupStreamCount { got: n });
-                }
-                if self.score_threads > 1 {
-                    return Err(Error::AlgorithmNotParallel {
-                        algorithm: "hashlookup",
-                    });
-                }
-                self.output.validate(2)?;
-            }
-            MatchingAlgorithm::Collated => {
-                if n != 2 {
-                    return Err(Error::CollatedStreamCount { got: n });
-                }
-                if self.score_threads > 1 {
-                    return Err(Error::AlgorithmNotParallel {
-                        algorithm: "collated",
-                    });
-                }
-                self.output.validate(2)?;
-            }
-            MatchingAlgorithm::Strain => {
-                if n != 1 {
-                    return Err(Error::StrainStreamCount { got: n });
-                }
-                self.output.validate(2)?;
-            }
-            MatchingAlgorithm::ViralIntegration => {
-                if n < 2 {
-                    return Err(Error::ViralIntegrationStreamCount { got: n });
-                }
-                self.output.validate(n)?;
-            }
-        }
-
-        // CRAM sanity: any .cram input requires --reference.
-        if self
-            .alignment
-            .iter()
-            .enumerate()
-            .any(|(i, p)| p.ends_with(".cram") && path_for_stream(&self.io.reference, i).is_none())
-        {
-            return Err(Error::CramRequiresReference);
-        }
-
-        // stdin: at most one stream, namesorted only.
-        let stdin_count = self
-            .alignment
-            .iter()
-            .filter(|p| p.to_string_lossy() == "-")
-            .count();
-        if stdin_count > 1 {
-            return Err(Error::MultipleStdinStreams);
-        }
-        if stdin_count == 1 && self.algorithm != MatchingAlgorithm::Namesorted {
-            return Err(Error::StdinNamesortedOnly);
-        }
-
-        Ok(())
-    }
     /// Open all streams for namesorted/collated (unified reader path).
     /// `bgzf_threads` applies to BAM decompression; ignored for SAM/CRAM.
     pub(crate) fn open_streams_unified(
@@ -167,15 +87,16 @@ impl RunConfig {
         // Requires threads > 1 AND a non-seeking backend (namesorted / collated).
         // HashLookup pass-2 uses seek_vpos → must use Single.
         let threads = NonZeroUsize::new(bgzf_threads).unwrap_or(NonZeroUsize::MIN);
+        let score_fn = self.scoring.region_score_fn;
 
-        let n = self.alignment.len();
+        let n = self.io.alignment.len();
         for i in 0..n {
-            let path = &self.alignment[i];
+            let path = &self.io.alignment[i];
             let path_str = path.to_string_lossy().to_string();
             tracing::debug!(stream = i, path_str, "Opening stream");
-            let positive_regions = path_for_stream(specs, 0)
-                .map(|s| 
-
+            let positive_regions = &self.variants.positive_regions;
+            let name_to_id = header_name_to_id(aln[i].header());
+            let positive_regions = path_for_stream(positive_regions, 0).map(|p| ScoredRegions::from_bed(p.as_path(), &name_to_id).map(|s| (s, score_fn))).transpose()?;
 
             let stream = AlnStream::<RecordBuf>::new(self, i, threads.clone(), positive_regions)?;
             aln.push(Box::new(stream));
@@ -196,16 +117,21 @@ impl RunConfig {
 
     /// Open exactly 2 streams as raw seekable BGZF BAM readers (HashLookup pass-2
     /// requires seek_vpos, which the unified/CRAM-capable reader cannot provide).
-    pub(crate) fn open_streams_raw_bam(
+    pub(crate) fn open_indexed_streams(
         &mut self,
     ) -> Result<SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>, Error> {
-        if !self.alignment.iter().all(|p| p.ends_with(".bam")) {
+        if !self.io.alignment.iter().any(|p| !p.ends_with(".bam")) {
             return Err(Error::InvalidInput(format!(
-                "hashlookup requires BAM input (CRAM/SAM seeking not yet supported; \
-                 see ROADMAP: CRAM index seeking): {:?}",
-                self.alignment
+                "hashlookup requires BAM/CRAM input. SAM does not support seek: {:?}",
+                self.io.alignment
             )));
         }
+        self.open_streams()
+    }
+
+    pub(crate) fn open_streams(
+        &mut self,
+    ) -> Result<SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>, Error> {
         let mut aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> = smallvec![];
         for i in 0..2 {
             let stream = AlnStream::<RecordBuf>::new_raw_bam(i, self)?;

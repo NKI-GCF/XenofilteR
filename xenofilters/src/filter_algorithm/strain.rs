@@ -1,11 +1,9 @@
 use crate::{
     config::args::{IoArgs, OutputArgsPair, ScoringArgs, VariantArgs},
     config::run_config::RunConfig,
-    config::MatchingAlgorithm,
     Error,
 };
 use clap::Args;
-use smallvec::{smallvec, SmallVec};
 use std::path::PathBuf;
 
 /// Within-species strain disambiguation: single alignment, two variant
@@ -46,12 +44,11 @@ impl StrainArgs {
         if !self.variants.has_index(0) || !self.variants.has_index(1) {
             return Err(Error::StrainMissingVariantProfile);
         }
-        let alignment = self.alignment[0].clone();
+        let mut io = self.io;
+        let alignment = io.alignment[0].clone();
+        io.alignment.push(alignment);
         Ok(RunConfig {
-            algorithm: MatchingAlgorithm::Namesorted,
-            alignment: vec![alignment.clone(), alignment], // duplicated stream
-            single_alignment_mode: true,
-            io: self.io,
+            io,
             scoring: self.scoring,
             variants: self.variants,
             output: self.output.into(),

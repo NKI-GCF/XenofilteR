@@ -3,7 +3,7 @@ pub(crate) mod run_config;
 
 use crate::{
     config::run_config::RunConfig,
-    file_spec::{path_for_stream, FileSpec},
+    file_spec::FileSpec,
     filter_algorithm::{
         line_by_line::MAX_STREAMS, strain::StrainArgs, viral_integration::ViralIntegrationArgs,
     },
@@ -137,16 +137,6 @@ pub(crate) enum AlgorithmCommand {
 }
 
 impl AlgorithmCommand {
-    pub(crate) fn validate_and_init(&mut self) -> Result<(), Error> {
-        match self {
-            Self::Namesorted(a) => a.common.validate_and_init(),
-            Self::Hashlookup(a) => a.common.validate_and_init(),
-            Self::Collated(a) => a.common.validate_and_init(),
-            Self::Strain(a) => a.validate_and_init(),
-            Self::ViralIntegration(a) => a.validate_and_init(),
-            Self::Completion(_) => Ok(()),
-        }
-    }
     /// Extract the common args regardless of which subcommand was chosen.
     pub(crate) fn common(&self) -> &CommonArgs {
         match self {
@@ -171,7 +161,6 @@ impl Default for AlgorithmCommand {
         AlgorithmCommand::Namesorted(NamesortedArgs {
             common: CommonArgs::default(),
             threads: 4,
-            name_encoder: NameEncoderKind::Illumina,
             ..Default::default()
         })
     }
@@ -193,12 +182,6 @@ pub(crate) struct CommonArgs {
 }
 
 impl CommonArgs {
-    pub(crate) fn validate_and_init(&mut self) -> Result<(), crate::Error> {
-        self.scoring.validate()?;
-        self.io.validate()?;
-        Ok(())
-    }
-
     pub(crate) fn print_routing_counters(&self, counters: &[u64], tag: &str) {
         use crate::filter_algorithm::line_by_line::core::COUNTER_STRIDE;
         let stream_count = counters.len() / COUNTER_STRIDE;
@@ -270,9 +253,9 @@ impl NamesortedArgs {
             self.common,
             Some(self.chimeric),
             None,
-            None,
             self.threads,
             1..=MAX_STREAMS,
+            1,
         )
     }
 }
@@ -310,8 +293,8 @@ pub(crate) struct HashlookupArgs {
 }
 
 impl HashlookupArgs {
-    pub(crate) fn to_runconfig(&self) -> Result<RunConfig, Error> {
-        RunConfig::new(self.common, None, self.name_encoder, 1, 2..=2)
+    pub(crate) fn to_runconfig(self) -> Result<RunConfig, Error> {
+        RunConfig::new(self.common, None, Some(self.name_encoder), 1, 2..=2, 0)
     }
 }
 
@@ -342,7 +325,7 @@ pub(crate) struct CollatedArgs {
 
 impl CollatedArgs {
     pub(crate) fn to_runconfig(self) -> Result<RunConfig, Error> {
-        RunConfig::new(self.common, None, None, 1, 2..=2)
+        RunConfig::new(self.common, None, None, 1, 2..=2, 1)
     }
 }
 
@@ -382,7 +365,6 @@ impl Default for NamesortedArgs {
             threads: 4,
             parallel: crate::config::args::ParallelArgs::default(),
             chimeric: crate::config::args::ChimericArgs::default(),
-            name_encoder: NameEncoderKind::Illumina,
         }
     }
 }

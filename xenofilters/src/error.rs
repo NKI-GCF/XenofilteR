@@ -432,6 +432,12 @@ pub enum Error {
     )]
     SingleStreamMissingFlag,
 
+    #[error("Stdin not allowed for Hashlookup algorithm; others allow at most one stream from stdin.")]
+    TooManyStdinStreams,
+
+    #[error("Number of alignment streams ({n}) should be between {min} and {max} for algorithm.")]
+    InvalidStreamCount { n: usize, min: usize, max: usize },
+
     #[error(
         "Cannot use single alignment mode with stdin because the stream must be duplicated via file system access."
     )]
@@ -439,9 +445,6 @@ pub enum Error {
 
     #[error("--single-alignment-mode is only supported with --matching-algorithm namesorted.")]
     SingleStreamRequiresNamesorted,
-
-    #[error("at most one stream may be read from stdin")]
-    MultipleStdinStreams,
 
     #[error("stdin is only supported with --matching-algorithm namesorted")]
     StdinRequiresNamesorted,

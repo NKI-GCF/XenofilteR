@@ -7,7 +7,7 @@
 use crate::{
     alignment::{FragmentState, SimpleRec},
     aln_stream::AlignmentStream,
-    config::{args::resolve_threshold, NamesortedArgs, StripReadSuffix},
+    config::{run_config::RunConfig, args::resolve_threshold, NamesortedArgs, StripReadSuffix},
     penalty::Penalty,
     progress::ProgressReporter,
     region::{ScoreFn, ScoredRegions},
@@ -137,23 +137,23 @@ pub(crate) struct LineByLine<R> {
 
 impl<R: SimpleRec> LineByLine<R> {
     pub(crate) fn new(
-        config: &Runconfig,
+        config: &RunConfig,
         mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
     ) -> Result<Self, Error> {
-        let is_unmapped_skipped = match config.common.io.discard_unmapped {
+        let is_unmapped_skipped = match config.io.discard_unmapped {
             true => unmapped_and_mate_unmapped,
             false => always_false,
         };
-        let is_secondary_skipped = match config.common.io.skip_secondary {
+        let is_secondary_skipped = match config.io.skip_secondary {
             true => is_secondary,
             false => always_false,
         };
-        let ambiguous_log_threshold = match config.common.scoring.ambiguous_threshold {
+        let ambiguous_log_threshold = match config.scoring.ambiguous_threshold {
             0 => 0.0,
             t => (t as f64) * std::f64::consts::LN_10 / 10.0,
         };
         let is_new_qname: fn(&FragmentBuffer<R>, &[u8]) -> Option<bool> =
-            match config.common.io.strip_read_suffix {
+            match config.io.strip_read_suffix {
                 StripReadSuffix::True => |best: &FragmentBuffer<R>, qname2: &[u8]| {
                     best.first()
                         .map(|b| b.first_qname())
@@ -181,7 +181,7 @@ impl<R: SimpleRec> LineByLine<R> {
         let aln_len = aln.len();
         for i in 0..aln_len {
             if let Some(a) = aln.get_mut(i) {
-                a.init_writers(&config.to_runconfig(), i)?;
+                a.init_writers(&config, i)?;
             }
         }
 
@@ -196,7 +196,7 @@ impl<R: SimpleRec> LineByLine<R> {
                  Output order is nondeterministic."
             );
         }
-        let progress = match config.common.io.quiet {
+        let progress = match config.io.quiet {
             true => None,
             false => Some(ProgressReporter::new()),
         };
@@ -204,7 +204,6 @@ impl<R: SimpleRec> LineByLine<R> {
 
         let mut positive_regions: [Option<Arc<ScoredRegions>>; MAX_STREAMS] = Default::default();
         for (i, path) in config
-            .common
             .variants
             .positive_regions
             .iter()
@@ -230,17 +229,17 @@ impl<R: SimpleRec> LineByLine<R> {
             is_secondary_skipped,
             is_unmapped_skipped,
             is_new_qname,
-            add_decision_tag: config.common.io.add_decision_tag,
-            penalties: config.common.scoring.to_penalty(),
+            add_decision_tag: config.io.add_decision_tag,
+            penalties: config.scoring.to_penalty(),
             ambiguous_log_threshold,
             scratch: Scratch::new(),
             chimeric_pairs,
             stream_labels: config.chimeric.stream_labels.clone(),
             score_threads,
             progress,
-            bisulfite: config.common.scoring.bisulfite,
+            bisulfite: config.scoring.bisulfite,
             positive_regions,
-            region_score_fn: config.common.scoring.region_score_fn,
+            region_score_fn: config.scoring.region_score_fn,
         })
     }
 }

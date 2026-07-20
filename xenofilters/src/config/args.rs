@@ -6,7 +6,7 @@ use crate::file_spec::{path_for_stream, FileSpec};
 use crate::filter_algorithm::line_by_line::MAX_STREAMS;
 use crate::penalty::ErrorModel;
 use crate::region::ScoreFn;
-use crate::Error;
+use crate::{Error, ensure};
 use clap::Args;
 use std::path::PathBuf;
 
@@ -166,24 +166,6 @@ pub(crate) struct ChimericArgs {
     pub(crate) stream_labels: Vec<String>,
 }
 
-/// In-memory region flags (hashlookup).
-#[derive(Args, Debug, Clone, Default)]
-pub(crate) struct RegionArgsMemory {
-    // only for hashlookup or collated, so 2 streams max.
-    #[arg(long, num_args = 0..=2, value_name = "[IDX:]FILE", help_heading = "Regions")]
-    pub(crate) ambiguous_regions: Vec<FileSpec>,
-
-    #[arg(long, num_args = 0..=MAX_STREAMS, value_name = "[IDX:]FILE", help_heading = "Regions")]
-    pub(crate) diagnostic_variants: Vec<FileSpec>,
-
-    #[arg(long, num_args = 0..=MAX_STREAMS, value_name = "[IDX:]FILE", help_heading = "Regions")]
-    pub(crate) positive_regions: Vec<FileSpec>,
-
-    #[arg(long, default_value = "linear:1.0", help_heading = "Regions")]
-    pub(crate) region_score_fn: ScoreFn,
-}
-
-// FIXME:
 /// Tabix-indexed region flags (collated). Same flag *names*, different
 /// runtime loader (TabixBed vs AmbiguousRegions::from_bed). Kept as a
 /// separate struct only because the doc strings differ (tabix requirement).
@@ -236,15 +218,23 @@ pub(crate) struct OutputArgsPair {
 // src/config/args.rs
 
 impl IoArgs {
-    pub(crate) fn validate(&self) -> Result<(), Error> {
-        for path in &self.alignment {
-            if !path.exists() {
-                return Err(Error::ReferenceNotFound {
-                    path: path.display().to_string(),
-                });
-            }
-        }
-        Ok(())
+    pub(crate) fn validate(&self, max_stdin: usize) -> Result<usize, Error> {
+        // stdin: at most one stream, namesorted only.
+        let stdin_count = self
+            .alignment
+            .iter()
+            .filter(|p| p.to_string_lossy() == "-")
+            .count();
+        ensure!(stdin_count <= max_stdin, Error::TooManyStdinStreams);
+
+        // CRAM sanity: any .cram input requires --reference.
+        let cram_lacks_ref = self.alignment
+            .iter()
+            .enumerate()
+            .any(|(i, p)| p.ends_with(".cram") && path_for_stream(&self.reference, i).is_none());
+        ensure!(!cram_lacks_ref, Error::CramRequiresReference);
+
+        Ok(self.alignment.len())
     }
 }
 
