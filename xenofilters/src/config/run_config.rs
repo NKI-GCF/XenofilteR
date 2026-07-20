@@ -31,7 +31,6 @@ pub(crate) struct RunConfig {
     pub(crate) variants: VariantArgs,
     pub(crate) output: OutputArgsMulti,
     pub(crate) threads: usize,
-    pub(crate) score_threads: usize,
     pub(crate) chimeric_pairs: Vec<String>,
     pub(crate) stream_labels: Vec<String>,
     pub(crate) region_tabix: RegionArgsTabix,
@@ -138,5 +137,44 @@ impl RunConfig {
             aln.push(Box::new(stream));
         }
         Ok(aln)
+    }
+    pub(crate) fn print_routing_counters(&self, counters: &[u64], tag: &str) {
+        use crate::filter_algorithm::line_by_line::core::COUNTER_STRIDE;
+        let stream_count = counters.len() / COUNTER_STRIDE;
+        for nr in 0..stream_count {
+            let b = nr * COUNTER_STRIDE;
+            tracing::info!(
+                stream = nr,
+                backend = tag,
+                discard = counters[b],
+                out = counters[b + 1],
+                ambiguous = counters[b + 2],
+                chimeric = counters[b + 3],
+                "Stream summary"
+            );
+        }
+        let total: u64 = counters.iter().sum();
+        if total == 0 {
+            return;
+        }
+        let ambiguous: u64 = counters.chunks_exact(COUNTER_STRIDE).map(|c| c[2]).sum();
+        let frac = ambiguous as f64 / total as f64;
+        if frac > self.scoring.warn_ambig_fraction {
+            let threshold_phred = match self.scoring.ambiguous_threshold {
+                u32::MAX => {
+                    if self.io.is_pass2 {
+                        0
+                    } else {
+                        10
+                    }
+                }
+                p => p,
+            };
+            tracing::warn!(
+                ambiguous_pct = format!("{:.1}", frac * 100.0),
+                threshold_phred,
+                "Ambiguous fraction exceeds warning level."
+            );
+        }
     }
 }

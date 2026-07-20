@@ -29,7 +29,7 @@ use reader::{CollatedReader, canonical_name};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use ahash::RandomState;
-use crate::config::CollatedArgs;
+use crate::config::run_config::RunConfig;
 use crate::config::args::resolve_threshold;
 
 pub(crate) struct CollatedMatcher<R: SimpleRec> {
@@ -49,31 +49,31 @@ pub(crate) struct CollatedMatcher<R: SimpleRec> {
 
 impl<R: SimpleRec> CollatedMatcher<R> {
     pub(crate) fn new_from_collated(
-        args: &CollatedArgs,
+        args: &RunConfig,
         aln:  SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>,
         bed:  [Option<TabixBed>; 2],
         vcf:  [Option<TabixVcf>; 2],
     ) -> Result<CollatedMatcher<RecordBuf>, Error> {
         let ambiguous_log_threshold = resolve_threshold(
-            args.common.scoring.ambiguous_threshold, false,
+            args.scoring.ambiguous_threshold, false,
         );
         let mut it = aln.into_iter();
         let a0 = it.next().unwrap();
         let a1 = it.next().unwrap();
-        let bisulfite = args.common.scoring.bisulfite; 
+        let bisulfite = args.scoring.bisulfite; 
         Ok(CollatedMatcher {
             a: CollatedReader::new(a0, bisulfite, 0),
             b: CollatedReader::new(a1, bisulfite, 1),
             waiting_a: HashMap::with_hasher(RandomState::new()),
             waiting_b: HashMap::with_hasher(RandomState::new()),
-            penalties: args.common.scoring.to_penalty(),
+            penalties: args.scoring.to_penalty(),
             scratch: Scratch::new(),
             routing_counters: SmallVec::from_elem(0, 2 * 4), // 2 streams × 4 counters per stream
-            add_decision_tag: args.common.io.add_decision_tag,
+            add_decision_tag: args.io.add_decision_tag,
             ambiguous_log_threshold,
             bed,
             vcf,
-            strip: args.common.io.strip_read_suffix,
+            strip: args.io.strip_read_suffix,
         })
     }
 
@@ -89,7 +89,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
     //
     // Output order is NOT guaranteed (acceptable for Collated).
     // N-STREAM: scales to N waiting maps; memory is O(name-order skew × streams).
-    pub(crate) fn process(&mut self, config: &CommonArgs) -> Result<(), Error> {
+    pub(crate) fn process(&mut self, config: &RunConfig) -> Result<(), Error> {
         loop {
             let fa = self.a.next_fragment(config.io.strip_read_suffix)?;
             let fb = self.b.next_fragment(config.io.strip_read_suffix)?;

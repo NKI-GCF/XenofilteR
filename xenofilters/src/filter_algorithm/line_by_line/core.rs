@@ -7,7 +7,7 @@
 use crate::{
     alignment::{FragmentState, SimpleRec},
     aln_stream::AlignmentStream,
-    config::{run_config::RunConfig, args::resolve_threshold, NamesortedArgs, StripReadSuffix},
+    config::{run_config::RunConfig, args::resolve_threshold, StripReadSuffix},
     penalty::Penalty,
     progress::ProgressReporter,
     region::{ScoreFn, ScoredRegions},
@@ -246,21 +246,21 @@ impl<R: SimpleRec> LineByLine<R> {
 
 impl LineByLine<RecordBuf> {
     pub(crate) fn new_from_namesorted(
-        args: &NamesortedArgs,
+        args: &RunConfig,
         aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>,
     ) -> Result<Self, Error> {
         let n = aln.len();
         let chimeric_pairs = args.chimeric.parse_pairs(n)?;
         let ambiguous_log_threshold = resolve_threshold(
-            args.common.scoring.ambiguous_threshold,
+            args.scoring.ambiguous_threshold,
             /* is_pass2 */ false,
         );
-        let progress = match args.common.io.quiet {
+        let progress = match args.io.quiet {
             true => None,
             false => Some(ProgressReporter::new()),
         };
         let is_new_qname: fn(&FragmentBuffer<RecordBuf>, &[u8]) -> Option<bool> =
-            match args.common.io.strip_read_suffix {
+            match args.io.strip_read_suffix {
                 StripReadSuffix::True => |best: &FragmentBuffer<RecordBuf>, qname2: &[u8]| {
                     best.first()
                         .map(|b| b.first_qname())
@@ -285,17 +285,16 @@ impl LineByLine<RecordBuf> {
                     debug_new_qname_fn()
                 }
             };
-        let is_unmapped_skipped = match args.common.io.discard_unmapped {
+        let is_unmapped_skipped = match args.io.discard_unmapped {
             true => unmapped_and_mate_unmapped,
             false => always_false,
         };
-        let is_secondary_skipped = match args.common.io.skip_secondary {
+        let is_secondary_skipped = match args.io.skip_secondary {
             true => is_secondary,
             false => always_false,
         };
         let mut positive_regions: [Option<Arc<ScoredRegions>>; MAX_STREAMS] = Default::default();
         for (i, path) in args
-            .common
             .variants
             .positive_regions
             .iter()
@@ -318,10 +317,10 @@ impl LineByLine<RecordBuf> {
         Ok(Self {
             aln,
             routing_counters: SmallVec::from_elem(0, n * COUNTER_STRIDE),
-            penalties: args.common.scoring.to_penalty(),
+            penalties: args.scoring.to_penalty(),
             ambiguous_log_threshold,
-            add_decision_tag: args.common.io.add_decision_tag,
-            bisulfite: args.common.scoring.bisulfite,
+            add_decision_tag: args.io.add_decision_tag,
+            bisulfite: args.scoring.bisulfite,
             score_threads: args.parallel.score_threads,
             chimeric_pairs,
             stream_labels: args.chimeric.stream_labels.clone(),
@@ -330,7 +329,7 @@ impl LineByLine<RecordBuf> {
             is_secondary_skipped,
             is_unmapped_skipped,
             scratch: Scratch::new(),
-            region_score_fn: args.common.scoring.region_score_fn,
+            region_score_fn: args.scoring.region_score_fn,
             positive_regions,
         })
     }

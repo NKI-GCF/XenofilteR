@@ -53,7 +53,7 @@ use noodles::sam::alignment::RecordBuf;
 use smallvec::{smallvec, SmallVec};
 use std::f64::consts::LN_10;
 use std::sync::Arc;
-use crate::config::NamesortedArgs;
+use crate::config::run_config::RunConfig;
 
 pub(crate) fn compute_cancel_slot<R: SimpleRec>(best: &FragmentBuffer<R>) -> [bool; 2] {
     // -- Pass 0: per-mate classification (cheap, borrow-only) -----------
@@ -501,7 +501,7 @@ fn score_candidate_owned(
 
 impl<R: SimpleRec> LineByLine<R> {
     /// Original single-threaded process loop.
-    pub(crate) fn process_sequential(&mut self, config: &NamesortedArgs) -> Result<(), Error> {
+    pub(crate) fn process_sequential(&mut self, config: &RunConfig) -> Result<(), Error> {
         let mut best: FragmentBuffer<R> = smallvec![];
         let mut i = 0;
         let aln_len = self.aln.len();
@@ -580,7 +580,7 @@ impl<R: SimpleRec> LineByLine<R> {
         if let Some(p) = self.progress.as_ref() {
             p.finish()
         }
-        config.common.print_routing_counters(&self.routing_counters, "namesorted");
+        config.print_routing_counters(&self.routing_counters, "namesorted");
         Ok(())
     }
 

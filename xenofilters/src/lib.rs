@@ -15,9 +15,9 @@ pub mod reporting;
 pub mod stats;
 pub mod variant;
 
-use crate::file_spec::{path_for_stream, FileSpec};
-use crate::region::tabix_load::{open_tabix_bed, open_tabix_scored, open_tabix_vcf};
-use crate::region::tabix_query::{TabixBed, TabixVcf};
+use file_spec::{path_for_stream, FileSpec};
+use region::tabix_load::{open_tabix_bed, open_tabix_scored, open_tabix_vcf};
+use region::tabix_query::{TabixBed, TabixVcf};
 use clap::CommandFactory;
 use clap_complete::generate;
 use config::{
