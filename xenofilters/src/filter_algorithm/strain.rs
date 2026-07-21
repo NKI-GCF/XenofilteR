@@ -14,12 +14,6 @@ use std::path::PathBuf;
 /// as --threads only, kept simple).
 #[derive(Args, Clone, Debug)]
 pub(crate) struct StrainArgs {
-    /// Single alignment BAM/CRAM (duplicated internally into two logical
-    /// streams, one scored against each strain's variant profile).
-    #[arg(required = true, value_hint = clap::ValueHint::FilePath,
-          help_heading = "Input")]
-    pub(crate) alignment: Vec<PathBuf>,
-
     #[command(flatten)]
     pub(crate) io: IoArgs,
 
@@ -37,9 +31,6 @@ pub(crate) struct StrainArgs {
 
     #[command(flatten)]
     pub(crate) parallel: crate::config::args::ParallelArgs,
-
-    #[arg(short = 't', long, default_value = "4", help_heading = "Parallelism")]
-    pub(crate) threads: usize,
 }
 
 impl StrainArgs {
@@ -55,14 +46,13 @@ impl StrainArgs {
             scoring: self.scoring,
             variants: self.variants,
             output: self.output,
-            threads: self.threads,
             chimeric_pairs: vec![],
             stream_labels: vec![],
             ..Default::default()
         })
     }
     pub(crate) fn validate_and_init(&mut self) -> Result<(), Error> {
-        let got = self.alignment.len();
+        let got = self.io.alignment.len();
         if got != 1 {
             return Err(Error::StrainStreamCount { got });
         }

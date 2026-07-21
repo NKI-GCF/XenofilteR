@@ -13,13 +13,12 @@ use std::path::PathBuf;
 /// Shared by every subcommand. No arity-specific fields here.
 #[derive(Args, Debug, Clone, Default)]
 pub(crate) struct IoArgs {
-    /// Input alignments to compare. If the same readnames are consecutive and in the same order for
-    /// all inputs, a low memory non-hashing strategy is adopted.
+    /// Input alignments to compare. Only one required for subcommand 'strain'.
     #[arg(required = true, num_args = 1..MAX_STREAMS, help_heading = "Input")]
     pub alignment: Vec<PathBuf>,
 
     /// Reference FASTA for CRAM decoding.
-    #[arg(long, help_heading = "Input", value_name = "[IDX:]FILE")]
+    #[arg(long, value_name = "[IDX:]FILE", help_heading = "Input")]
     pub(crate) reference: Vec<FileSpec>,
 
     /// Strip /1 /2 read-name suffix. auto | true | false | variable
@@ -34,6 +33,15 @@ pub(crate) struct IoArgs {
     #[arg(short = 'P', long, default_value = "false", help_heading = "Output")]
     pub(crate) no_program_line: bool,
 
+    /// Input format: sam | bam | cram. Default: bam.
+    #[arg(long, default_value = "bam", help_heading = "Input")]
+    pub(crate) input_format: AlnFormat,
+
+    /// Output format: sam | bam | cram. Default: bam.
+    #[arg(short = 'O', long, default_value = "bam", help_heading = "Output")]
+    pub(crate) stdout_format: AlnFormat,
+
+
     /// Keep discarded reads alongside ambiguous.
     #[arg(long, default_value_t = false, hide = true)]
     pub(crate) write_discarded: bool,
@@ -43,27 +51,15 @@ pub(crate) struct IoArgs {
     pub(crate) discard_unmapped: bool,
 
     /// Skip secondary alignments (default false).
-    #[arg(short, long, default_value_t = false, hide = true)]
+    #[arg(short = 'k', long, default_value_t = false, hide = true)]
     pub(crate) skip_secondary: bool,
 
-    /// Input format: sam | bam | cram. Default: bam.
-    #[arg(long, default_value = "bam")]
-    pub(crate) input_format: AlnFormat,
-
-    /// Output format: sam | bam | cram. Default: bam.
-    #[arg(short = 'O', long, default_value = "bam")]
-    pub(crate) stdout_format: AlnFormat,
-
-    /// Write JSON summary statistics (MultiQC-compatible).
-    #[arg(long, env = "XENOFILTERS_STATS_OUTPUT", help_heading = "Output")]
-    pub(crate) stats_output: Option<PathBuf>,
-
     /// Suppress progress output to stderr.
-    #[arg(long, default_value = "false", help_heading = "Misc")]
+    #[arg(long, default_value = "false")]
     pub(crate) quiet: bool,
 
     /// Verbosity: -v = INFO, -vv = DEBUG.
-    #[arg(short, long, action = clap::ArgAction::Count, help_heading = "Misc")]
+    #[arg(short, long, action = clap::ArgAction::Count)]
     pub(crate) verbose: u8,
 
     // Mutable state set during stream init — not CLI args.
@@ -88,10 +84,10 @@ pub(crate) struct ScoringArgs {
     #[arg(short = 'e', long, default_value = "1.0", help_heading = "Scoring")]
     pub(crate) gap_extend: f64,
 
-    #[arg(short = 'c', long, default_value_t = 5.0)]
+    #[arg(short = 'c', long, default_value_t = 5.0, help_heading = "Scoring")]
     pub(crate) clipping_penalty: f64,
 
-    #[arg(short = 'J', long, default_value_t = 20)]
+    #[arg(short = 'J', long, default_value_t = 20, help_heading = "Scoring")]
     pub(crate) chimeric_junction_bases: u32,
 
     #[arg(long, default_value_t = u32::MAX, value_name = "PHRED|auto",
@@ -114,21 +110,24 @@ pub(crate) struct RelatedArgs {
     pub(crate) sample_variants: Vec<FileSpec>,
 
     #[arg(short = 'p', long, num_args = 0..=MAX_STREAMS, value_name = "[IDX:]FILE",
-          help_heading = "Diagnostic")]
+          help_heading = "Variants")]
     pub(crate) population_variants: Vec<FileSpec>,
 
+    /// BED file(s) of regions giving reads a positive score bonus.
     #[arg(long, num_args = 0..=MAX_STREAMS, value_name = "[IDX:]FILE.bed.gz",
           help_heading = "Regions")]
     pub(crate) positive_regions: Vec<FileSpec>,
 
-    #[arg(long, default_value = "linear:1.0")]
+    /// Score function for --positive-regions BED score column.
+    /// Format: fn[:weight]  fn ∈ {linear, log, constant, overlap_fraction}
+    #[arg(long, default_value = "linear:1.0", help_heading = "Regions")]
     pub(crate) region_score_fn: ScoreFn,
 
     // FIXME: only expand if necessary.
-    #[arg(long, default_value_t = false, requires = "reference")]
+    #[arg(long, default_value_t = false, requires = "reference", help_heading = "Variants")]
     pub(crate) expand_indels: bool,
 
-    #[arg(long, default_value_t = 50)]
+    #[arg(long, default_value_t = 50, requires = "expand-indels", help_heading = "Variants")]
     pub(crate) indel_expand_padding: usize,
 }
 
@@ -190,7 +189,8 @@ pub(crate) struct OutputArgs {
     #[arg(short = 'a', long, num_args = 0..=MAX_STREAMS, help_heading = "Output")]
     pub(crate) ambiguous_output: Vec<PathBuf>,
 
-    #[arg(long)]
+    /// Write JSON summary statistics (MultiQC-compatible).
+    #[arg(long, env = "XENOFILTERS_STATS_OUTPUT", help_heading = "Output")]
     pub(crate) stats_output: Option<PathBuf>,
 }
 

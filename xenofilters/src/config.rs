@@ -161,7 +161,6 @@ impl Default for AlgorithmCommand {
     fn default() -> Self {
         AlgorithmCommand::Namesorted(NamesortedArgs {
             common: CommonArgs::default(),
-            threads: 4,
             ..Default::default()
         })
     }
@@ -189,7 +188,7 @@ pub(crate) struct NamesortedArgs {
     #[command(flatten)]
     pub(crate) common: CommonArgs,
 
-    /// bgzf decompression worker threads.
+    /*/// bgzf decompression worker threads.
     #[arg(
         short = 't',
         long,
@@ -197,7 +196,7 @@ pub(crate) struct NamesortedArgs {
         env = "XENOFILTERS_THREADS",
         help_heading = "Parallelism"
     )]
-    pub(crate) threads: usize,
+    pub(crate) threads: usize,*/
 
     #[command(flatten)]
     pub(crate) parallel: crate::config::args::ParallelArgs,
@@ -212,7 +211,7 @@ impl NamesortedArgs {
             self.common,
             Some(self.chimeric),
             None,
-            self.threads,
+            self.parallel.threads,
             1..=MAX_STREAMS,
             1,
             None,
@@ -237,16 +236,6 @@ pub(crate) struct HashlookupArgs {
           help_heading = "Regions", value_hint = clap::ValueHint::FilePath)]
     pub(crate) distinct_variants: Vec<FileSpec>,
 
-    /// BED file(s) of regions giving reads a positive score bonus.
-    #[arg(long, num_args = 0..=2, value_name = "FILE",
-          help_heading = "Regions", value_name = "[IDX:]FILE")]
-    pub(crate) positive_regions: Vec<FileSpec>,
-
-    /// Score function for --positive-regions BED score column.
-    /// Format: fn[:weight]  fn ∈ {linear, log, constant, overlap_fraction}
-    #[arg(long, default_value = "linear:1.0", help_heading = "Regions")]
-    pub(crate) region_score_fn: ScoreFn,
-
     /// Name encoder for key compression.
     #[arg(long, default_value = "illumina", help_heading = "Advanced")]
     pub(crate) name_encoder: NameEncoderKind,
@@ -254,7 +243,7 @@ pub(crate) struct HashlookupArgs {
 
 impl HashlookupArgs {
     pub(crate) fn into_run_config(self) -> Result<RunConfig, Error> {
-        let segregate = if self.distinct_variants.is_empty() && self.positive_regions.is_empty() {
+        let segregate = if self.distinct_variants.is_empty() && self.common.variants.positive_regions.is_empty() {
             None
         } else {
             Some(SegregateArgs {
@@ -281,19 +270,11 @@ pub(crate) struct CollatedArgs {
     #[arg(long, num_args = 0..=2, value_name = "[IDX:]FILE",
           help_heading = "Regions", value_hint = clap::ValueHint::FilePath)]
     pub(crate) distinct_variants: Vec<FileSpec>,
-
-    /// BED.gz file(s) of positive-score regions. Tabix-indexed.
-    #[arg(long, num_args = 0..=2, value_name = "[IDX:]FILE",
-          help_heading = "Regions", value_hint = clap::ValueHint::FilePath)]
-    pub(crate) positive_regions: Vec<FileSpec>,
-
-    #[arg(long, default_value = "linear:1.0", help_heading = "Regions")]
-    pub(crate) region_score_fn: ScoreFn,
 }
 
 impl CollatedArgs {
     pub(crate) fn into_run_config(self) -> Result<RunConfig, Error> {
-        let segregate = if self.distinct_variants.is_empty() && self.positive_regions.is_empty() {
+        let segregate = if self.distinct_variants.is_empty() && self.common.variants.positive_regions.is_empty() {
             None
         } else {
             Some(SegregateArgs {
@@ -338,7 +319,6 @@ impl Default for NamesortedArgs {
     fn default() -> Self {
         Self {
             common: CommonArgs::default(),
-            threads: 4,
             parallel: crate::config::args::ParallelArgs::default(),
             chimeric: crate::config::args::ChimericArgs::default(),
         }
