@@ -19,13 +19,12 @@ pub(crate) mod tests;
 use crate::Error;
 use crate::alignment::{FragmentState, SimpleRec, PreAssessResult, pre_assess_alignments, MateKind, mate_kind::MateClassifiable };
 use crate::aln_stream::AlignmentStream;
-use crate::config::StripReadSuffix;
 use crate::filter_algorithm::line_by_line::{Scratch, ordering::Decision};
 use crate::penalty::Penalty;
 use crate::region::tabix_query::{TabixBed, TabixVcf};
 use noodles::sam::alignment::record::data::field::Tag;
 use noodles::sam::alignment::record_buf::{RecordBuf, data::field::Value};
-use reader::{CollatedReader, canonical_name};
+use reader::CollatedReader;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use ahash::RandomState;
@@ -35,14 +34,13 @@ use crate::config::args::resolve_threshold;
 pub(crate) struct CollatedMatcher<R: SimpleRec> {
     a: CollatedReader<R>,
     b: CollatedReader<R>,
-    waiting_a: HashMap<Box<[u8]>, FragmentState<R>, RandomState>,
-    waiting_b: HashMap<Box<[u8]>, FragmentState<R>, RandomState>,
+    waiting_a: HashMap<String, FragmentState<R>, RandomState>,
+    waiting_b: HashMap<String, FragmentState<R>, RandomState>,
     penalties: Penalty,
     scratch: Scratch,
     pub(crate) routing_counters: SmallVec<[u64; 8]>,
     add_decision_tag: bool,
     ambiguous_log_threshold: f64,
-    strip: StripReadSuffix,
     bed: [Option<TabixBed>; 2],
     vcf: [Option<TabixVcf>; 2],
 }
@@ -73,7 +71,6 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             ambiguous_log_threshold,
             bed,
             vcf,
-            strip: args.io.strip_read_suffix,
         })
     }
 
@@ -91,8 +88,8 @@ impl<R: SimpleRec> CollatedMatcher<R> {
     // N-STREAM: scales to N waiting maps; memory is O(name-order skew × streams).
     pub(crate) fn process(&mut self, config: &RunConfig) -> Result<(), Error> {
         loop {
-            let fa = self.a.next_fragment(config.io.strip_read_suffix)?;
-            let fb = self.b.next_fragment(config.io.strip_read_suffix)?;
+            let fa = self.a.next_fragment()?;
+            let fb = self.b.next_fragment()?;
             match (fa, fb) {
                 (None, None) => break,
                 (Some(fa), Some(fb)) => {
@@ -118,14 +115,15 @@ impl<R: SimpleRec> CollatedMatcher<R> {
 
     fn handle_fragment(&mut self, frag: FragmentState<R>) -> Result<(), Error> {
         let nr = frag.get_nr();
-        let key = canonical_name(frag.first_qname(), self.strip);
+        let key: &[u8] = frag.first_qname().as_ref();
+        let key = String::from_utf8_lossy(key).to_string();
         if nr == 0 {
-            if let Some(other) = self.waiting_b.remove(key.as_ref()) {
+            if let Some(other) = self.waiting_b.remove(&key) {
                 self.score_pair(frag, other)?;
             } else {
                 self.waiting_a.insert(key, frag);
             }
-        } else if let Some(other) = self.waiting_a.remove(key.as_ref()) {
+        } else if let Some(other) = self.waiting_a.remove(&key) {
             self.score_pair(other, frag)?;
         } else {
             self.waiting_b.insert(key, frag);

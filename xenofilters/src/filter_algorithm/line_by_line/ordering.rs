@@ -668,7 +668,8 @@ impl<R: SimpleRec> LineByLine<R> {
     ) -> Result<bool, Error> {
         if !(self.is_secondary_skipped)(&rec)? {
             let name = rec.name().ok_or(Error::RecordHasNoReadName)?;
-            if let Some(new_readname) = (self.is_new_qname)(best, name.as_ref()) {
+            let name: &[u8] = name.as_ref();
+            if let Some(new_readname) = best.first().map(|b| b.first_qname() != name) {
                 if new_readname {
                     #[cfg(test)]
                     if self.aln.is_empty() {

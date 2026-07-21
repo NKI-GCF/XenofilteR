@@ -7,7 +7,7 @@
 use crate::{
     alignment::{FragmentState, SimpleRec},
     aln_stream::AlignmentStream,
-    config::{run_config::RunConfig, StripReadSuffix},
+    config::run_config::RunConfig,
     penalty::Penalty,
     progress::ProgressReporter,
     region::{ScoreFn, ScoredRegions},
@@ -112,7 +112,6 @@ pub(crate) struct LineByLine<R> {
     pub(crate) routing_counters: SmallVec<[u64; 8]>,
     pub(super) is_secondary_skipped: RecordEvalFn,
     pub(super) is_unmapped_skipped: RecordEvalFn,
-    pub(super) is_new_qname: fn(&FragmentBuffer<R>, &[u8]) -> Option<bool>,
     pub(super) add_decision_tag: bool,
     pub(super) penalties: Penalty,
     pub(super) ambiguous_log_threshold: f64,
@@ -152,32 +151,7 @@ impl<R: SimpleRec> LineByLine<R> {
             0 => 0.0,
             t => (t as f64) * std::f64::consts::LN_10 / 10.0,
         };
-        let is_new_qname: fn(&FragmentBuffer<R>, &[u8]) -> Option<bool> =
-            match config.io.strip_read_suffix {
-                StripReadSuffix::True => |best: &FragmentBuffer<R>, qname2: &[u8]| {
-                    best.first()
-                        .map(|b| b.first_qname())
-                        .map(|q1| q1[..q1.len() - 2] != qname2[..qname2.len() - 2])
-                },
-                StripReadSuffix::False => |best: &FragmentBuffer<R>, qname2: &[u8]| {
-                    best.first().map(|b| b.first_qname()).map(|q1| q1 != qname2)
-                },
-                StripReadSuffix::Variable => |best: &FragmentBuffer<R>, qname2: &[u8]| {
-                    best.first().map(|b| b.first_qname()).map(|q1| {
-                        if q1.ends_with(b"/1") || q1.ends_with(b"/2") {
-                            q1[..q1.len() - 2] != qname2[..qname2.len() - 2]
-                        } else {
-                            q1 != qname2
-                        }
-                    })
-                },
-                StripReadSuffix::Auto => {
-                    #[cfg(not(test))]
-                    unreachable!("Auto mode should be resolved during AlnStream initialization");
-                    #[cfg(test)]
-                    debug_new_qname_fn()
-                }
-            };
+
         let aln_len = aln.len();
         for i in 0..aln_len {
             if let Some(a) = aln.get_mut(i) {
@@ -216,7 +190,6 @@ impl<R: SimpleRec> LineByLine<R> {
             routing_counters: SmallVec::from_elem(0, aln_len * 4),
             is_secondary_skipped,
             is_unmapped_skipped,
-            is_new_qname,
             add_decision_tag: config.io.add_decision_tag,
             penalties: config.scoring.to_penalty(),
             ambiguous_log_threshold,

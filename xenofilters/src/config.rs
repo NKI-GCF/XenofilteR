@@ -14,15 +14,6 @@ use crate::{
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 
-#[derive(Copy, Clone, Debug, ValueEnum, PartialEq, Default)]
-pub enum StripReadSuffix {
-    #[default]
-    Auto,
-    True,
-    False,
-    Variable,
-}
-
 /// Fragment-matching algorithm.
 #[derive(Subcommand, Debug, Default, PartialEq)]
 pub enum MatchingAlgorithm {

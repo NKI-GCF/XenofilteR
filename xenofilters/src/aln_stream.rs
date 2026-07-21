@@ -5,7 +5,7 @@ use crate::bam::{
     SUFFIX_FILTERED,
 };
 use crate::config::run_config::RunConfig;
-use crate::config::{MatchingAlgorithm, StripReadSuffix};
+use crate::config::MatchingAlgorithm;
 use crate::file_spec::path_for_stream;
 use crate::region::{diagnostic::SegregateVariants, PositiveRegions, ScoreFn};
 use crate::variant::{
@@ -131,29 +131,6 @@ where
             }
         };
 
-        let name = test_record.name().ok_or(Error::RecordHasNoReadName)?;
-        opt.io.strip_read_suffix = match opt.io.strip_read_suffix {
-            StripReadSuffix::True => {
-                if !name.ends_with(b"/1") && !name.ends_with(b"/2") {
-                    return Err(Error::ReadNamesMissingSuffixes);
-                }
-                StripReadSuffix::True
-            }
-            StripReadSuffix::False => {
-                if name.ends_with(b"/1") || name.ends_with(b"/2") {
-                    return Err(Error::ReadNamesHaveSuffixes);
-                }
-                StripReadSuffix::False
-            }
-            StripReadSuffix::Auto => {
-                if name.ends_with(b"/1") || name.ends_with(b"/2") {
-                    StripReadSuffix::True
-                } else {
-                    StripReadSuffix::False
-                }
-            }
-            StripReadSuffix::Variable => StripReadSuffix::Variable,
-        };
         opt.is_paired = if i == 0 && opt.is_paired.is_none() {
             Some(test_record.flags().is_segmented())
         } else {

@@ -1,7 +1,6 @@
 // src/config/args.rs
 
 use crate::bam::AlnFormat;
-use crate::config::StripReadSuffix;
 use crate::file_spec::{path_for_stream, FileSpec};
 use crate::filter_algorithm::line_by_line::MAX_STREAMS;
 use crate::penalty::ErrorModel;
@@ -20,10 +19,6 @@ pub(crate) struct IoArgs {
     /// Reference FASTA for CRAM decoding.
     #[arg(long, value_name = "[IDX:]FILE", help_heading = "Input")]
     pub(crate) reference: Vec<FileSpec>,
-
-    /// Strip /1 /2 read-name suffix. auto | true | false | variable
-    #[arg(short = 'R', long, default_value = "auto", help_heading = "Input")]
-    pub(crate) strip_read_suffix: StripReadSuffix,
 
     /// Add XF:C / XR:C decision-confidence aux tags to output records.
     #[arg(short = 'A', long, default_value = "false", help_heading = "Output")]

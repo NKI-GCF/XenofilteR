@@ -24,8 +24,6 @@ use crate::alignment::{pre_assess_scoring_records, PreAssessResult};
 use crate::aln_stream::AlignmentStream;
 use crate::config::args::resolve_threshold;
 use crate::config::run_config::RunConfig;
-use crate::config::StripReadSuffix;
-use crate::filter_algorithm::collated::reader::canonical_name;
 use crate::filter_algorithm::line_by_line::COUNTER_STRIDE;
 use crate::filter_algorithm::line_by_line::{ordering::Decision, Scratch, READ_CT};
 use crate::penalty::Penalty;
@@ -82,7 +80,6 @@ pub(crate) struct HashLookup<R: SimpleRec> {
     pub(crate) routing_counters: SmallVec<[u64; 8]>,
     add_decision_tag: bool,
     ambiguous_log_threshold: f64,
-    strip: StripReadSuffix,
     bed: [Option<TabixBed>; 2],
     vcf: [Option<TabixVcf>; 2],
     bisulfite: bool,
@@ -111,7 +108,6 @@ impl<R: SimpleRec> HashLookup<R> {
             routing_counters: SmallVec::from_elem(0, 2 * COUNTER_STRIDE),
             add_decision_tag: args.io.add_decision_tag,
             ambiguous_log_threshold,
-            strip: args.io.strip_read_suffix,
             bed,
             vcf,
             positive: pos,
@@ -160,20 +156,14 @@ impl<R: SimpleRec> HashLookup<R> {
         Ok(())
     }
 
-    fn next_scoring_record(&mut self, nr: usize) -> Result<Option<(Box<[u8]>, RecordKind)>, Error> {
+    fn next_scoring_record(&mut self, nr: usize) -> Result<Option<(String, RecordKind)>, Error> {
         let rec = match self.aln[nr].next_rec()? {
             Some(r) => r,
             None => return Ok(None),
         };
 
-        let raw_name: Vec<u8> = rec
-            .name()
-            .map(|n| {
-                let bytes: &[u8] = n.as_ref();
-                bytes.to_vec()
-            })
-            .unwrap_or_default();
-        let key = canonical_name(&raw_name, self.strip);
+        let raw_name: &[u8] = rec.name().map(|n| n.as_ref()).ok_or(Error::RecordHasNoReadName)?;
+        let key = String::from_utf8_lossy(raw_name).to_string();
 
         let flags = rec.flags()?;
         let virtual_offset = self.record_counters[nr];
@@ -278,7 +268,7 @@ impl<R: SimpleRec> HashLookup<R> {
         )))
     }
 
-    fn ingest(&mut self, key: Box<[u8]>, rec: RecordKind, nr: usize) -> Result<(), Error> {
+    fn ingest(&mut self, key: String, rec: RecordKind, nr: usize) -> Result<(), Error> {
         let bed = self.bed[nr].as_ref().filter(|b| !b.is_empty());
         let vcf = self.vcf[nr].as_ref().filter(|v| !v.is_empty());
         let (key, complete) = insert(
