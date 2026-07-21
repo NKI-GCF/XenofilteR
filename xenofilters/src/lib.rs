@@ -15,22 +15,20 @@ pub mod reporting;
 pub mod stats;
 pub mod variant;
 
-use file_spec::path_for_stream;
-use region::tabix_query::{TabixBed, TabixVcf};
 use clap::CommandFactory;
 use clap_complete::generate;
 use config::{
-    MatchingAlgorithm,
-    run_config::RunConfig,
-    AlgorithmCommand, Cli, CollatedArgs, HashlookupArgs, NamesortedArgs,
+    run_config::RunConfig, AlgorithmCommand, Cli, CollatedArgs, HashlookupArgs, MatchingAlgorithm,
+    NamesortedArgs,
 };
 pub use error::Error;
+use file_spec::path_for_stream;
 use filter_algorithm::{
-    strain::StrainArgs, viral_integration::ViralIntegrationArgs,
-    hash_lookup::HashLookup,
-    line_by_line::LineByLine,
+    hash_lookup::HashLookup, line_by_line::LineByLine, strain::StrainArgs,
+    viral_integration::ViralIntegrationArgs,
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
+use region::tabix_query::{TabixBed, TabixVcf};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing_subscriber::{fmt, EnvFilter};
@@ -138,7 +136,13 @@ fn run_namesorted(args: NamesortedArgs) -> Result<(), Error> {
     let run = args.into_run_config()?;
     let stream_labels = chimeric.stream_labels.clone();
     let chimeric_pairs = chimeric.parse_pairs(stream_labels.len())?;
-    run_line_by_line(stats_path, stream_labels, chimeric_pairs, score_threads, run)
+    run_line_by_line(
+        stats_path,
+        stream_labels,
+        chimeric_pairs,
+        score_threads,
+        run,
+    )
 }
 
 fn run_line_by_line(
@@ -208,7 +212,6 @@ fn run_hashlookup(args: HashlookupArgs) -> Result<(), Error> {
 // ---------------------------------------------------------------------------
 
 fn run_collated(args: CollatedArgs) -> Result<(), Error> {
-
     let bed: [Option<TabixBed>; 2] = [
         path_for_stream(&args.ambiguous_regions, 0)
             .map(|s| TabixBed::open(Path::new(s)))
@@ -228,11 +231,8 @@ fn run_collated(args: CollatedArgs) -> Result<(), Error> {
     let mut run = args.into_run_config()?;
     let aln = run.open_streams_unified(MatchingAlgorithm::Collated, run.threads)?;
 
-
-    crate::filter_algorithm::collated::CollatedMatcher::<RecordBuf>::new(
-        &run, aln, bed, vcf,
-    )?
-    .process(&run)
+    crate::filter_algorithm::collated::CollatedMatcher::<RecordBuf>::new(&run, aln, bed, vcf)?
+        .process(&run)
 }
 
 // ---------------------------------------------------------------------------
@@ -245,7 +245,13 @@ fn run_strain(args: StrainArgs) -> Result<(), Error> {
     let stream_labels = vec![];
     let chimeric_pairs = vec![];
     let run = args.into_run_config()?;
-    run_line_by_line(stats_path, stream_labels, chimeric_pairs, score_threads, run)
+    run_line_by_line(
+        stats_path,
+        stream_labels,
+        chimeric_pairs,
+        score_threads,
+        run,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -258,5 +264,11 @@ fn run_viral_integration(args: ViralIntegrationArgs) -> Result<(), Error> {
     let chimeric_pairs = vec![[0, 1]];
     let stream_labels = args.stream_labels.clone();
     let run = args.into_run_config()?;
-    run_line_by_line(stats_path, stream_labels, chimeric_pairs, score_threads, run)
+    run_line_by_line(
+        stats_path,
+        stream_labels,
+        chimeric_pairs,
+        score_threads,
+        run,
+    )
 }
