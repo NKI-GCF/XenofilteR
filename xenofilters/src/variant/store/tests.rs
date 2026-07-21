@@ -27,19 +27,12 @@ fn fv(pos: usize, ref_len: usize) -> FakeVariant {
 }
 
 fn make_store(variants: Vec<(usize, FakeVariant)>) -> Store<FakeVariant> {
-    let mut per_chr: HashMap<usize, Vec<FakeVariant>> = HashMap::new();
-    let mut max_variant_len = 1;
+    let mut inner = IntervalStore::new();
     for (chr, v) in variants {
-        max_variant_len = max_variant_len.max(v.ref_allele().len());
-        per_chr.entry(chr).or_default().push(v);
+        inner.insert(chr, v);
     }
-    for vs in per_chr.values_mut() {
-        vs.sort_by_key(|v| v.pos());
-    }
-    Store {
-        per_chr,
-        max_variant_len,
-    }
+    inner.sort();
+    Store { inner }
 }
 
 #[test]

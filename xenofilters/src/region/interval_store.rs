@@ -73,6 +73,11 @@ impl<T: Interval> IntervalStore<T> {
     pub(crate) fn is_empty(&self) -> bool {
         self.per_ref.iter().all(Vec::is_empty)
     }
+    pub(crate) fn dedup_by(&mut self, mut same: impl FnMut(&T, &T) -> bool) {
+        for v in &mut self.per_ref {
+            v.dedup_by(|a, b| same(a, b));
+        }
+    }
 }
 
 /// Shared "open records, resolve chrom→ref_id, skip on miss, insert, sort" loop.
