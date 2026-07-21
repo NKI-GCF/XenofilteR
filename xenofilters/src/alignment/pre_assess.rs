@@ -453,29 +453,33 @@ mod tests {
                 want: Some(Less),
             },
         ];
-        let mut misses = Vec::new();
 
-        for c in cases {
-            let mcfs_a = mcfs_from(c.cigar_a, c.md_a);
-            let mcfs_b = mcfs_from(c.cigar_b, c.md_b);
-            let result = pre_assess_alignments(&mcfs_a, &mcfs_b);
-            match (c.want, result) {
-                (Some(want_ord), PreAssessResult::EarlyDecision(got_ord)) => {
-                    assert_eq!(got_ord, want_ord, "[{}]", c.label);
+        crate::tests::common::run_collecting(
+            cases,
+            |c| c.label.to_string(),
+            |c| {
+                let mcfs_a = mcfs_from(c.cigar_a, c.md_a);
+                let mcfs_b = mcfs_from(c.cigar_b, c.md_b);
+                let result = pre_assess_alignments(&mcfs_a, &mcfs_b);
+
+                match (c.want, result) {
+                    (Some(want_ord), PreAssessResult::EarlyDecision(got_ord)) => {
+                        if got_ord != want_ord {
+                            return Err(format!("want {:?} got Early({:?})", want_ord, got_ord));
+                        }
+                        Ok(())
+                    }
+                    (None, PreAssessResult::FullScoring) => Ok(()),
+                    (want, got) => {
+                        let got_str = match got {
+                            PreAssessResult::EarlyDecision(o) => format!("Early({o:?})"),
+                            PreAssessResult::FullScoring => "FullScoring".into(),
+                        };
+                        Err(format!("want {:?} got {}", want, got_str))
+                    }
                 }
-                (None, PreAssessResult::FullScoring) => {}
-                (want, got) => {
-                    let got = match got {
-                        PreAssessResult::EarlyDecision(o) => format!("Early({o:?})"),
-                        PreAssessResult::FullScoring => "FullScoring".into(),
-                    };
-                    misses.push(format!("[{}] want {:?} got {:?}", c.label, want, got));
-                }
-            }
-        }
-        if !misses.is_empty() {
-            panic!("{} test cases failed:\n{}", misses.len(), misses.join("\n"));
-        }
+            },
+        );
     }
 
     // -- match_count_raw edge cases ------------------------------------------

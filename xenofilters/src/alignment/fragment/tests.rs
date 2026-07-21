@@ -73,6 +73,7 @@ fn scoring_table() {
         md: &'static str,
         want: f64,
     }
+
     let q30 = vec![30u8; 15]; // generous budget
     let flat = setup_penalties();
     let cases: &[Row] = &[
@@ -111,28 +112,21 @@ fn scoring_table() {
             md: "5^A5",
             want: -5.5,
         }, // gap_open×2 + 1×ext + 2×ext = -2-0.5-2-1 = -5.5
+        },
     ];
-    let mut misses = vec![];
-    for c in cases {
-        eprintln!(
-            "scoring test: cigar={} md={} want={}",
-            c.cigar, c.md, c.want
-        );
-        let got = score_one(c.cigar, c.md, &q30[..c.cigar.len().max(10)], &flat);
-        if (got - c.want).abs() >= 1e-9 {
-            misses.push(format!(
-                "[cigar={} md={}] want {} got {}",
-                c.cigar, c.md, c.want, got
-            ));
-        }
-    }
-    if !misses.is_empty() {
-        panic!(
-            "{} scoring tests failed:\n{}",
-            misses.len(),
-            misses.join("\n")
-        );
-    }
+
+    crate::tests::common::run_collecting(
+        cases,
+        |c| format!("cigar={} md={}", c.cigar, c.md),
+        |c| {
+            let got = score_one(c.cigar, c.md, &q30[..c.cigar.len().max(10)], &flat);
+            if (got - c.want).abs() >= 1e-9 {
+                Err(format!("want {} got {}", c.want, got))
+            } else {
+                Ok(())
+            }
+        },
+    );
 }
 
 /// A single base mismatch at quality 5 should cost -0.5 with real penalties

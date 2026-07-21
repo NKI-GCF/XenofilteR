@@ -46,8 +46,6 @@ impl Variant for MockVariant {
 // ---------------------------
 #[test]
 fn table_eval_accumulation_collect_misses() {
-    use std::fmt::Write as _;
-
     struct AccCase {
         name: &'static str,
         updates: &'static [(f64, f64)],
@@ -93,40 +91,36 @@ fn table_eval_accumulation_collect_misses() {
         },
     ];
 
-    let mut misses: Vec<String> = Vec::new();
-
-    for c in cases {
-        let mut ev = Eval::new();
-        for (inc, alt) in c.updates.iter().copied() {
-            ev.update(inc, alt);
-        }
-        let mut s = String::new();
-        if (ev.incurred - c.want_incurred).abs() > 1e-12 {
-            writeln!(&mut s, "{}: incurred mismatch", c.name).ok();
-            writeln!(&mut s, "  expected incurred = {}", c.want_incurred).ok();
-            writeln!(&mut s, "  got      incurred = {}", ev.incurred).ok();
-        }
-        if (ev.alt_score - c.want_alt).abs() > 1e-12 {
-            writeln!(&mut s, "{}: alt_score mismatch", c.name).ok();
-            writeln!(&mut s, "  expected alt_score = {}", c.want_alt).ok();
-            writeln!(&mut s, "  got      alt_score = {}", ev.alt_score).ok();
-        }
-        if (ev.delta() - c.want_delta).abs() > 1e-12 {
-            writeln!(&mut s, "{}: delta mismatch", c.name).ok();
-            writeln!(&mut s, "  expected delta = {}", c.want_delta).ok();
-            writeln!(&mut s, "  got      delta = {}", ev.delta()).ok();
-        }
-        if !s.is_empty() {
-            misses.push(s);
-        }
-    }
-
-    if !misses.is_empty() {
-        panic!(
-            "Accumulation table-driven tests failed:\n\n{}",
-            misses.join("\n")
-        );
-    }
+    crate::tests::common::run_collecting(
+        cases,
+        |c| c.name.to_string(),
+        |c| {
+            let mut ev = Eval::new();
+            for &(inc, alt) in c.updates {
+                ev.update(inc, alt);
+            }
+            if (ev.incurred - c.want_incurred).abs() > 1e-12 {
+                return Err(format!(
+                    "incurred mismatch\n  expected incurred = {}\n  got      incurred = {}",
+                    c.want_incurred, ev.incurred
+                ));
+            }
+            if (ev.alt_score - c.want_alt).abs() > 1e-12 {
+                return Err(format!(
+                    "alt_score mismatch\n  expected alt_score = {}\n  got      alt_score = {}",
+                    c.want_alt, ev.alt_score
+                ));
+            }
+            if (ev.delta() - c.want_delta).abs() > 1e-12 {
+                return Err(format!(
+                    "delta mismatch\n  expected delta = {}\n  got      delta = {}",
+                    c.want_delta,
+                    ev.delta()
+                ));
+            }
+            Ok(())
+        },
+    );
 }
 
 // -------------------------------------------------------
@@ -134,8 +128,6 @@ fn table_eval_accumulation_collect_misses() {
 // -------------------------------------------------------
 #[test]
 fn table_variant_position_and_endpoints_collect_misses() {
-    use std::fmt::Write as _;
-
     struct PosCase {
         name: &'static str,
         pos: usize, // 1-based per Variant trait docs in repo; tests used values accordingly
@@ -205,44 +197,43 @@ fn table_variant_position_and_endpoints_collect_misses() {
         },
     ];
 
-    let mut misses: Vec<String> = Vec::new();
+    crate::tests::common::run_collecting(
+        cases,
+        |c| c.name.to_string(),
+        |c| {
+            let mv = MockVariant::boxed(c.pos, c.ref_a, c.alt_a, 0.5);
+            let mut ev = Eval::new();
+            ev.set_variant(mv as &dyn Variant);
 
-    for c in cases {
-        // allocate a 'static mock variant
-        let mv = MockVariant::boxed(c.pos, c.ref_a, c.alt_a, 0.5);
-        let mut ev = Eval::new();
-        ev.set_variant(mv as &dyn Variant);
-
-        let mut s = String::new();
-        if ev.start() != c.want_start {
-            writeln!(&mut s, "{}: start mismatch", c.name).ok();
-            writeln!(&mut s, "  expected start = {}", c.want_start).ok();
-            writeln!(&mut s, "  got      start = {}", ev.start()).ok();
-        }
-        if ev.ref_end() != c.want_ref_end {
-            writeln!(&mut s, "{}: ref_end mismatch", c.name).ok();
-            writeln!(&mut s, "  expected ref_end = {}", c.want_ref_end).ok();
-            writeln!(&mut s, "  got      ref_end = {}", ev.ref_end()).ok();
-        }
-        if ev.alt_end() != c.want_alt_end {
-            writeln!(&mut s, "{}: alt_end mismatch", c.name).ok();
-            writeln!(&mut s, "  expected alt_end = {}", c.want_alt_end).ok();
-            writeln!(&mut s, "  got      alt_end = {}", ev.alt_end()).ok();
-        }
-        if ev.end() != c.want_end {
-            writeln!(&mut s, "{}: end() mismatch", c.name).ok();
-            writeln!(&mut s, "  expected end = {}", c.want_end).ok();
-            writeln!(&mut s, "  got      end = {}", ev.end()).ok();
-        }
-        if !s.is_empty() {
-            misses.push(s);
-        }
-    }
-
-    if !misses.is_empty() {
-        panic!(
-            "Variant endpoint table-driven tests failed:\n\n{}",
-            misses.join("\n")
-        );
-    }
+            if ev.start() != c.want_start {
+                return Err(format!(
+                    "start mismatch\n  expected start = {}\n  got      start = {}",
+                    c.want_start,
+                    ev.start()
+                ));
+            }
+            if ev.ref_end() != c.want_ref_end {
+                return Err(format!(
+                    "ref_end mismatch\n  expected ref_end = {}\n  got      ref_end = {}",
+                    c.want_ref_end,
+                    ev.ref_end()
+                ));
+            }
+            if ev.alt_end() != c.want_alt_end {
+                return Err(format!(
+                    "alt_end mismatch\n  expected alt_end = {}\n  got      alt_end = {}",
+                    c.want_alt_end,
+                    ev.alt_end()
+                ));
+            }
+            if ev.end() != c.want_end {
+                return Err(format!(
+                    "end() mismatch\n  expected end = {}\n  got      end = {}",
+                    c.want_end,
+                    ev.end()
+                ));
+            }
+            Ok(())
+        },
+    );
 }

@@ -26,8 +26,6 @@ fn ops_for(cigar: &str, md: &str) -> Result<Vec<String>, Error> {
 // Table-driven unified test that replaces multiple small test functions.
 #[test]
 fn table_driven_ops_tests_collect_misses() {
-    use std::fmt::Write as _;
-
     enum Expectation {
         Exact(Vec<&'static str>),
         Len(usize),
@@ -122,58 +120,47 @@ fn table_driven_ops_tests_collect_misses() {
         },
     ];
 
-    let mut misses: Vec<String> = Vec::new();
-
-    for c in cases {
-        match ops_for(c.cigar, c.md) {
-            Ok(got) => match c.expect {
-                Expectation::Exact(ref evec) => {
+    crate::tests::common::run_collecting(
+        &cases,
+        |c| c.msg.to_string(),
+        |c| match ops_for(c.cigar, c.md) {
+            Ok(got) => match &c.expect {
+                Expectation::Exact(evec) => {
                     let expected: Vec<String> = evec.iter().map(|s| s.to_string()).collect();
                     if got != expected {
-                        let mut s = String::new();
-                        writeln!(&mut s, "{} failed:", c.msg).ok();
-                        writeln!(&mut s, "  input: cigar='{}' md='{}'", c.cigar, c.md).ok();
-                        writeln!(&mut s, "  expected: {:?}", expected).ok();
-                        writeln!(&mut s, "  got     : {:?}", got).ok();
-                        misses.push(s);
+                        return Err(format!(
+                            "input: cigar='{}' md='{}'\n  expected: {:?}\n  got     : {:?}",
+                            c.cigar, c.md, expected, got
+                        ));
                     }
+                    Ok(())
                 }
                 Expectation::Len(n) => {
-                    if got.len() != n {
-                        let mut s = String::new();
-                        writeln!(&mut s, "{} failed (len):", c.msg).ok();
-                        writeln!(&mut s, "  input: cigar='{}' md='{}'", c.cigar, c.md).ok();
-                        writeln!(&mut s, "  expected len: {}", n).ok();
-                        writeln!(&mut s, "  got len     : {}", got.len()).ok();
-                        misses.push(s);
+                    if got.len() != *n {
+                        return Err(format!(
+                            "input: cigar='{}' md='{}'\n  expected len: {}\n  got len     : {}",
+                            c.cigar,
+                            c.md,
+                            n,
+                            got.len()
+                        ));
                     }
+                    Ok(())
                 }
-                Expectation::Err => {
-                    let mut s = String::new();
-                    writeln!(&mut s, "{} failed (expected error but got Ok):", c.msg).ok();
-                    writeln!(&mut s, "  input: cigar='{}' md='{}'", c.cigar, c.md).ok();
-                    writeln!(&mut s, "  got: {:?}", got).ok();
-                    misses.push(s);
-                }
+                Expectation::Err => Err(format!(
+                    "expected error but got Ok:\n  input: cigar='{}' md='{}'\n  got: {:?}",
+                    c.cigar, c.md, got
+                )),
             },
-            Err(e) => {
-                match c.expect {
-                    Expectation::Err => { /* expected error -> OK */ }
-                    _ => {
-                        let mut s = String::new();
-                        writeln!(&mut s, "{} failed (unexpected error):", c.msg).ok();
-                        writeln!(&mut s, "  input: cigar='{}' md='{}'", c.cigar, c.md).ok();
-                        writeln!(&mut s, "  error: {:?}", e).ok();
-                        misses.push(s);
-                    }
-                }
-            }
-        }
-    }
-
-    if !misses.is_empty() {
-        panic!("Table-driven ops tests failures:\n\n{}", misses.join("\n"));
-    }
+            Err(e) => match c.expect {
+                Expectation::Err => Ok(()),
+                _ => Err(format!(
+                    "unexpected error:\n  input: cigar='{}' md='{}'\n  error: {:?}",
+                    c.cigar, c.md, e
+                )),
+            },
+        },
+    );
 }
 
 #[test]

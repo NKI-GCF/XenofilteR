@@ -1,10 +1,7 @@
 use crate::tests::common::{r, u};
 use crate::{
-    aln_stream::tests::MockStream,
-    aln_stream::AlignmentStream,
-    config::run_config::RunConfig,
-    filter_algorithm::hash_lookup::HashLookup,
-    tests::create_record,
+    aln_stream::tests::MockStream, aln_stream::AlignmentStream, config::run_config::RunConfig,
+    filter_algorithm::hash_lookup::HashLookup, tests::create_record,
 };
 use noodles::sam::alignment::record::Flags;
 use noodles::sam::alignment::record_buf::RecordBuf;
@@ -13,7 +10,14 @@ use smallvec::smallvec;
 fn make(s0: Vec<RecordBuf>, s1: Vec<RecordBuf>, config: &RunConfig) -> HashLookup<RecordBuf> {
     let a0 = Box::new(MockStream::new(0, s0)) as Box<dyn AlignmentStream<RecordBuf>>;
     let a1 = Box::new(MockStream::new(1, s1)) as Box<dyn AlignmentStream<RecordBuf>>;
-    HashLookup::<RecordBuf>::new(&config, smallvec![a0, a1], [None, None], [None, None], [None, None]).unwrap()
+    HashLookup::<RecordBuf>::new(
+        &config,
+        smallvec![a0, a1],
+        [None, None],
+        [None, None],
+        [None, None],
+    )
+    .unwrap()
 }
 
 fn disc0(h: &HashLookup<RecordBuf>) -> u64 {
@@ -120,8 +124,8 @@ fn hash_lookup_table() {
         // -- Pre-assess (Tier 2.5) -----------------------------------------
         Row {
             label: "s0 more matches (9 vs 7) → s0 wins via pre-assess",
-            s0: vec![r(b"R1", "10M", "9A0")],  // 9 matches
-            s1: vec![r(b"R1", "10M", "6AAA")], // 7 matches
+            s0: vec![r(b"R1", "10M", "9A0")],
+            s1: vec![r(b"R1", "10M", "6AAA")],
             out0: 1,
             out1: 0,
             disc0: 0,
@@ -180,16 +184,36 @@ fn hash_lookup_table() {
             ambg1: 2,
         },
     ];
-    let config = RunConfig::default();
 
-    for c in cases {
-        let mut h = make(c.s0.clone(), c.s1.clone(), &config);
-        h.process(&config).unwrap();
-        assert_eq!(out0(&h), c.out0, "[{}] out[0]", c.label);
-        assert_eq!(out1(&h), c.out1, "[{}] out[1]", c.label);
-        assert_eq!(disc0(&h), c.disc0, "[{}] disc[0]", c.label);
-        assert_eq!(disc1(&h), c.disc1, "[{}] disc[1]", c.label);
-        assert_eq!(ambg0(&h), c.ambg0, "[{}] ambig[0]", c.label);
-        assert_eq!(ambg1(&h), c.ambg1, "[{}] ambig[1]", c.label);
-    }
+    crate::tests::common::run_collecting(
+        cases,
+        |c| c.label.to_string(),
+        |c| {
+            let config = RunConfig::default();
+            let mut h = make(c.s0.clone(), c.s1.clone(), &config);
+
+            if let Err(e) = h.process(&config) {
+                return Err(format!("process() failed: {}", e));
+            }
+            if out0(&h) != c.out0 {
+                return Err(format!("out[0] want {} got {}", c.out0, out0(&h)));
+            }
+            if out1(&h) != c.out1 {
+                return Err(format!("out[1] want {} got {}", c.out1, out1(&h)));
+            }
+            if disc0(&h) != c.disc0 {
+                return Err(format!("disc[0] want {} got {}", c.disc0, disc0(&h)));
+            }
+            if disc1(&h) != c.disc1 {
+                return Err(format!("disc[1] want {} got {}", c.disc1, disc1(&h)));
+            }
+            if ambg0(&h) != c.ambg0 {
+                return Err(format!("ambig[0] want {} got {}", c.ambg0, ambg0(&h)));
+            }
+            if ambg1(&h) != c.ambg1 {
+                return Err(format!("ambig[1] want {} got {}", c.ambg1, ambg1(&h)));
+            }
+            Ok(())
+        },
+    );
 }

@@ -56,3 +56,27 @@ pub(crate) fn unmapped(len: usize) -> RecordBuf {
     let q = vec![30u8; len];
     create_record(b"r", "", &seq, &q, "", false).unwrap()
 }
+
+/// Table-driven test runner: collects all failing cases and panics once
+/// with every mismatch, instead of the manual `Vec<String>` + panic
+/// boilerplate duplicated across table_*_collect_misses tests.
+///
+/// `check` returns `Err(reason)` on mismatch, `Ok(())` on pass.
+pub(crate) fn run_collecting<C>(
+    cases: &[C],
+    label: impl Fn(&C) -> String,
+    check: impl Fn(&C) -> Result<(), String>,
+) {
+    let misses: Vec<String> = cases
+        .iter()
+        .filter_map(|c| check(c).err().map(|e| format!("[{}] {e}", label(c))))
+        .collect();
+    if !misses.is_empty() {
+        panic!(
+            "{} of {} cases failed:\n\n{}",
+            misses.len(),
+            cases.len(),
+            misses.join("\n")
+        );
+    }
+}

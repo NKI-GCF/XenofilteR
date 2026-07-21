@@ -44,41 +44,24 @@ fn table_is_perfect_variants_collect_misses() {
             expect_perfect: false,
         },
     ];
-
-    for c in cases {
-        match create_record(b"r", c.cigar, &[], &[], c.md, false) {
-            Ok(rec) => {
-                let flags = rec.flags();
-                match MdCigFlags::try_from_record(&rec, &flags, false) {
-                    Ok(mcf) => {
-                        let got = mcf.is_perfect();
-                        if got != c.expect_perfect {
-                            misses.push(format!(
-                                "{}: cigar='{}' md='{}' expected is_perfect={} got={}",
-                                c.name, c.cigar, c.md, c.expect_perfect, got
-                            ));
-                        }
-                    }
-                    Err(e) => {
-                        misses.push(format!(
-                                "{}: MdCigFlags::try_from_record failed for cigar='{}' md='{}' err={:?}",
-                                c.name, c.cigar, c.md, e
-                            ));
-                    }
-                }
-            }
-            Err(e) => {
-                misses.push(format!(
-                    "{}: create_record failed for cigar='{}' md='{}' err={:?}",
-                    c.name, c.cigar, c.md, e
-                ));
-            }
-        }
-    }
-
-    if !misses.is_empty() {
-        panic!("is_perfect table failures:\n\n{}", misses.join("\n"));
-    }
+    crate::tests::common::run_collecting(
+        &cases,
+        |c| c.name.to_string(),
+        |c| {
+            let rec = create_record(b"r", c.cigar, &[], &[], c.md, false)
+                .map_err(|e| format!("create_record failed: {e:?}"))?;
+            let flags = rec.flags();
+            let mcf = MdCigFlags::try_from_record(&rec, &flags, false)
+                .map_err(|e| format!("try_from_record failed: {e:?}"))?;
+            let got = mcf.is_perfect();
+            (got == c.expect_perfect).then_some(()).ok_or_else(|| {
+                format!(
+                    "cigar='{}' md='{}' expected {} got {}",
+                    c.cigar, c.md, c.expect_perfect, got
+                )
+            })
+        },
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -86,87 +69,68 @@ fn table_is_perfect_variants_collect_misses() {
 // ---------------------------------------------------------------------
 #[test]
 fn table_revcomp_and_last_segment_collect_misses() {
-    let mut misses: Vec<String> = Vec::new();
-
-    // Reverse complement test (two cases combined to reduce duplication)
-    match create_record(b"r", "5M", &[], &[], "5", false) {
-        Ok(fwd) => match create_record(b"r", "5M", &[], &[], "5", true) {
-            Ok(rev) => {
-                match (
-                        MdCigFlags::try_from_record(&fwd, &fwd.flags(), false),
-                        MdCigFlags::try_from_record(&rev, &rev.flags(), false),
-                    ) {
-                        (Ok(mf), Ok(mr)) => {
-                            if mf.is_reverse_complemented() {
-                                misses.push("test_is_reverse_complemented: forward read unexpectedly reverse_complemented".to_string());
-                            }
-                            if !mr.is_reverse_complemented() {
-                                misses.push("test_is_reverse_complemented: reverse read not reported reverse_complemented".to_string());
-                            }
-                        }
-                        (Err(e), _) => misses.push(format!("test_is_reverse_complemented: MdCigFlags try_from_record failed for forward: {:?}", e)),
-                        (_, Err(e)) => misses.push(format!("test_is_reverse_complemented: MdCigFlags try_from_record failed for reverse: {:?}", e)),
-                    }
-            }
-            Err(e) => misses.push(format!(
-                "test_is_reverse_complemented: create_record(rev) failed: {:?}",
-                e
-            )),
+    struct Case {
+        name: &'static str,
+    }
+    let cases = vec![
+        Case {
+            name: "test_is_reverse_complemented",
         },
-        Err(e) => misses.push(format!(
-            "test_is_reverse_complemented: create_record(fwd) failed: {:?}",
-            e
-        )),
-    }
+        Case {
+            name: "test_is_last_segment",
+        },
+    ];
 
-    // last/first segment flags
-    // Build two records and set their Flags bits manually as in original test.
-    match create_record(b"r", "5M", &[], &[], "5", false) {
-        Ok(mut last) => {
-            match create_record(b"r", "5M", &[], &[], "5", false) {
-                Ok(mut first) => {
-                    *last.flags_mut() = Flags::from_bits(0x80).unwrap(); // last segment mapped
-                    *first.flags_mut() = Flags::from_bits(0x40).unwrap(); // first segment mapped
-                    match (
-                        MdCigFlags::try_from_record(&last, &last.flags(), false),
-                        MdCigFlags::try_from_record(&first, &first.flags(), false),
-                    ) {
-                        (Ok(ml), Ok(mf)) => {
-                            if !ml.is_last_segment() {
-                                misses.push("test_is_last_segment: last record not reported as last_segment".to_string());
-                            }
-                            if mf.is_last_segment() {
-                                misses.push("test_is_last_segment: first record incorrectly reported as last_segment".to_string());
-                            }
-                        }
-                        (Err(e), _) => misses.push(format!(
-                            "test_is_last_segment: try_from_record failed for last: {:?}",
-                            e
-                        )),
-                        (_, Err(e)) => misses.push(format!(
-                            "test_is_last_segment: try_from_record failed for first: {:?}",
-                            e
-                        )),
-                    }
+    crate::tests::common::run_collecting(
+        &cases,
+        |c| c.name.to_string(),
+        |c| {
+            if c.name == "test_is_reverse_complemented" {
+                let fwd = create_record(b"r", "5M", &[], &[], "5", false)
+                    .map_err(|e| format!("create_record(fwd) failed: {:?}", e))?;
+                let rev = create_record(b"r", "5M", &[], &[], "5", true)
+                    .map_err(|e| format!("create_record(rev) failed: {:?}", e))?;
+                let fwd_flags = fwd.flags();
+                let rev_flags = rev.flags();
+                let mf = MdCigFlags::try_from_record(&fwd, &fwd_flags, false).map_err(|e| {
+                    format!("MdCigFlags try_from_record failed for forward: {:?}", e)
+                })?;
+                let mr = MdCigFlags::try_from_record(&rev, &rev_flags, false).map_err(|e| {
+                    format!("MdCigFlags try_from_record failed for reverse: {:?}", e)
+                })?;
+
+                if mf.is_reverse_complemented() {
+                    return Err("forward read unexpectedly reverse_complemented".to_string());
                 }
-                Err(e) => misses.push(format!(
-                    "test_is_last_segment: create_record(first) failed: {:?}",
-                    e
-                )),
-            }
-        }
-        Err(e) => misses.push(format!(
-            "test_is_last_segment: create_record(last) failed: {:?}",
-            e
-        )),
-    }
+                if !mr.is_reverse_complemented() {
+                    return Err("reverse read not reported reverse_complemented".to_string());
+                }
+                Ok(())
+            } else {
+                let mut last = create_record(b"r", "5M", &[], &[], "5", false)
+                    .map_err(|e| format!("create_record(last) failed: {:?}", e))?;
+                let mut first = create_record(b"r", "5M", &[], &[], "5", false)
+                    .map_err(|e| format!("create_record(first) failed: {:?}", e))?;
 
-    if !misses.is_empty() {
-        panic!(
-            "reverse/last-segment table failures:\n\n{}",
-            misses.join("\n")
-        );
-    }
+                *last.flags_mut() = Flags::from_bits(0x80).unwrap(); // last segment mapped
+                *first.flags_mut() = Flags::from_bits(0x40).unwrap(); // first segment mapped
+                let last_flags = last.flags();
+                let first_flags = first.flags();
+                let ml = MdCigFlags::try_from_record(&last, &last_flags, false)
+                    .map_err(|e| format!("try_from_record failed for last: {:?}", e))?;
+                let mf = MdCigFlags::try_from_record(&first, &first_flags, false)
+                    .map_err(|e| format!("try_from_record failed for first: {:?}", e))?;
+
+                if !ml.is_last_segment() {
+                    return Err("last record not reported as last_segment".to_string());
+                }
+                if mf.is_last_segment() {
+                    return Err("first record incorrectly reported as last_segment".to_string());
+                }
+                Ok(())
+            }
+        },
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -174,49 +138,42 @@ fn table_revcomp_and_last_segment_collect_misses() {
 // ---------------------------------------------------------------------
 #[test]
 fn table_try_from_record_errors_collect_misses() {
-    let mut misses: Vec<String> = Vec::new();
+    struct Case {
+        name: &'static str,
+    }
+    let cases = vec![
+        Case {
+            name: "test_try_from_record_unmapped_is_rejected",
+        },
+        Case {
+            name: "test_try_from_record_missing_md_tag_errors",
+        },
+    ];
 
-    // unmapped should be rejected
-    match create_record(b"r", "", &[], &[], "", false) {
-        Ok(rec_unmapped) => {
-            let flags = rec_unmapped.flags();
-            if MdCigFlags::try_from_record(&rec_unmapped, &flags, false).is_ok() {
-                misses.push(
-                    "test_try_from_record_unmapped_is_rejected: expected error but got Ok"
-                        .to_string(),
-                );
+    crate::tests::common::run_collecting(
+        &cases,
+        |c| c.name.to_string(),
+        |c| {
+            if c.name == "test_try_from_record_unmapped_is_rejected" {
+                let rec_unmapped = create_record(b"r", "", &[], &[], "", false)
+                    .map_err(|e| format!("create_record failed: {:?}", e))?;
+                let flags = rec_unmapped.flags();
+                if MdCigFlags::try_from_record(&rec_unmapped, &flags, false).is_ok() {
+                    return Err("expected error but got Ok".to_string());
+                }
+                Ok(())
+            } else {
+                let mut rec = create_record(b"r", "5M", &[], &[], "5", false)
+                    .map_err(|e| format!("create_record failed: {:?}", e))?;
+                *rec.data_mut() = Default::default(); // strip MD tag
+                let flags = rec.flags();
+                if MdCigFlags::try_from_record(&rec, &flags, false).is_ok() {
+                    return Err("expected error but got Ok".to_string());
+                }
+                Ok(())
             }
-        }
-        Err(e) => misses.push(format!(
-            "test_try_from_record_unmapped_is_rejected: create_record failed: {:?}",
-            e
-        )),
-    }
-
-    // missing MD tag should error
-    match create_record(b"r", "5M", &[], &[], "5", false) {
-        Ok(mut rec) => {
-            *rec.data_mut() = Default::default(); // strip MD tag
-            let flags = rec.flags();
-            if MdCigFlags::try_from_record(&rec, &flags, false).is_ok() {
-                misses.push(
-                    "test_try_from_record_missing_md_tag_errors: expected error but got Ok"
-                        .to_string(),
-                );
-            }
-        }
-        Err(e) => misses.push(format!(
-            "test_try_from_record_missing_md_tag_errors: create_record failed: {:?}",
-            e
-        )),
-    }
-
-    if !misses.is_empty() {
-        panic!(
-            "try_from_record error cases failures:\n\n{}",
-            misses.join("\n")
-        );
-    }
+        },
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -225,90 +182,88 @@ fn table_try_from_record_errors_collect_misses() {
 // ---------------------------------------------------------------------
 #[test]
 fn partial_ord_and_eq_reproduced_collect_misses() {
-    let mut misses: Vec<String> = Vec::new();
-
-    // Setup records
-    let p1 = create_record(b"r1", "10M", &[], &[], "10", false);
-    let p2 = create_record(b"r2", "10M", &[], &[], "10", false);
-    let i1 = create_record(b"r3", "10M", &[], &[], "5A4", false);
-    let i2 = create_record(b"r4", "10M", &[], &[], "5A4", false);
-
-    // If any creation failed, record as test failure and abort checks
-    if p1.is_err() || p2.is_err() || i1.is_err() || i2.is_err() {
-        misses.push(format!(
-            "partial_ord_and_eq: create_record failed: p1={:?} p2={:?} i1={:?} i2={:?}",
-            p1.err(),
-            p2.err(),
-            i1.err(),
-            i2.err()
-        ));
-    } else {
-        let p1 = p1.unwrap();
-        let p2 = p2.unwrap();
-        let i1 = i1.unwrap();
-        let i2 = i2.unwrap();
-
-        // Build MdCigFlags
-        let flags_p1 = p1.flags();
-        let flags_p2 = p2.flags();
-        let flags_i1 = i1.flags();
-        let flags_i2 = i2.flags();
-        let md_p1 = MdCigFlags::try_from_record(&p1, &flags_p1, false);
-        let md_p2 = MdCigFlags::try_from_record(&p2, &flags_p2, false);
-        let md_i1 = MdCigFlags::try_from_record(&i1, &flags_i1, false);
-        let md_i2 = MdCigFlags::try_from_record(&i2, &flags_i2, false);
-        let _ = drop(flags_p1);
-        let _ = drop(flags_p2);
-        let _ = drop(flags_i1);
-        let _ = drop(flags_i2);
-
-        if md_p1.is_err() || md_p2.is_err() || md_i1.is_err() || md_i2.is_err() {
-            misses.push(format!(
-                    "partial_ord_and_eq: MdCigFlags construction failed: p1={:?} p2={:?} i1={:?} i2={:?}",
-                    md_p1.err(), md_p2.err(), md_i1.err(), md_i2.err()
-                ));
-        } else {
-            let md_p1 = md_p1.unwrap();
-            let md_p2 = md_p2.unwrap();
-            let md_i1 = md_i1.unwrap();
-            let md_i2 = md_i2.unwrap();
-
-            // --- PartialEq checks
-            if !(md_p1 == md_p2) {
-                misses.push("partial_ord_and_eq: perfect == perfect should be true".to_string());
-            }
-            if md_p1 == md_i1 {
-                misses.push(
-                    "partial_ord_and_eq: perfect != imperfect should be true (got equal)"
-                        .to_string(),
-                );
-            }
-            if md_i1 == md_i2 {
-                misses.push("partial_ord_and_eq: imperfect == imperfect should be false (expected None semantics)".to_string());
-            }
-
-            // --- PartialOrd checks
-            if md_p1.partial_cmp(&md_p2) != Some(Ordering::Equal) {
-                misses.push(
-                    "partial_ord_and_eq: md_p1.partial_cmp(md_p2) != Some(Equal)".to_string(),
-                );
-            }
-            if md_p1.partial_cmp(&md_i1) != Some(Ordering::Greater) {
-                misses.push(
-                    "partial_ord_and_eq: md_p1.partial_cmp(md_i1) != Some(Greater)".to_string(),
-                );
-            }
-            if md_i1.partial_cmp(&md_p1) != Some(Ordering::Less) {
-                misses
-                    .push("partial_ord_and_eq: md_i1.partial_cmp(md_p1) != Some(Less)".to_string());
-            }
-            if md_i1.partial_cmp(&md_i2) != None {
-                misses.push("partial_ord_and_eq: md_i1.partial_cmp(md_i2) != None".to_string());
-            }
-        }
+    struct Case {
+        name: &'static str,
+        check: fn(&MdCigFlags, &MdCigFlags, &MdCigFlags, &MdCigFlags) -> Result<(), String>,
     }
 
-    if !misses.is_empty() {
-        panic!("partial_ord_and_eq failures:\n\n{}", misses.join("\n"));
-    }
+    let cases = vec![
+        Case {
+            name: "perfect == perfect",
+            check: |p1, p2, _, _| {
+                (p1 == p2)
+                    .then_some(())
+                    .ok_or_else(|| "perfect == perfect should be true".to_string())
+            },
+        },
+        Case {
+            name: "perfect != imperfect",
+            check: |p1, _, i1, _| {
+                (p1 != i1)
+                    .then_some(())
+                    .ok_or_else(|| "perfect != imperfect should be true (got equal)".to_string())
+            },
+        },
+        Case {
+            name: "imperfect == imperfect",
+            check: |_, _, i1, i2| {
+                (i1 != i2).then_some(()).ok_or_else(|| {
+                    "imperfect == imperfect should be false (expected None semantics)".to_string()
+                })
+            },
+        },
+        Case {
+            name: "md_p1.partial_cmp(md_p2) == Some(Equal)",
+            check: |p1, p2, _, _| {
+                (p1.partial_cmp(p2) == Some(Ordering::Equal))
+                    .then_some(())
+                    .ok_or_else(|| "md_p1.partial_cmp(md_p2) != Some(Equal)".to_string())
+            },
+        },
+        Case {
+            name: "md_p1.partial_cmp(md_i1) == Some(Greater)",
+            check: |p1, _, i1, _| {
+                (p1.partial_cmp(i1) == Some(Ordering::Greater))
+                    .then_some(())
+                    .ok_or_else(|| "md_p1.partial_cmp(md_i1) != Some(Greater)".to_string())
+            },
+        },
+        Case {
+            name: "md_i1.partial_cmp(md_p1) == Some(Less)",
+            check: |p1, _, i1, _| {
+                (i1.partial_cmp(p1) == Some(Ordering::Less))
+                    .then_some(())
+                    .ok_or_else(|| "md_i1.partial_cmp(md_p1) != Some(Less)".to_string())
+            },
+        },
+        Case {
+            name: "md_i1.partial_cmp(md_i2) == None",
+            check: |_, _, i1, i2| {
+                (i1.partial_cmp(i2) == None)
+                    .then_some(())
+                    .ok_or_else(|| "md_i1.partial_cmp(md_i2) != None".to_string())
+            },
+        },
+    ];
+
+    let p1 = create_record(b"r1", "10M", &[], &[], "10", false).unwrap();
+    let p2 = create_record(b"r2", "10M", &[], &[], "10", false).unwrap();
+    let i1 = create_record(b"r3", "10M", &[], &[], "5A4", false).unwrap();
+    let i2 = create_record(b"r4", "10M", &[], &[], "5A4", false).unwrap();
+
+    let flags_p1 = p1.flags();
+    let flags_p2 = p2.flags();
+    let flags_i1 = i1.flags();
+    let flags_i2 = i2.flags();
+
+    let md_p1 = MdCigFlags::try_from_record(&p1, &flags_p1, false).unwrap();
+    let md_p2 = MdCigFlags::try_from_record(&p2, &flags_p2, false).unwrap();
+    let md_i1 = MdCigFlags::try_from_record(&i1, &flags_i1, false).unwrap();
+    let md_i2 = MdCigFlags::try_from_record(&i2, &flags_i2, false).unwrap();
+
+    crate::tests::common::run_collecting(
+        &cases,
+        |c| c.name.to_string(),
+        |c| (c.check)(&md_p1, &md_p2, &md_i1, &md_i2),
+    );
 }

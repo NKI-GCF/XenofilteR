@@ -1,10 +1,7 @@
 use crate::tests::common::{cfg, r, u};
 use crate::{
-    aln_stream::tests::MockStream,
-    aln_stream::AlignmentStream,
-    config::run_config::RunConfig,
-    filter_algorithm::collated::CollatedMatcher,
-    tests::create_record,
+    aln_stream::tests::MockStream, aln_stream::AlignmentStream, config::run_config::RunConfig,
+    filter_algorithm::collated::CollatedMatcher, tests::create_record,
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::smallvec;
@@ -83,27 +80,38 @@ fn collated_table() {
             rc: 0x02000200,
         },
     ];
-    let mut misses = vec![];
+
     let routing_names = ["chimeric", "ambiguous", "out", "discarded"];
     let config = cfg();
-    for c in cases {
-        eprintln!("Running test case: {}", c.label);
-        let mut m = make(c.s0.clone(), c.s1.clone(), &config);
-        m.process(&config).unwrap();
-        let rc = &m.routing_counters;
-        for i in 0..8 {
-            let name = routing_names[i % 4];
-            let stream = i / 4;
-            let expected = c.rc >> (i * 4) & 0xf;
-            if rc[i] != expected {
-                misses.push(format!(
-                    "[{}] aln{stream}_{name}[{i}] expected {expected}, got {}",
-                    c.label, rc[i]
-                ));
+
+    crate::tests::common::run_collecting(
+        cases,
+        |c| c.label.to_string(),
+        |c| {
+            let mut m = make(c.s0.clone(), c.s1.clone(), &config);
+            if let Err(e) = m.process(&config) {
+                return Err(format!("process() failed: {}", e));
             }
-        }
-    }
-    if !misses.is_empty() {
-        panic!("{} test cases failed:\n{}", misses.len(), misses.join("\n"));
-    }
+
+            let rc = &m.routing_counters;
+            let mut row_misses = vec![];
+            for i in 0..8 {
+                let name = routing_names[i % 4];
+                let stream = i / 4;
+                let expected = c.rc >> (i * 4) & 0xf;
+                if rc[i] != expected {
+                    row_misses.push(format!(
+                        "aln{stream}_{name}[{i}] expected {expected}, got {}",
+                        rc[i]
+                    ));
+                }
+            }
+
+            if !row_misses.is_empty() {
+                Err(row_misses.join(", "))
+            } else {
+                Ok(())
+            }
+        },
+    );
 }
