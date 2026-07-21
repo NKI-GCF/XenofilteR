@@ -5,6 +5,7 @@
 use crate::alignment::SimpleRec;
 use crate::aln_stream::AlignmentStream;
 use crate::filter_algorithm::hash_lookup::ScoredFragment;
+use crate::filter_algorithm::line_by_line::apply_decision_tag;
 use crate::filter_algorithm::line_by_line::ordering::Decision;
 use crate::Error;
 use noodles::sam::alignment::record::data::field::Tag;
@@ -97,7 +98,7 @@ fn emit_scored<R: SimpleRec>(
         for (nr, voffset) in &sf.winner_offsets {
             let mut rec = fetch(aln, *nr, *voffset)?;
             if add_decision_tag {
-                apply_tag(&mut rec, sf.decision.as_ref());
+                apply_decision_tag(&mut rec, sf.decision.as_ref());
             }
             routing_counters[(nr * 4) + 1] += 1;
             aln[*nr].write_record(rec, Some(true))?;
@@ -122,7 +123,7 @@ fn emit_scored<R: SimpleRec>(
         for &voffset in offsets {
             let mut rec = fetch(aln, stream_nr, voffset)?;
             if is_winner_stream && !sf.is_ambiguous && add_decision_tag {
-                apply_tag(&mut rec, sf.decision.as_ref());
+                apply_decision_tag(&mut rec, sf.decision.as_ref());
             }
             if sf.is_ambiguous {
                 routing_counters[base + 2] += 1;
@@ -145,16 +146,4 @@ fn fetch<R: SimpleRec>(
     aln.get_mut(nr)
         .ok_or(Error::NoStream { nr })?
         .fetch_by_virtual_offset(virtual_offset)
-}
-
-fn apply_tag(rec: &mut RecordBuf, decision: Option<&Decision>) {
-    match decision {
-        Some(Decision::PhredConfidence(v)) => {
-            rec.data_mut().insert(Tag::new(b'X', b'F'), Value::from(*v));
-        }
-        Some(Decision::VariantRescued(v)) => {
-            rec.data_mut().insert(Tag::new(b'X', b'R'), Value::from(*v));
-        }
-        _ => {}
-    }
 }

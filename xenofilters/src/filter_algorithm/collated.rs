@@ -30,6 +30,7 @@ use std::collections::HashMap;
 use ahash::RandomState;
 use crate::config::run_config::RunConfig;
 use crate::config::args::resolve_threshold;
+use crate::filter_algorithm::line_by_line::apply_decision_tag;
 
 pub(crate) struct CollatedMatcher<R: SimpleRec> {
     a: CollatedReader<R>,
@@ -280,15 +281,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             let stream = if nr == 0 { &mut self.a } else { &mut self.b };
             let mut rec: RecordBuf = r.as_record_buf(stream.header())?;
             if !is_ambiguous {
-                match decision {
-                    Some(Decision::PhredConfidence(v)) => {
-                        rec.data_mut().insert(Tag::new(b'X', b'F'), Value::from(*v));
-                    }
-                    Some(Decision::VariantRescued(v)) => {
-                        rec.data_mut().insert(Tag::new(b'X', b'R'), Value::from(*v));
-                    }
-                    _ => {}
-                }
+                apply_decision_tag(&mut rec, decision);
                 self.routing_counters[base + 1] += 1;
             } else {
                 self.routing_counters[base + 2] += 1;

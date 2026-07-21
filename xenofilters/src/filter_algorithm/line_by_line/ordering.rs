@@ -42,6 +42,7 @@ use crate::alignment::{
     mate_slot, segment_id, BaseOp, FragmentState, MateClassifiable, MateKind, MdCigFlags,
     ScoreOpIter, SimpleRec,
 };
+use crate::config::run_config::RunConfig;
 use crate::filter_algorithm::line_by_line::{
     chimeric::{detect_chimeric_mate_complement, ChimericKind},
     detect_chimeric_event, ChimericDecision, MAX_STREAMS, READ_CT,
@@ -53,7 +54,6 @@ use noodles::sam::alignment::RecordBuf;
 use smallvec::{smallvec, SmallVec};
 use std::f64::consts::LN_10;
 use std::sync::Arc;
-use crate::config::run_config::RunConfig;
 
 pub(crate) fn compute_cancel_slot<R: SimpleRec>(best: &FragmentBuffer<R>) -> [bool; 2] {
     // -- Pass 0: per-mate classification (cheap, borrow-only) -----------
@@ -272,6 +272,19 @@ pub(crate) enum Decision {
     Ambiguous,
     PhredConfidence(u8),
     VariantRescued(u8),
+}
+
+/// Insert the XF/XR aux tag corresponding to `decision`, if any.
+/// Shared by hash_lookup::stage, collated, and both line_by_line write paths.
+pub(crate) fn apply_decision_tag(rec: &mut RecordBuf, decision: Option<&Decision>) {
+    use noodles::sam::alignment::record::data::field::Tag;
+    use noodles::sam::alignment::record_buf::data::field::Value;
+    let (tag, v) = match decision {
+        Some(Decision::PhredConfidence(v)) => (Tag::new(b'X', b'F'), *v),
+        Some(Decision::VariantRescued(v)) => (Tag::new(b'X', b'R'), *v),
+        _ => return,
+    };
+    rec.data_mut().insert(tag, Value::from(v));
 }
 
 // -- Channel message types -----------------------------------------------------
@@ -710,11 +723,7 @@ impl<R: SimpleRec> LineByLine<R> {
                     .map(|a| a.header())
                     .ok_or(Error::NoAlignmentForIndex { aln_idx: nr })?;
                 let mut rb = RecordBuf::try_from_alignment_record(header, &r)?;
-                match decision {
-                    Some(Decision::PhredConfidence(d)) => self.add_aux_tags(&mut rb, b"XF", d)?,
-                    Some(Decision::VariantRescued(d)) => self.add_aux_tags(&mut rb, b"XR", d)?,
-                    _ => {}
-                }
+                apply_decision_tag(&mut rb, decision.as_ref());
                 self.write_record(nr, rb, best_state)
             })
         })

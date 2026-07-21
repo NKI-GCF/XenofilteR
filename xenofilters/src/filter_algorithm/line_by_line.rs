@@ -14,3 +14,4 @@ mod tests;
 // Re-export the main type and the most important items
 pub(crate) use chimeric::{detect_chimeric_event, ChimericDecision};
 pub(crate) use core::{LineByLine, Scratch, COUNTER_STRIDE, MAX_STREAMS, READ_CT};
+pub(crate) use ordering::apply_decision_tag;

@@ -11,6 +11,7 @@ use super::chimeric::{
 use super::core::{FragmentBuffer, LineByLine, Scratch};
 use super::ordering::{score_bundle, ScoringContext};
 use crate::config::run_config::RunConfig;
+use crate::filter_algorithm::line_by_line::apply_decision_tag;
 use crate::{variant::StoreTrait, Error};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use noodles::sam::alignment::record_buf::RecordBuf;
@@ -67,7 +68,11 @@ impl LineByLine<RecordBuf> {
     /// atomic increment per stream) before spawning workers, giving every
     /// worker full variant-rescue capability with zero unsafe code and zero
     /// extra allocation.
-    pub(crate) fn process_parallel(&mut self, config: &RunConfig, score_threads: usize) -> Result<(), Error> {
+    pub(crate) fn process_parallel(
+        &mut self,
+        config: &RunConfig,
+        score_threads: usize,
+    ) -> Result<(), Error> {
         let cap = score_threads * 2; // bounded channel capacity — natural backpressure
 
         // -- Collect stores (Arc clones, O(1) each) ------------------------
@@ -215,8 +220,7 @@ impl LineByLine<RecordBuf> {
             }
         }
 
-        config
-            .print_routing_counters(&self.routing_counters, "namesorted-parallel");
+        config.print_routing_counters(&self.routing_counters, "namesorted-parallel");
         for i in 0..aln_len {
             if self.aln[i].next_rec()?.is_some() {
                 return Err(Error::AlignmentStillHasReadsAfterParallelProcessing { j: i });
@@ -238,11 +242,7 @@ impl LineByLine<RecordBuf> {
                 if best_state.is_none() && (self.is_unmapped_skipped)(&r)? {
                     return Ok(());
                 }
-                match decision {
-                    Some(Decision::PhredConfidence(d)) => self.add_aux_tags(&mut r, b"XF", d)?,
-                    Some(Decision::VariantRescued(d)) => self.add_aux_tags(&mut r, b"XR", d)?,
-                    _ => {}
-                }
+                apply_decision_tag(&mut r, decision.as_ref());
                 self.write_record(nr, r, best_state)
             })
         })
