@@ -264,6 +264,70 @@ def parse_and_process():
                         print("\n    ```rust")
                         print(code_content)
                         print("    ```")
+        elif args.compact:
+            # Compact mode without code: just list unique members across groups
+            code_to_occurrences = defaultdict(list)
+
+            for group in valid_groups:
+                for m in group["members"]:
+                    key = (m.filepath, m.start_line, m.end_line, m.desc)
+                    code_to_occurrences[key].append({
+                        "group_id": group["id"],
+                        "desc": m.desc,
+                        "lines": f"{m.start_line}-{m.end_line}",
+                        "filepath": m.filepath,
+                    })
+
+            # Now print each unique member once, with all its occurrences
+            for (filepath, start_l, end_l, desc), occurrences in code_to_occurrences.items():
+                # Group occurrences by group id for nicer output
+                by_group = defaultdict(list)
+                for occ in occurrences:
+                    by_group[occ["group_id"]].append(occ)
+
+                for gid, occs in by_group.items():
+                    # Sort by description then lines
+                    occs_sorted = sorted(occs, key=lambda x: (x["desc"], x["lines"]))
+                    # Print one line per occurrence, but merge same desc+lines if they appear multiple times
+                    desc_lines = defaultdict(list)
+                    for o in occs_sorted:
+                        desc_lines[(o["desc"], o["lines"])].append(o["filepath"])
+
+                    for (desc, lines), fpaths in desc_lines.items():
+                        # If same desc+lines appears in multiple files, show all
+                        if len(fpaths) == 1:
+                            print(f"Group {gid}: {desc} (lines {lines}) in {fpaths[0]}")
+                        else:
+                            print(f"Group {gid}: {desc} (lines {lines}) in {', '.join(fpaths)}")
+        else:
+            for group in valid_groups:
+                # Build group header
+                parts = []
+                if args.with_fingerprint:
+                    parts.append(f"fingerprint: {group['fingerprint']}")
+                if group['similarity']:
+                    parts.append(f"similarity: {group['similarity']}%")
+                parts.append(f"{len(group['members'])} members")
+
+                header_info = ", ".join(parts)
+                print(f"Group {group['id']} ({header_info}):")
+
+                # Condense by file path
+                by_file = defaultdict(list)
+                for m in group["members"]:
+                    by_file[m.filepath].append(m)
+
+                for filepath, members in by_file.items():
+                    print(f"  File: {filepath}")
+
+                    # Condense repeated messages inside the same file
+                    desc_to_lines = defaultdict(list)
+                    for m in members:
+                        desc_to_lines[m.desc].append(f"{m.start_line}-{m.end_line}")
+
+                    for desc, lines_list in desc_to_lines.items():
+                        lines_str = ", ".join(lines_list)
+                        print(f"    - {desc} (lines {lines_str})")
         print()
 
 if __name__ == "__main__":
