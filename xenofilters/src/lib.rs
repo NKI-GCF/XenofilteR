@@ -15,7 +15,7 @@ pub mod reporting;
 pub mod stats;
 pub mod variant;
 
-use file_spec::{path_for_stream, FileSpec};
+use file_spec::path_for_stream;
 use region::tabix_query::{TabixBed, TabixVcf};
 use clap::CommandFactory;
 use clap_complete::generate;
@@ -31,9 +31,6 @@ use filter_algorithm::{
     line_by_line::LineByLine,
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
-use region::{
-    AmbiguousRegions, SegregateVariants,
-};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing_subscriber::{fmt, EnvFilter};
@@ -262,44 +259,4 @@ fn run_viral_integration(args: ViralIntegrationArgs) -> Result<(), Error> {
     let stream_labels = args.stream_labels.clone();
     let run = args.into_run_config()?;
     run_line_by_line(stats_path, stream_labels, chimeric_pairs, score_threads, run)
-}
-
-// ---------------------------------------------------------------------------
-// Shared helpers
-// ---------------------------------------------------------------------------
-
-fn load_specs<T, F>(
-    specs: &[FileSpec],
-    name_to_id: &[HashMap<String, usize>],
-    mut load_fn: F,
-) -> Result<[Option<T>; 2], Error>
-where
-    F: FnMut(&Path, &HashMap<String, usize>) -> Result<T, Error>,
-{
-    Ok([
-        path_for_stream(specs, 0)
-            .map(|s| load_fn(Path::new(s), &name_to_id[0]))
-            .transpose()?,
-        path_for_stream(specs, 1)
-            .map(|s| load_fn(Path::new(s), &name_to_id[1]))
-            .transpose()?,
-    ])
-}
-
-fn load_ambiguous_regions(
-    specs: &[FileSpec],
-    name_to_id: &[HashMap<String, usize>],
-) -> Result<[Option<AmbiguousRegions>; 2], Error> {
-    load_specs(specs, name_to_id, |p, name_to_id| {
-        AmbiguousRegions::from_bed(p, name_to_id)
-    })
-}
-
-fn load_distinct_variants(
-    specs: &[FileSpec],
-    name_to_id: &[HashMap<String, usize>],
-) -> Result<[Option<SegregateVariants>; 2], Error> {
-    load_specs(specs, name_to_id, |p, name_to_id| {
-        SegregateVariants::from_vcf(p, name_to_id)
-    })
 }
