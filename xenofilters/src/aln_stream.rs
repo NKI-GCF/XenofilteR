@@ -142,8 +142,8 @@ where
 
         let (sample_variants, population_variants) = build_variant_stores(opt, i)?;
 
-        opt.output.output.get(i).map(path_unicode_ok).transpose()?;
-        opt.output
+        opt.io.output.get(i).map(path_unicode_ok).transpose()?;
+        opt.io
             .ambiguous_output
             .get(i)
             .map(path_unicode_ok)
@@ -256,14 +256,14 @@ where
         let add_pg = !opt.io.no_program_line;
         let threads = self.threads.into();
         self.output = opt
-            .output
+            .io
             .output
             .get(i)
             .map(|f| out_from_file(f, &self.header, add_pg, threads))
             .transpose()?;
         let expanded = expand_header(self.header.clone(), opt.io.write_discarded);
         self.ambiguous = opt
-            .output
+            .io
             .ambiguous_output
             .get(i)
             .map(|f| out_from_file(f, &expanded, add_pg, threads))

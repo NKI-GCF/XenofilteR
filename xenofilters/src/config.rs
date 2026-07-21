@@ -168,8 +168,6 @@ pub(crate) struct CommonArgs {
     pub(crate) scoring: crate::config::args::ScoringArgs,
     #[command(flatten)]
     pub(crate) variants: crate::config::args::RelatedArgs,
-    #[command(flatten)]
-    pub(crate) output: crate::config::args::OutputArgs,
 }
 
 // -- Per-algorithm arg structs -------------------------------------------------

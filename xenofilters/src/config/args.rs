@@ -8,6 +8,7 @@ use crate::region::ScoreFn;
 use crate::{Error, ensure};
 use clap::Args;
 use std::path::PathBuf;
+use std::ops::RangeInclusive;
 
 /// Shared by every subcommand. No arity-specific fields here.
 #[derive(Args, Debug, Clone, Default)]
@@ -20,6 +21,20 @@ pub(crate) struct IoArgs {
     #[arg(long, value_name = "[IDX:]FILE", help_heading = "Input")]
     pub(crate) reference: Vec<FileSpec>,
 
+    #[arg(short = 'o', long, num_args = 1..=MAX_STREAMS, help_heading = "Output")]
+    pub(crate) output: Vec<PathBuf>,
+
+    #[arg(short = 'a', long, num_args = 0..=MAX_STREAMS, help_heading = "Output")]
+    pub(crate) ambiguous_output: Vec<PathBuf>,
+
+    /// Write JSON summary statistics (MultiQC-compatible).
+    #[arg(long, env = "XENOFILTERS_STATS_OUTPUT", help_heading = "Output")]
+    pub(crate) stats_output: Option<PathBuf>,
+
+    /// Output format: sam | bam | cram. Default: bam.
+    #[arg(short = 'O', long, default_value = "bam", help_heading = "Output")]
+    pub(crate) stdout_format: AlnFormat,
+
     /// Add XF:C / XR:C decision-confidence aux tags to output records.
     #[arg(short = 'A', long, default_value = "false", help_heading = "Output")]
     pub(crate) add_decision_tag: bool,
@@ -31,11 +46,6 @@ pub(crate) struct IoArgs {
     /// Input format: sam | bam | cram. Default: bam.
     #[arg(long, default_value = "bam", help_heading = "Input")]
     pub(crate) input_format: AlnFormat,
-
-    /// Output format: sam | bam | cram. Default: bam.
-    #[arg(short = 'O', long, default_value = "bam", help_heading = "Output")]
-    pub(crate) stdout_format: AlnFormat,
-
 
     /// Keep discarded reads alongside ambiguous.
     #[arg(long, default_value_t = false, hide = true)]
@@ -174,23 +184,8 @@ pub(crate) struct SegregateArgs {
     pub(crate) distinct_variants: Vec<FileSpec>,
 }
 
-/// Output paths: arity is 1..=MAX_STREAMS for general multi-stream use.
-/// Kept separate from IoArgs because strain/viral variants want stricter caps.
-#[derive(Args, Debug, Clone, Default)]
-pub(crate) struct OutputArgs {
-    #[arg(short = 'o', long, num_args = 1..=MAX_STREAMS, help_heading = "Output")]
-    pub(crate) output: Vec<PathBuf>,
-
-    #[arg(short = 'a', long, num_args = 0..=MAX_STREAMS, help_heading = "Output")]
-    pub(crate) ambiguous_output: Vec<PathBuf>,
-
-    /// Write JSON summary statistics (MultiQC-compatible).
-    #[arg(long, env = "XENOFILTERS_STATS_OUTPUT", help_heading = "Output")]
-    pub(crate) stats_output: Option<PathBuf>,
-}
-
 impl IoArgs {
-    pub(crate) fn validate(&self, max_stdin: usize) -> Result<usize, Error> {
+    pub(crate) fn validate(&self, max_stdin: usize, streams: RangeInclusive<usize>) -> Result<(), Error> {
         // stdin: at most one stream, namesorted only.
         let stdin_count = self
             .alignment
@@ -206,7 +201,22 @@ impl IoArgs {
             .any(|(i, p)| p.ends_with(".cram") && path_for_stream(&self.reference, i).is_none());
         ensure!(!cram_lacks_ref, Error::CramRequiresReference);
 
-        Ok(self.alignment.len())
+        let n = self.alignment.len();
+        let max = *streams.end();
+        ensure!(streams.contains(&n), Error::InvalidStreamCount { n, min: *streams.start(), max });
+        let n_streams = if max == 1 { 2 } else { n };
+
+        ensure!(self.output.len() <= n_streams,
+            Error::TooManyOutputPaths {
+                count: self.output.len(),
+                max: n_streams,
+            });
+        ensure!(self.ambiguous_output.is_empty() || self.ambiguous_output.len() <= n_streams,
+            Error::TooManyAmbiguousPaths {
+                given: self.ambiguous_output.len(),
+                streams: n_streams,
+            });
+        Ok(())
     }
 }
 
@@ -237,24 +247,6 @@ impl ScoringArgs {
 impl RelatedArgs {
     pub(crate) fn has_index(&self, idx: usize) -> bool {
         path_for_stream(&self.sample_variants, idx).is_some()
-    }
-}
-
-impl OutputArgs {
-    pub(crate) fn validate(&self, n_streams: usize) -> Result<(), Error> {
-        if self.output.len() > n_streams {
-            return Err(Error::TooManyOutputPaths {
-                count: self.output.len(),
-                max: n_streams,
-            });
-        }
-        if !self.ambiguous_output.is_empty() && self.ambiguous_output.len() > n_streams {
-            return Err(Error::TooManyAmbiguousPaths {
-                given: self.ambiguous_output.len(),
-                streams: n_streams,
-            });
-        }
-        Ok(())
     }
 }
 

@@ -3,7 +3,7 @@ use crate::{
     config::{
         CommonArgs,
         args::{
-            IoArgs, OutputArgs, SegregateArgs, ScoringArgs, RelatedArgs, ChimericArgs
+            IoArgs, SegregateArgs, ScoringArgs, RelatedArgs, ChimericArgs
         },
         MatchingAlgorithm, NameEncoderKind,
     },
@@ -11,7 +11,6 @@ use crate::{
     Error,
     variant::name_to_id::header_name_to_id,
     region::ScoredRegions,
-    ensure,
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::{smallvec, SmallVec};
@@ -27,7 +26,6 @@ pub(crate) struct RunConfig {
     pub(crate) io: IoArgs,
     pub(crate) scoring: ScoringArgs,
     pub(crate) variants: RelatedArgs,
-    pub(crate) output: OutputArgs,
     pub(crate) threads: usize,
     pub(crate) chimeric_pairs: Vec<String>,
     pub(crate) stream_labels: Vec<String>,
@@ -50,13 +48,9 @@ impl RunConfig {
         let io = common.io;
 
         // validate number of streams
-        let n = io.validate(max_stdin)?;
+        io.validate(max_stdin, streams)?;
         common.scoring.validate()?;
-        let max = *streams.end();
-        ensure!(streams.contains(&n), Error::InvalidStreamCount { n, min: *streams.start(), max });
 
-        let output = common.output;
-        output.validate(if max == 1 { 2 } else { n })?;
         let (chimeric_pairs, stream_labels) = match chimeric {
             Some(c) => (c.chimeric_pairs, c.stream_labels),
             None => (vec![], vec![]),
@@ -66,7 +60,6 @@ impl RunConfig {
             io,
             scoring: common.scoring,
             variants: common.variants,
-            output,
             threads,
             chimeric_pairs,
             stream_labels,

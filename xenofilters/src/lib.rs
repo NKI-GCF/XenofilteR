@@ -132,7 +132,7 @@ fn get_log_level(verbose_count: u8) -> &'static str {
 // Name-sorted — streaming merge, sequential or parallel
 // ---------------------------------------------------------------------------
 fn run_namesorted(args: NamesortedArgs) -> Result<(), Error> {
-    let stats_path = args.common.output.stats_output.clone();
+    let stats_path = args.common.io.stats_output.clone();
     let chimeric = args.chimeric.clone();
     let score_threads = args.parallel.score_threads;
     let run = args.into_run_config()?;
@@ -240,7 +240,7 @@ fn run_collated(args: CollatedArgs) -> Result<(), Error> {
 // ---------------------------------------------------------------------------
 
 fn run_strain(args: StrainArgs) -> Result<(), Error> {
-    let stats_path = args.output.stats_output.clone();
+    let stats_path = args.io.stats_output.clone();
     let score_threads = args.parallel.score_threads;
     let stream_labels = vec![];
     let chimeric_pairs = vec![];
@@ -253,7 +253,7 @@ fn run_strain(args: StrainArgs) -> Result<(), Error> {
 // ---------------------------------------------------------------------------
 
 fn run_viral_integration(args: ViralIntegrationArgs) -> Result<(), Error> {
-    let stats_path = args.output.stats_output.clone();
+    let stats_path = args.io.stats_output.clone();
     let score_threads = args.score_threads;
     let chimeric_pairs = vec![[0, 1]];
     let stream_labels = args.stream_labels.clone();

@@ -1,5 +1,5 @@
 use crate::{
-    config::args::{IoArgs, OutputArgs, ScoringArgs, RelatedArgs},
+    config::args::{IoArgs, ScoringArgs, RelatedArgs},
     config::run_config::RunConfig,
     Error,
 };
@@ -27,9 +27,6 @@ pub(crate) struct StrainArgs {
     pub(crate) variants: RelatedArgs,
 
     #[command(flatten)]
-    pub(crate) output: OutputArgs,
-
-    #[command(flatten)]
     pub(crate) parallel: crate::config::args::ParallelArgs,
 }
 
@@ -45,7 +42,6 @@ impl StrainArgs {
             io,
             scoring: self.scoring,
             variants: self.variants,
-            output: self.output,
             chimeric_pairs: vec![],
             stream_labels: vec![],
             ..Default::default()

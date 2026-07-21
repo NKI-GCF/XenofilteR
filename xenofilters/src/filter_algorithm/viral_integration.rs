@@ -1,10 +1,9 @@
 use crate::{
-    config::args::{IoArgs, OutputArgs, ScoringArgs, RelatedArgs},
+    config::args::{IoArgs, ScoringArgs, RelatedArgs},
     config::run_config::RunConfig,
     Error,
 };
 use clap::Args;
-use std::path::PathBuf;
 
 /// Preconfigured chimeric-pair detection for viral integration studies.
 /// Requires exactly 2 or 3 alignment streams: host, virus, [optional xenograft host].
@@ -23,9 +22,6 @@ pub(crate) struct ViralIntegrationArgs {
     #[command(flatten)]
     pub(crate) variants: RelatedArgs,
 
-    #[command(flatten)]
-    pub(crate) output: OutputArgs,
-
     #[arg(short = 'S', long, default_value = "1", help_heading = "Parallelism")]
     pub(crate) score_threads: usize,
 }
@@ -36,7 +32,6 @@ impl ViralIntegrationArgs {
             io: self.io,
             scoring: self.scoring,
             variants: self.variants,
-            output: self.output,
             // Preset: streams 0 and 1 are always the host↔virus chimeric pair.
             chimeric_pairs: vec!["0:1".to_string()],
             stream_labels: self.stream_labels,
