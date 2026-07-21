@@ -48,15 +48,8 @@ pub(crate) fn parse_sample_record(
     record: &mut RecordBuf,
     header: &Header,
 ) -> Result<Vec<Sample>, Error> {
-    let chrom = record.reference_sequence_name().to_string();
-    let ref_id = match header.contigs().get_index_of(&chrom) {
-        Some(id) => id,
-        None => return Err(Error::NoReferenceSequenceId),
-    };
-    let pos = record.variant_start().map(|p| p.get()).unwrap_or(0);
-    let ref_a = record.reference_bases().as_bytes().to_vec();
-    // Genotype representation as a vector of GenotypeAllele.
-    // 1. Get GT and GQ from FORMAT
+    let core = crate::variant::parse_core::parse_variant_core(record, header)?;
+
     let samples = record.samples();
     if samples.get_index(2).is_some() {
         return Err(Error::MultipleSamplesNotSupported);
@@ -66,27 +59,20 @@ pub(crate) fn parse_sample_record(
         Some(Value::Integer(gq)) => *gq,
         _ => return Err(Error::MissingOrInvalidGqTag),
     };
-
     let gt = match sample.get("GT").flatten() {
         Some(Value::Integer(gt)) => *gt,
         _ => return Err(Error::MissingOrInvalidGtTag),
     };
-    let alt_bases = record.alternate_bases();
-    let alts: Vec<Vec<u8>> = alt_bases
-        .iter()
-        .map(|a| Ok(a?.as_bytes().to_vec()))
-        .collect::<Result<Vec<Vec<u8>>, Error>>()?;
 
-    alts.iter()
+    core.alts
+        .iter()
         .enumerate()
         .map(|(i, alt_a)| {
-            let alt_index = (i + 1) as i32;
-            // Check if this allele (alt_index) is present in the GT
-            let is_called = gt == alt_index;
+            let is_called = gt == (i + 1) as i32;
             Ok(Sample {
-                ref_id,
-                pos,
-                ref_a: ref_a.clone(),
+                ref_id: core.ref_id,
+                pos: core.pos,
+                ref_a: core.ref_a.clone(),
                 alt_a: alt_a.to_vec(),
                 genotype_quality: gq as f64,
                 is_called,

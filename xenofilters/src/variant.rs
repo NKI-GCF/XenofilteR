@@ -2,6 +2,7 @@ pub(crate) mod diagnostic_equiv;
 pub mod eval;
 pub(crate) mod indel_equiv;
 pub(crate) mod name_to_id;
+pub(crate) mod parse_core;
 pub(crate) mod population;
 pub(crate) mod sample;
 pub(crate) mod store;

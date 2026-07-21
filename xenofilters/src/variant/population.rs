@@ -38,24 +38,7 @@ pub(crate) fn parse_population_record(
     record: &mut RecordBuf,
     header: &Header,
 ) -> Result<Vec<Population>, Error> {
-    let chrom = record.reference_sequence_name().to_string();
-    let ref_id = match header.contigs().get_index_of(&chrom) {
-        Some(id) => id,
-        None => return Err(Error::NoReferenceSequenceId),
-    };
-    let pos = record.variant_start().map(|p| p.get()).unwrap_or(0);
-    let ref_a = record.reference_bases().as_bytes().to_vec();
-
-    // Collect all ALT alleles (comma-separated in BCF alternate_bases).
-    let alt_bases = record.alternate_bases();
-    let alts: Vec<Vec<u8>> = alt_bases
-        .iter()
-        .map(|a| Ok(a?.as_bytes().to_vec()))
-        .collect::<Result<Vec<Vec<u8>>, Error>>()?;
-
-    if alts.is_empty() {
-        return Err(Error::MissingOrInvalidAfTag);
-    }
+    let core = crate::variant::parse_core::parse_variant_core(record, header)?;
 
     // Parse AF: scalar for single-ALT records, array for multi-ALT.
     // NEEDS VERIFICATION: Array::Float iterator API for noodles 0.111.0.
@@ -67,7 +50,8 @@ pub(crate) fn parse_population_record(
 
     // Pair each ALT with its per-allele AF.
     // If only one AF is provided (non-standard), apply it to all ALTs.
-    alts.iter()
+    core.alts
+        .iter()
         .enumerate()
         .map(|(i, alt_a)| {
             let af = afs
@@ -76,9 +60,9 @@ pub(crate) fn parse_population_record(
                 .or_else(|| afs.first().copied())
                 .ok_or(Error::MissingOrInvalidAfTag)?;
             Ok(Population {
-                ref_id,
-                pos,
-                ref_a: ref_a.clone(),
+                ref_id: core.ref_id,
+                pos: core.pos,
+                ref_a: core.ref_a.clone(),
                 alt_a: alt_a.clone(),
                 allele_frequency: af,
             })
