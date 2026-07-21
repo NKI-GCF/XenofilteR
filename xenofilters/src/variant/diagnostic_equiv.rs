@@ -16,15 +16,15 @@ use std::{
     path::Path,
 };
 
-use noodles::{bcf, bgzf, vcf};
-use tracing::{debug, warn};
-
-use crate::Error;
 use crate::{
     region::diagnostic::{DiagnosticSite, SegregateVariants},
+    region::interval_store::{load_into_store, Interval, IntervalStore},
     variant::indel_equiv::{classify, enumerate_equivalents, IndelEquivalenceExpander, IndelKind},
+    Error,
 };
 use noodles::vcf::variant::record::AlternateBases;
+use noodles::{bcf, bgzf, vcf};
+use tracing::{debug, warn};
 
 // ---------------------------------------------------------------------------
 // WithAlleles for DiagnosticSite
@@ -83,15 +83,13 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
     name_to_id: &HashMap<String, usize>,
     header: &vcf::Header,
 ) -> Result<SegregateVariants, Error> {
+    use crate::region::interval_store::load_into_store;
     use std::{fs::File, io::BufReader};
 
     let is_bcf = vcf_path.extension().is_some_and(|e| e == "bcf");
-
-    // Hoist the readers to the outer scope
     let mut bcf_reader;
     let mut vcf_reader;
 
-    // Add `+ '_` here as well
     let records: Box<dyn Iterator<Item = Result<vcf::variant::RecordBuf, Error>> + '_> = if is_bcf {
         bcf_reader =
             bcf::io::Reader::new(bgzf::io::Reader::new(BufReader::new(File::open(vcf_path)?)));
@@ -111,117 +109,87 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
         )
     };
 
-    let mut per_ref: Vec<Vec<DiagnosticSite>> = Vec::new();
     let mut n_canonical = 0u64;
     let mut n_expanded = 0u64;
 
-    for rec_result in records {
-        let rec = rec_result?;
-        let chrom = rec.reference_sequence_name().to_string();
-        let ref_id = match name_to_id.get(&chrom) {
-            Some(&id) => id,
-            None => {
-                warn!(
-                    chrom,
-                    "chromosome not in name_to_id map; skipping diagnostic record"
-                );
-                continue;
-            }
-        };
+    let store = load_into_store(
+        records,
+        name_to_id,
+        |rec: &vcf::variant::RecordBuf| rec.reference_sequence_name().to_string(),
+        |rec, _ref_id| -> Result<Vec<DiagnosticSite>, Error> {
+            let chrom = rec.reference_sequence_name().to_string();
 
-        // Fetch alleles (ref + first alt).
-        let ref_bytes: Vec<u8> = rec
-            .reference_bases()
-            .as_bytes()
-            .iter()
-            .map(|b| b.to_ascii_uppercase())
-            .collect();
-        let alt_bytes: Vec<u8> =
-            rec.alternate_bases()
+            let ref_bytes: Vec<u8> = rec
+                .reference_bases()
+                .as_bytes()
                 .iter()
-                .next()
-                .transpose()?
-                .map_or(Vec::new(), |alt| {
-                    alt.as_bytes()
-                        .iter()
-                        .map(|b| b.to_ascii_uppercase())
-                        .collect()
-                });
+                .map(|b| b.to_ascii_uppercase())
+                .collect();
+            let alt_bytes: Vec<u8> =
+                rec.alternate_bases()
+                    .iter()
+                    .next()
+                    .transpose()?
+                    .map_or(Vec::new(), |alt| {
+                        alt.as_bytes()
+                            .iter()
+                            .map(|b| b.to_ascii_uppercase())
+                            .collect()
+                    });
 
-        if alt_bytes.is_empty() {
-            warn!(chrom, "diagnostic record has no ALT allele; skipped");
-            continue;
-        }
+            if alt_bytes.is_empty() {
+                warn!(chrom, "diagnostic record has no ALT allele; skipped");
+                return Ok(vec![]);
+            }
 
-        let pos_0based: usize = rec
-            .variant_start()
-            .map(|p| p.get() - 1) // VCF 1-based → 0-based
-            .unwrap_or(0);
+            let pos_0based: usize = rec.variant_start().map(|p| p.get() - 1).unwrap_or(0);
+            n_canonical += 1;
 
-        n_canonical += 1;
-
-        let kind = classify(&ref_bytes, &alt_bytes);
-        let sites: Vec<DiagnosticSite> = if matches!(kind, IndelKind::Snp | IndelKind::Complex) {
-            if matches!(kind, IndelKind::Complex) {
-                warn!(
+            let kind = classify(&ref_bytes, &alt_bytes);
+            let sites: Vec<DiagnosticSite> = if matches!(kind, IndelKind::Snp | IndelKind::Complex)
+            {
+                if matches!(kind, IndelKind::Complex) {
+                    warn!(
+                        chrom,
+                        pos = pos_0based + 1,
+                        "Complex diagnostic allele; stored as-is without expansion"
+                    );
+                }
+                vec![DiagnosticSite {
+                    pos: pos_0based,
+                    ref_len: ref_bytes.len(),
+                }]
+            } else {
+                let (ctx_start, ctx) =
+                    expander.fetch_context(&chrom, pos_0based, ref_bytes.len())?;
+                let equivalents =
+                    enumerate_equivalents(pos_0based, &ref_bytes, &alt_bytes, &ctx, ctx_start);
+                debug!(
                     chrom,
                     pos = pos_0based + 1,
-                    "Complex diagnostic allele; stored as-is without expansion"
+                    n_equivalents = equivalents.len(),
+                    "Diagnostic indel expansion"
                 );
-            }
-            vec![DiagnosticSite {
-                pos: pos_0based,
-                ref_len: ref_bytes.len(),
-            }]
-        } else {
-            let (ctx_start, ctx) = expander.fetch_context(&chrom, pos_0based, ref_bytes.len())?;
+                equivalents
+                    .iter()
+                    .map(|eq| DiagnosticSite {
+                        pos: eq.pos,
+                        ref_len: eq.ref_a.len(),
+                    })
+                    .collect()
+            };
 
-            let equivalents =
-                enumerate_equivalents(pos_0based, &ref_bytes, &alt_bytes, &ctx, ctx_start);
-
-            debug!(
-                chrom,
-                pos = pos_0based + 1,
-                n_equivalents = equivalents.len(),
-                "Diagnostic indel expansion"
-            );
-            equivalents
-                .iter()
-                .map(|eq| DiagnosticSite {
-                    pos: eq.pos,
-                    ref_len: eq.ref_a.len(),
-                })
-                .collect()
-        };
-
-        n_expanded += sites.len() as u64;
-
-        if per_ref.len() <= ref_id {
-            per_ref.resize_with(ref_id + 1, Vec::new);
-        }
-        per_ref[ref_id].extend(sites);
-    }
-
-    // Sort and dedup each chromosome bucket.
-    for bucket in &mut per_ref {
-        bucket.sort_unstable_by_key(|s| s.pos);
-        bucket.dedup_by_key(|s| s.pos);
-    }
-    let max_ref_len = per_ref
-        .iter()
-        .flat_map(|b| b.iter().map(|s| s.ref_len))
-        .max()
-        .unwrap_or(1);
+            n_expanded += sites.len() as u64;
+            Ok(sites)
+        },
+    )?;
 
     tracing::info!(
-        vcf  = %vcf_path.display(),
+        vcf = %vcf_path.display(),
         n_canonical,
         n_expanded,
         "Diagnostic variant store built with indel equivalence expansion"
     );
 
-    Ok(SegregateVariants {
-        per_ref,
-        max_ref_len,
-    })
+    Ok(SegregateVariants { store })
 }

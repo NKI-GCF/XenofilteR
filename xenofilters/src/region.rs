@@ -7,6 +7,7 @@
 
 pub(crate) mod ambiguous;
 pub(crate) mod diagnostic;
+pub(crate) mod interval_store;
 pub(crate) mod load;
 pub(crate) mod scored;
 pub(crate) mod tabix_load;
@@ -17,6 +18,7 @@ pub(crate) mod tabix_query;
 /// Strand field respected when present in BED column 6.
 pub(crate) use ambiguous::AmbiguousRegions;
 pub(crate) use diagnostic::SegregateVariants;
+pub(crate) use interval_store::{load_into_store, Interval, IntervalStore};
 pub(crate) use scored::{ScoreFn, ScoredRegions};
 
 /// Positive-score regions add a log-likelihood bonus to the stream's NW score.

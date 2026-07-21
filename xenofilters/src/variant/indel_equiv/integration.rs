@@ -14,19 +14,20 @@
 
 #[cfg(test)]
 mod indel_expansion_integration {
-    use std::{collections::HashMap, io::Cursor, sync::Arc};
-    use noodles::sam::{alignment::record_buf::RecordBuf, Header};
     use crate::{
         filter_algorithm::line_by_line::Scratch,
         region::diagnostic::{DiagnosticSite, SegregateVariants},
+        region::IntervalStore,
         tests::{create_record, MockStream},
         variant::{
-            indel_equiv::{EquivalentAlleles, enumerate_equivalents, MAX_SHIFT},
+            indel_equiv::{enumerate_equivalents, EquivalentAlleles, MAX_SHIFT},
             population::Population,
             store::{Store, StoreTrait},
             Variant,
         },
     };
+    use noodles::sam::{alignment::record_buf::RecordBuf, Header};
+    use std::{collections::HashMap, io::Cursor, sync::Arc};
 
     // -- In-memory reference helpers -------------------------------------------
 
@@ -110,19 +111,19 @@ mod indel_expansion_integration {
         let reference = b"GAAAAGCCCCT";
         let equivalents = enumerate_equivalents(0, b"GA", b"G", reference, 0);
 
-        let mut per_ref: Vec<Vec<DiagnosticSite>> = vec![Vec::new()];
+        let mut store = IntervalStore::new();
         for eq in &equivalents {
-            per_ref[0].push(DiagnosticSite {
-                pos: eq.pos,
-                ref_len: eq.ref_a.len(),
-            });
+            store.insert(
+                0,
+                DiagnosticSite {
+                    pos: eq.pos,
+                    ref_len: eq.ref_a.len(),
+                },
+            );
         }
-        per_ref[0].sort_unstable_by_key(|s| s.pos);
+        store.sort();
 
-        let diag = SegregateVariants {
-            per_ref,
-            max_ref_len: 2,
-        };
+        let diag = SegregateVariants { store };
 
         for expected_pos in 0..4 {
             assert!(

@@ -4,6 +4,7 @@
 //! reference overlapping this position carries evidence for species N.
 //! Reads overlapping any diagnostic position must go through full scoring.
 
+use crate::region::interval_store::{load_into_store, Interval, IntervalStore};
 use crate::Error;
 use noodles::bcf;
 use std::collections::HashMap;
@@ -15,7 +16,10 @@ pub(crate) struct DiagnosticSite {
     pub(crate) ref_len: usize,
 }
 
-impl DiagnosticSite {
+impl Interval for DiagnosticSite {
+    fn start(&self) -> usize {
+        self.pos
+    }
     fn end(&self) -> usize {
         self.pos + self.ref_len
     }
@@ -23,8 +27,7 @@ impl DiagnosticSite {
 
 #[derive(Debug, Default)]
 pub(crate) struct SegregateVariants {
-    pub(crate) per_ref: Vec<Vec<DiagnosticSite>>,
-    pub(crate) max_ref_len: usize,
+    pub(crate) store: IntervalStore<DiagnosticSite>,
 }
 
 impl SegregateVariants {
@@ -40,68 +43,34 @@ impl SegregateVariants {
             })?;
         let header = reader.read_header()?;
 
-        let mut per_ref: Vec<Vec<DiagnosticSite>> = Vec::new();
-        let mut max_ref_len = 1usize;
-
-        for result in reader.records() {
-            let record = result?;
-            let chrom_idx = record.reference_sequence_id()?;
-
-            let chrom_name = header
-                .contigs()
-                .get_index(chrom_idx)
-                .map(|(name, _)| name.to_string())
-                .ok_or(Error::BcfContigMissing { chrom_idx })?;
-            let ref_id = match name_to_id.get(&chrom_name) {
-                Some(&id) => id,
-                None => continue,
-            };
-
-            let pos = record
-                .variant_start()
-                .transpose()?
-                .map(|p| p.get())
-                .unwrap_or(0);
-
-            // Bind to a variable to extend the lifetime of the temporary.
-            let ref_bases = record.reference_bases();
-            let ref_bytes: &[u8] = ref_bases.as_ref();
-            let ref_len = ref_bytes.len().max(1);
-            if ref_len > max_ref_len {
-                max_ref_len = ref_len;
-            }
-
-            if let Some(sites) = per_ref.get_mut(ref_id) {
-                sites.push(DiagnosticSite { pos, ref_len });
-            } else {
-                while per_ref.len() <= ref_id {
-                    per_ref.push(Vec::new());
-                }
-            }
-        }
-        for sites in per_ref.iter_mut() {
-            sites.sort_unstable_by_key(|s| s.pos);
-        }
-
-        Ok(Self {
-            per_ref,
-            max_ref_len,
-        })
+        let store = load_into_store(
+            reader.records().map(|r| r.map_err(Error::from)),
+            name_to_id,
+            |record| {
+                record
+                    .reference_sequence_id()
+                    .ok()
+                    .and_then(|idx| header.contigs().get_index(idx).map(|(n, _)| n.to_string()))
+                    .unwrap_or_default()
+            },
+            |record, _ref_id| {
+                let pos = record
+                    .variant_start()
+                    .transpose()?
+                    .map(|p| p.get())
+                    .unwrap_or(0);
+                let ref_len = record.reference_bases().as_ref().len().max(1);
+                Ok(Some(DiagnosticSite { pos, ref_len }))
+            },
+        )?;
+        Ok(Self { store })
     }
 
-    pub(crate) fn overlaps(&self, ref_id: usize, read_start: usize, read_end: usize) -> bool {
-        let Some(sites) = self.per_ref.get(ref_id) else {
-            return false;
-        };
-        let lower = read_start.saturating_sub(self.max_ref_len);
-        let first = sites.partition_point(|s| s.pos < lower);
-        sites[first..]
-            .iter()
-            .any(|s| s.pos < read_end && s.end() > read_start)
+    pub(crate) fn overlaps(&self, ref_id: usize, start: usize, end: usize) -> bool {
+        self.store.overlaps(ref_id, start, end)
     }
-
     pub(crate) fn is_empty(&self) -> bool {
-        self.per_ref.is_empty()
+        self.store.is_empty()
     }
 }
 
@@ -114,22 +83,12 @@ mod tests {
     }
 
     fn store(sites: &[(usize, usize, usize)]) -> SegregateVariants {
-        let mut per_ref: Vec<Vec<DiagnosticSite>> = Vec::new();
-        let mut max_ref_len = 1;
+        let mut store = IntervalStore::new();
         for &(rid, pos, ref_len) in sites {
-            max_ref_len = max_ref_len.max(ref_len);
-            while per_ref.len() <= rid {
-                per_ref.push(Vec::new());
-            }
-            per_ref[rid].push(site(pos, ref_len));
+            store.insert(rid, DiagnosticSite { pos, ref_len });
         }
-        for v in per_ref.iter_mut() {
-            v.sort_unstable_by_key(|s| s.pos);
-        }
-        SegregateVariants {
-            per_ref,
-            max_ref_len,
-        }
+        store.sort();
+        SegregateVariants { store }
     }
     #[test]
     fn test_snv_overlap_cases() {

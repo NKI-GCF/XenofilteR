@@ -3,7 +3,9 @@
 //! BED format: chrom, start(0-based), end, name, score(0-1000), strand(+/-/.)
 //! Columns 4-6 are optional. Missing strand = any. Missing score = 1000.
 
+use crate::region::interval_store::{load_into_store, Interval, IntervalStore};
 use crate::Error;
+use std::collections::HashMap;
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,126 +111,92 @@ impl ScoredRegion {
     }
 }
 
+impl Interval for ScoredRegion {
+    fn start(&self) -> usize {
+        self.start
+    }
+    fn end(&self) -> usize {
+        self.end
+    }
+}
+
 /// In-memory collection of strand-aware, scored BED regions.
 /// Sorted per ref_id by start for binary-search lookups.
 pub(crate) struct ScoredRegions {
-    /// per_ref[ref_id] = sorted Vec of ScoredRegion
-    per_ref: Vec<Vec<ScoredRegion>>,
+    store: IntervalStore<ScoredRegion>,
 }
 
 impl ScoredRegions {
-    pub(crate) fn empty() -> Self {
-        Self {
-            per_ref: Vec::new(),
-        }
-    }
-
     pub(crate) fn from_bed(
         path: &Path,
-        name_to_id: &std::collections::HashMap<String, usize>,
+        name_to_id: &HashMap<String, usize>,
     ) -> Result<Self, Error> {
         use std::io::{BufRead, BufReader};
         let f = std::fs::File::open(path)?;
-        let mut per_ref: Vec<Vec<ScoredRegion>> = Vec::new();
-        for line in BufReader::new(f).lines() {
-            let line = line?;
+        let lines = BufReader::new(f).lines().filter_map(|l| {
+            let line = l.ok()?;
             let line = line.trim();
-            if line.is_empty() || line.starts_with('#') || line.starts_with("track") {
-                continue;
-            }
-            let cols: Vec<&str> = line.split('\t').collect();
-            if cols.len() < 3 {
-                continue;
-            }
-            let chrom = cols[0];
-            let start: usize = cols[1].parse()?;
-            let end: usize = cols[2].parse()?;
-            let score = cols
-                .get(4)
-                .and_then(|s| s.parse::<f64>().ok())
-                .unwrap_or(1000.0);
-            let strand = cols
-                .get(5)
-                .and_then(|s| s.as_bytes().first().copied())
-                .map(Strand::from_byte)
-                .unwrap_or(Strand::Any);
-            let ref_id = match name_to_id.get(chrom) {
-                Some(&id) => id,
-                None => {
-                    tracing::debug!("BED chrom '{chrom}' not in reference; skipped");
-                    continue;
+            (!line.is_empty() && !line.starts_with('#') && !line.starts_with("track"))
+                .then(|| Ok(line.to_string()))
+        });
+
+        let store = load_into_store(
+            lines,
+            name_to_id,
+            |line: &String| line.split('\t').next().unwrap_or("").to_string(),
+            |line, ref_id| {
+                let cols: Vec<&str> = line.split('\t').collect();
+                if cols.len() < 3 {
+                    return Ok(None);
                 }
-            };
-            if per_ref.len() <= ref_id {
-                per_ref.resize_with(ref_id + 1, Vec::new);
-            }
-            per_ref[ref_id].push(ScoredRegion {
-                ref_id,
-                start,
-                end,
-                score,
-                strand,
-            });
-        }
-        for v in &mut per_ref {
-            v.sort_unstable_by_key(|r| r.start);
-        }
-        Ok(Self { per_ref })
-    }
-    /// Strand-agnostic overlap check — used by call sites that don't have
-    /// read orientation available (e.g. HashLookup's raw MappedRecord path,
-    /// which does not currently track is_reverse per record in this context).
-    /// Equivalent to `any_overlap(ref_id, start, end, /* any strand */)`.
-    pub(crate) fn overlaps(&self, ref_id: usize, start: usize, end: usize) -> bool {
-        let regions = match self.per_ref.get(ref_id) {
-            Some(v) => v.as_slice(),
-            None => return false,
-        };
-        let lo = regions.partition_point(|r| r.end <= start);
-        regions[lo..]
-            .iter()
-            .take_while(|r| r.start < end)
-            .next()
-            .is_some()
+                let start: usize = cols[1].parse()?;
+                let end: usize = cols[2].parse()?;
+                let score = cols
+                    .get(4)
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .unwrap_or(1000.0);
+                let strand = cols
+                    .get(5)
+                    .and_then(|s| s.as_bytes().first().copied())
+                    .map(Strand::from_byte)
+                    .unwrap_or(Strand::Any);
+                Ok(Some(ScoredRegion {
+                    ref_id,
+                    start,
+                    end,
+                    score,
+                    strand,
+                }))
+            },
+        )?;
+        Ok(Self { store })
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.per_ref.is_empty()
-    }
-
-    /// Returns all regions overlapping [read_start, read_end) on ref_id
-    /// whose strand matches read_is_reverse.
     pub(crate) fn overlapping(
         &self,
         ref_id: usize,
-        read_start: usize,
-        read_end: usize,
+        start: usize,
+        end: usize,
         read_is_reverse: bool,
     ) -> impl Iterator<Item = &ScoredRegion> {
-        let regions = match self.per_ref.get(ref_id) {
-            Some(v) => v.as_slice(),
-            None => &[],
-        };
-        // Binary search for first region whose end > read_start.
-        let lo = regions.partition_point(|r| r.end <= read_start);
-        regions[lo..]
-            .iter()
-            .take_while(move |r| r.start < read_end)
+        self.store
+            .overlapping(ref_id, start, end)
             .filter(move |r| r.strand.matches(read_is_reverse))
     }
 
-    /// True if any strand-compatible region overlaps [read_start, read_end).
-    /// Used by ambiguous-region forcing.
-    pub(crate) fn any_overlap(
-        &self,
-        ref_id: usize,
-        read_start: usize,
-        read_end: usize,
-        read_is_reverse: bool,
-    ) -> bool {
-        self.overlapping(ref_id, read_start, read_end, read_is_reverse)
-            .next()
-            .is_some()
+    pub(crate) fn any_overlap(&self, ref_id: usize, s: usize, e: usize, rev: bool) -> bool {
+        self.overlapping(ref_id, s, e, rev).next().is_some()
+    }
+    pub(crate) fn overlaps(&self, ref_id: usize, s: usize, e: usize) -> bool {
+        self.store.overlaps(ref_id, s, e)
+    }
+    pub(crate) fn is_empty(&self) -> bool {
+        self.store.is_empty()
+    }
+    pub(crate) fn empty() -> Self {
+        Self {
+            store: IntervalStore::new(),
+        }
     }
 }
 
