@@ -1,7 +1,8 @@
 use crate::alignment::{mate_slot, segment_id, MateKind};
-use crate::region::{AmbiguousRegions, SegregateVariants};
+use crate::region::tabix_query::{TabixBed, TabixVcf};
 use noodles::sam::alignment::record::Flags;
 use smallvec::SmallVec;
+use crate::Error;
 
 // ---------------------------------------------------------------------------
 // MappedRecord — full data, only ever built for mapped (primary or
@@ -105,14 +106,14 @@ impl StreamAccumulator {
 
     pub(super) fn classify(
         self,
-        bed: Option<&AmbiguousRegions>,
-        vcf: Option<&SegregateVariants>,
-    ) -> StreamKind {
+        bed: Option<&TabixBed>,
+        vcf: Option<&TabixVcf>,
+    ) -> Result<StreamKind, Error> {
         if self.primary_count == 0 {
-            return StreamKind::Scoring {
+            return Ok(StreamKind::Scoring {
                 records: Box::new(self.records),
                 mate_kinds: [None, None],
-            };
+            });
         }
 
         let primaries: SmallVec<[&RecordKind; 2]> =
@@ -124,27 +125,37 @@ impl StreamAccumulator {
             .all(|r| matches!(r, RecordKind::UnmappedPrimary { .. }));
         if all_unmapped {
             let offsets = self.records.iter().map(|r| r.virtual_offset()).collect();
-            return StreamKind::Early {
+            return Ok(StreamKind::Early {
                 kind: EarlyKind::AllUnmapped,
                 virtual_offsets: offsets,
-            };
+            });
         }
 
         // Fast-path 2: all primaries perfect, no region overlap.
-        let all_perfect = primaries.iter().all(|r| match r {
-            RecordKind::Mapped(m) => {
-                m.is_perfect()
-                    && !bed.is_some_and(|b| b.overlaps(m.ref_id, m.pos, m.pos + m.ref_len))
-                    && !vcf.is_some_and(|v| v.overlaps(m.ref_id, m.pos, m.pos + m.ref_len))
+        let mut all_perfect = true;
+        for r in &primaries {
+            match r {
+                RecordKind::Mapped(m) => {
+                    if !m.is_perfect()
+                        || bed.map(|b| b.overlaps(m.ref_id, m.pos, m.pos + m.ref_len)).transpose()? != Some(true)
+                        || vcf.map(|v| v.overlaps(m.ref_id, m.pos, m.pos + m.ref_len)).transpose()? != Some(true)
+                    {
+                        all_perfect = false;
+                        break;
+                    }
+                }
+                _ => {
+                    all_perfect = false;
+                    break;
+                }
             }
-            _ => false,
-        });
+        }
         if all_perfect {
             let offsets = self.records.iter().map(|r| r.virtual_offset()).collect();
-            return StreamKind::Early {
+            return Ok(StreamKind::Early {
                 kind: EarlyKind::AllPerfect,
                 virtual_offsets: offsets,
-            };
+            });
         }
 
         // Neither fast path: build per-mate classification for partial
@@ -157,8 +168,8 @@ impl StreamAccumulator {
                 }
                 RecordKind::Mapped(m) => {
                     let perfect_here = m.is_perfect()
-                        && !bed.is_some_and(|b| b.overlaps(m.ref_id, m.pos, m.pos + m.ref_len))
-                        && !vcf.is_some_and(|v| v.overlaps(m.ref_id, m.pos, m.pos + m.ref_len));
+                        && bed.map(|b| b.overlaps(m.ref_id, m.pos, m.pos + m.ref_len)).transpose()? != Some(true)
+                        && vcf.map(|v| v.overlaps(m.ref_id, m.pos, m.pos + m.ref_len)).transpose()? != Some(true);
                     (
                         segment_id(&m.flags),
                         if perfect_here {
@@ -174,10 +185,10 @@ impl StreamAccumulator {
         }
         drop(primaries);
 
-        StreamKind::Scoring {
+        Ok(StreamKind::Scoring {
             records: Box::new(self.records),
             mate_kinds,
-        }
+        })
     }
 }
 

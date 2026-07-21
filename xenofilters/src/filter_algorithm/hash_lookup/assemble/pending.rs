@@ -1,7 +1,8 @@
-use crate::region::{AmbiguousRegions, SegregateVariants};
+use crate::region::tabix_query::{TabixBed, TabixVcf};
 use smallvec::SmallVec;
 use super::FragmentTable;
 use super::stream::{StreamAccumulator, StreamKind, RecordKind};
+use crate::Error;
 
 // ---------------------------------------------------------------------------
 // PendingFragment — unchanged structurally; type updated to RecordKind
@@ -34,9 +35,9 @@ impl PendingFragment {
         &mut self,
         rec: RecordKind,
         nr: usize,
-        bed: Option<&AmbiguousRegions>,
-        vcf: Option<&SegregateVariants>,
-    ) -> bool {
+        bed: Option<&TabixBed>,
+        vcf: Option<&TabixVcf>,
+    ) -> Result<bool, Error> {
         if self.is_paired.is_none() {
             self.is_paired = Some(rec.flags().is_segmented());
         }
@@ -58,19 +59,19 @@ impl PendingFragment {
 
     fn check_complete(
         &mut self,
-        bed: Option<&AmbiguousRegions>,
-        vcf: Option<&SegregateVariants>,
-    ) -> bool {
+        bed: Option<&TabixBed>,
+        vcf: Option<&TabixVcf>,
+    ) -> Result<bool, Error> {
         let exp = self.expected_primaries();
         if self.driving.is_empty() && self.driving_buf.primary_count >= exp {
             let buf = std::mem::take(&mut self.driving_buf);
-            self.driving = buf.classify(bed, vcf);
+            self.driving = buf.classify(bed, vcf)?;
         }
         if self.lookup.is_empty() && self.lookup_buf.primary_count >= exp {
             let buf = std::mem::take(&mut self.lookup_buf);
-            self.lookup = buf.classify(bed, vcf);
+            self.lookup = buf.classify(bed, vcf)?;
         }
-        !self.driving.is_empty() && !self.lookup.is_empty()
+        Ok(!self.driving.is_empty() && !self.lookup.is_empty())
     }
 }
 
@@ -80,14 +81,14 @@ pub(crate) fn insert(
     canonical_name: Box<[u8]>,
     nr: usize,
     seq_counter: &mut u64,
-    bed: Option<&AmbiguousRegions>,
-    vcf: Option<&SegregateVariants>,
-) -> (Box<[u8]>, bool) {
+    bed: Option<&TabixBed>,
+    vcf: Option<&TabixVcf>,
+) -> Result<(Box<[u8]>, bool), Error> {
     let entry = table.entry(canonical_name.clone()).or_insert_with(|| {
         let sn = *seq_counter;
         *seq_counter += 1;
         PendingFragment::new(sn)
     });
-    let complete = entry.push(rec, nr, bed, vcf);
-    (canonical_name, complete)
+    let complete = entry.push(rec, nr, bed, vcf)?;
+    Ok((canonical_name, complete))
 }

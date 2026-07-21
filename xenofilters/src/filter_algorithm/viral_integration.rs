@@ -55,7 +55,7 @@ impl ViralIntegrationArgs {
     }
     pub(crate) fn validate_and_init(&mut self) -> Result<(), Error> {
         let got = self.alignment.len();
-        if got < 2 || got > 3 {
+        if !(2..=3).contains(&got) {
             return Err(Error::ViralIntegrationStreamCount { got });
         }
         if self.stream_labels.len() != got {

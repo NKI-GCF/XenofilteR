@@ -142,7 +142,7 @@ impl<V: Variant> Store<V> {
 
 
 // ============================================================================
-// src/region/diagnostic.rs  — updated DiagnosticVariants with overlaps()
+// src/region/diagnostic.rs  — updated SegregateVariants with overlaps()
 //
 // Minor addition: `is_reverse` parameter forwarded for strand-aware overlap.
 // The body is otherwise unchanged from the existing implementation.
@@ -162,12 +162,12 @@ impl DiagnosticSite {
 }
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct DiagnosticVariants {
+pub(crate) struct SegregateVariants {
     /// per_ref[ref_id] = sorted-by-pos Vec<DiagnosticSite>
     pub(crate) per_ref: Vec<Vec<DiagnosticSite>>,
 }
 
-impl DiagnosticVariants {
+impl SegregateVariants {
     /// True when any site on chromosome `ref_id` overlaps `[start, end)`.
     ///
     /// `is_reverse` is accepted for API consistency with `ScoredRegions`
@@ -264,7 +264,7 @@ impl DiagnosticVariants {
 // interval_tree`) when SV support is added.
 //
 // **Strand-aware diagnostic overlap not implemented.**
-// DiagnosticVariants::overlaps() accepts `is_reverse` but ignores it.
+// SegregateVariants::overlaps() accepts `is_reverse` but ignores it.
 // VCF records carry no strand information; if a future workflow creates
 // strand-specific diagnostic VCFs, extend DiagnosticSite with an
 // optional `Strand` field and filter in overlaps().

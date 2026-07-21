@@ -191,22 +191,22 @@ pub(crate) fn build_variant_stores(
 /// Build the diagnostic variant store for one stream.
 ///
 /// Separated from `build_variant_stores` because the diagnostic store has
-/// a different type (`DiagnosticVariants`) and is consumed by different
+/// a different type (`SegregateVariants`) and is consumed by different
 /// code paths (HashLookup BED/VCF region check).
 pub(crate) fn build_diagnostic_store_for_stream(
     config:      &CommonArgs,
     header:      &Header,
     stream_idx:  usize,
-) -> Result<Option<crate::region::diagnostic::DiagnosticVariants>> {
+) -> Result<Option<crate::region::diagnostic::SegregateVariants>> {
     use crate::variant::name_to_id::header_name_to_id;
-    use crate::region::diagnostic::DiagnosticVariants;
+    use crate::region::diagnostic::SegregateVariants;
 
-    let diag_vcf_path = variant_path_for_stream(&config.diagnostic_variants, stream_idx);
+    let diag_vcf_path = variant_path_for_stream(&config.distinct_variants, stream_idx);
     let Some(path) = diag_vcf_path else { return Ok(None) };
 
     if !config.expand_indels {
         // Plain diagnostic loading: existing behavior.
-        return DiagnosticVariants::from_vcf(path, &header_name_to_id(header))
+        return SegregateVariants::from_vcf(path, &header_name_to_id(header))
             .map(Some);
     }
 

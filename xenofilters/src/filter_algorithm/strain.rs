@@ -54,7 +54,7 @@ impl StrainArgs {
             io,
             scoring: self.scoring,
             variants: self.variants,
-            output: self.output.into(),
+            output: self.output,
             threads: self.threads,
             chimeric_pairs: vec![],
             stream_labels: vec![],

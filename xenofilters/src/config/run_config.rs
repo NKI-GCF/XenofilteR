@@ -100,10 +100,10 @@ impl RunConfig {
             let name_to_id = header_name_to_id(aln[i].header());
             let positive_regions = path_for_stream(positive_regions, 0).map(|p| ScoredRegions::from_bed(p.as_path(), &name_to_id).map(|s| (s, score_fn))).transpose()?;
 
-            let stream = AlnStream::<RecordBuf>::new(self, &algorithm, i, threads.clone(), positive_regions)?;
+            let stream = AlnStream::<RecordBuf>::new(self, &algorithm, i, threads, positive_regions)?;
             aln.push(Box::new(stream));
-            if i > 0 {
-                if aln[i].next_qname() != aln[0].next_qname() {
+            if i > 0
+                && aln[i].next_qname() != aln[0].next_qname() {
                     return Err(Error::InvalidInput(format!(
                         "HashLookup requires all input streams to be namesorted/collated. \
                          Stream 0 next_qname: {:?}, stream {} next_qname: {:?}",
@@ -112,35 +112,10 @@ impl RunConfig {
                         aln[i].next_qname()
                     )));
                 }
-            }
         }
         Ok(aln)
     }
 
-    /// Open exactly 2 streams as raw seekable BGZF BAM readers (HashLookup pass-2
-    /// requires seek_vpos, which the unified reader cannot provide).
-    pub(crate) fn open_indexed_streams(
-        &mut self,
-    ) -> Result<SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>, Error> {
-        if !self.io.alignment.iter().any(|p| !p.ends_with(".bam") && !p.ends_with(".cram")) {
-            return Err(Error::InvalidInput(format!(
-                "hashlookup requires BAM/CRAM input. SAM does not support seek: {:?}",
-                self.io.alignment
-            )));
-        }
-        self.open_streams()
-    }
-
-    pub(crate) fn open_streams(
-        &mut self,
-    ) -> Result<SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>, Error> {
-        let mut aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> = smallvec![];
-        for i in 0..2 {
-            let stream = AlnStream::<RecordBuf>::new_raw_bam(i, self)?;
-            aln.push(Box::new(stream));
-        }
-        Ok(aln)
-    }
     pub(crate) fn print_routing_counters(&self, counters: &[u64], tag: &str) {
         use crate::filter_algorithm::line_by_line::core::COUNTER_STRIDE;
         let stream_count = counters.len() / COUNTER_STRIDE;

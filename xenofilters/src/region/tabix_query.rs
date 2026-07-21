@@ -17,13 +17,15 @@ use std::fs::File;
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use crate::region::ScoreFn;
+use vcf::io::IndexedReader;
+use std::cell::RefCell;
 
 pub(crate) struct TabixScored {
     inner: TabixBed,
 } // reuses index + adds column parsing
 
 impl TabixScored {
-    pub(crate) fn open(path: &std::path::Path) -> Result<Self, Error> {
+    pub(crate) fn open(path: &Path) -> Result<Self, Error> {
         Ok(Self {
             inner: TabixBed::open(path)?,
         })
@@ -137,11 +139,15 @@ impl TabixBed {
     ) -> Result<bool, Error> {
         self.overlaps(ref_id, start, end)
     }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.index.reference_sequences().is_empty()
+    }
 }
 
 /// Tabix-indexed VCF file for random-access diagnostic-variant queries.
 pub(crate) struct TabixVcf {
-    reader: vcf::io::IndexedReader<bgzf::io::Reader<File>>,
+    reader: RefCell<IndexedReader<bgzf::io::Reader<File>>>,
     header: vcf::Header,
 }
 
@@ -152,16 +158,16 @@ impl TabixVcf {
             path: path.to_path_buf(),
             source: e,
         })?;
-        let mut reader = vcf::io::IndexedReader::new(file, index);
+        let mut reader = IndexedReader::new(file, index);
         let header = reader
             .read_header()
             .map_err(|e| Error::VcfHeaderReadError(e.to_string()))?;
-        Ok(Self { reader, header })
+        Ok(Self { reader: RefCell::new(reader), header })
     }
 
     /// Returns `true` if any diagnostic variant overlaps `[start, end)` (1-based, BAM coords).
-    pub(crate) fn overlaps(
-        &mut self,
+    pub(crate) fn chrom_overlaps(
+        &self,
         chrom: &str,
         start: usize,
         end: usize,
@@ -170,10 +176,23 @@ impl TabixVcf {
         let region: Region = region_str
             .parse()
             .map_err(|_| Error::InvalidRegion(region_str.clone()))?;
-        let query = self
-            .reader
+        let mut reader = self.reader.borrow_mut();
+        let query = reader
             .query(&self.header, &region)
             .map_err(|e| Error::TabixVcfQueryFailed(e.to_string()))?;
         Ok(query.records().next().is_none())
+    }
+
+    pub(crate) fn overlaps(&self, ref_id: usize, start: usize, end: usize) -> Result<bool, Error> {
+        let chrom = self
+            .header
+            .contigs()
+            .get_index(ref_id)
+            .ok_or(Error::NoReferenceSequenceId)?.0.to_owned();
+        self.chrom_overlaps(&chrom, start, end)
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.header.contigs().is_empty()
     }
 }

@@ -29,7 +29,7 @@ use crate::filter_algorithm::collated::reader::canonical_name;
 use crate::filter_algorithm::line_by_line::COUNTER_STRIDE;
 use crate::filter_algorithm::line_by_line::{ordering::Decision, Scratch, READ_CT};
 use crate::penalty::Penalty;
-use crate::region::{AmbiguousRegions, SegregateVariants};
+use crate::region::tabix_query::{TabixBed, TabixVcf};
 use crate::region::{ScoreFn, ScoredRegions};
 use crate::variant::FragEvalVec;
 use crate::Error;
@@ -83,8 +83,8 @@ pub(crate) struct HashLookup<R: SimpleRec> {
     add_decision_tag: bool,
     ambiguous_log_threshold: f64,
     strip: StripReadSuffix,
-    bed: [Option<AmbiguousRegions>; 2],
-    vcf: [Option<SegregateVariants>; 2],
+    bed: [Option<TabixBed>; 2],
+    vcf: [Option<TabixVcf>; 2],
     bisulfite: bool,
     positive: [Option<(ScoredRegions, ScoreFn)>; 2],
     codec_prefix: Vec<u8>,
@@ -94,8 +94,8 @@ impl<R: SimpleRec> HashLookup<R> {
     pub(crate) fn new(
         args: &RunConfig,
         aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>,
-        bed: [Option<AmbiguousRegions>; 2],
-        vcf: [Option<SegregateVariants>; 2],
+        bed: [Option<TabixBed>; 2],
+        vcf: [Option<TabixVcf>; 2],
         pos: [Option<(ScoredRegions, ScoreFn)>; 2],
     ) -> Result<HashLookup<RecordBuf>, Error> {
         let ambiguous_log_threshold =
@@ -289,7 +289,7 @@ impl<R: SimpleRec> HashLookup<R> {
             &mut self.seq_counter,
             bed,
             vcf,
-        );
+        )?;
         if complete {
             let pending = self.table.remove(&key).unwrap();
             let seq_nr = pending.seq_nr;

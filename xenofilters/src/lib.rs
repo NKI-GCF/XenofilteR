@@ -179,7 +179,7 @@ fn run_line_by_line(
 // Hash-lookup — position-sorted BAMs, in-memory region filtering
 // ---------------------------------------------------------------------------
 
-fn run_hashlookup(mut args: HashlookupArgs) -> Result<(), Error> {
+fn run_hashlookup(args: HashlookupArgs) -> Result<(), Error> {
     let bed: [Option<TabixBed>; 2] = [
         path_for_stream(&args.ambiguous_regions, 0)
             .map(|s| TabixBed::open(Path::new(s)))
@@ -197,8 +197,8 @@ fn run_hashlookup(mut args: HashlookupArgs) -> Result<(), Error> {
             .transpose()?,
     ];
     let mut run = args.into_run_config()?;
-    let aln = run.open_indexed_streams()?;
-    let name_to_id = aln
+    let aln = run.open_streams_unified(MatchingAlgorithm::Hashlookup, run.threads)?;
+    let _name_to_id = aln
         .iter()
         .map(|s| crate::variant::name_to_id::header_name_to_id(s.header()))
         .collect::<Vec<HashMap<_, _>>>();
@@ -229,7 +229,7 @@ fn run_collated(args: CollatedArgs) -> Result<(), Error> {
             .transpose()?,
     ];
     let mut run = args.into_run_config()?;
-    let aln = run.open_streams()?;
+    let aln = run.open_streams_unified(MatchingAlgorithm::Collated, run.threads)?;
 
 
     crate::filter_algorithm::collated::CollatedMatcher::<RecordBuf>::new_from_collated(
@@ -297,7 +297,7 @@ fn load_ambiguous_regions(
 
 fn load_distinct_variants(
     specs: &[FileSpec],
-    name_to_id: &Vec<HashMap<String, usize>>,
+    name_to_id: &[HashMap<String, usize>],
 ) -> Result<[Option<SegregateVariants>; 2], Error> {
     load_specs(specs, name_to_id, |p, name_to_id| {
         SegregateVariants::from_vcf(p, name_to_id)

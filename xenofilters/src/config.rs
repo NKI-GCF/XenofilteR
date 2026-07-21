@@ -71,7 +71,7 @@ pub enum MatchingAlgorithm {
     subcommand_required = true,
     arg_required_else_help = true,
 )]
-pub(crate) struct Cli {
+pub struct Cli {
     #[command(subcommand)]
     pub(crate) command: AlgorithmCommand,
 }

@@ -360,7 +360,6 @@ fn build_variant_stores(
     // -- Expanded path: requires --reference ----------------------------------
     let fasta_path = path_for_stream(&config.io.reference, stream_idx);
     let fasta_path = fasta_path
-        .as_deref()
         .ok_or(crate::Error::ExpandIndelsRequiresReference)?;
 
     // Validate that the .fai sidecar exists before opening the expander.
@@ -411,7 +410,6 @@ pub(crate) fn build_diagnostic_store_for_stream(
         }
         let fasta_path = path_for_stream(&config.io.reference, stream_idx);
         let fasta_path = fasta_path
-            .as_deref()
             .ok_or(crate::Error::ExpandIndelsRequiresReference)?;
 
         let fasta_reader = Builder::default().build_from_path(fasta_path)?;
@@ -424,7 +422,7 @@ pub(crate) fn build_diagnostic_store_for_stream(
 
         build_diagnostic_store_expanded(path, &mut expander, &name_to_id, &vcf_header).map(Some)
     } else {
-        return Ok(None);
+        Ok(None)
     }
 
 

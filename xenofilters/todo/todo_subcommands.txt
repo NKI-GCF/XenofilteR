@@ -251,7 +251,7 @@ pub(crate) struct HashlookupArgs {
     /// In-memory VCF/BCF of diagnostic positions per stream.
     #[arg(long, num_args = 0..=2, value_name = "FILE",
           help_heading = "Regions")]
-    pub(crate) diagnostic_variants: Vec<String>,
+    pub(crate) distinct_variants: Vec<String>,
 
     /// BED file(s) of regions giving reads a positive score bonus.
     #[arg(long, num_args = 0..=2, value_name = "FILE",
@@ -282,7 +282,7 @@ pub(crate) struct CollatedArgs {
     /// Tabix-indexed VCF/BCF of diagnostic positions per stream.
     #[arg(long, num_args = 0..=2, value_name = "FILE",
           help_heading = "Regions")]
-    pub(crate) diagnostic_variants: Vec<String>,
+    pub(crate) distinct_variants: Vec<String>,
 
     /// BED.gz file(s) of positive-score regions. Tabix-indexed.
     #[arg(long, num_args = 0..=2, value_name = "FILE",
@@ -339,7 +339,7 @@ fn run_hashlookup(mut args: HashlookupArgs) -> Result<(), Error> {
 
     let header_name_to_id = open_first_header_name_to_id(&args.common)?;
     let bed = load_ambiguous_regions_memory(&args.ambiguous_regions, &header_name_to_id)?;
-    let vcf = load_diagnostic_variants_memory(&args.diagnostic_variants, &header_name_to_id)?;
+    let vcf = load_distinct_variants_memory(&args.distinct_variants, &header_name_to_id)?;
     let pos = load_positive_regions_memory(&args.positive_regions, &header_name_to_id,
                                            args.region_score_fn)?;
     let aln = open_streams_raw_bam(&mut args.common)?;
@@ -353,7 +353,7 @@ fn run_collated(mut args: CollatedArgs) -> Result<(), Error> {
     ensure!(n == 2, "collated requires exactly 2 alignment streams (got {n})");
 
     let bed = open_tabix_bed(&args.ambiguous_regions)?;
-    let vcf = open_tabix_vcf(&args.diagnostic_variants)?;
+    let vcf = open_tabix_vcf(&args.distinct_variants)?;
     let pos = open_tabix_scored(&args.positive_regions, args.region_score_fn)?;
     let aln = open_streams_unified(&mut args.common, 1)?;
     let counters = CollatedMatcher::new_from_collated(&args, aln, bed, vcf, pos)?.process()?;

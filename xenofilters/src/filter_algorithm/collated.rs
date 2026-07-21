@@ -19,7 +19,7 @@ pub(crate) mod tests;
 use crate::Error;
 use crate::alignment::{FragmentState, SimpleRec, PreAssessResult, pre_assess_alignments, MateKind, mate_kind::MateClassifiable };
 use crate::aln_stream::AlignmentStream;
-use crate::config::{CommonArgs, StripReadSuffix};
+use crate::config::StripReadSuffix;
 use crate::filter_algorithm::line_by_line::{Scratch, ordering::Decision};
 use crate::penalty::Penalty;
 use crate::region::tabix_query::{TabixBed, TabixVcf};
