@@ -67,9 +67,8 @@ impl LineByLine<RecordBuf> {
     /// atomic increment per stream) before spawning workers, giving every
     /// worker full variant-rescue capability with zero unsafe code and zero
     /// extra allocation.
-    pub(crate) fn process_parallel(&mut self, config: &RunConfig) -> Result<(), Error> {
-        let n = self.score_threads;
-        let cap = n * 2; // bounded channel capacity — natural backpressure
+    pub(crate) fn process_parallel(&mut self, config: &RunConfig, score_threads: usize) -> Result<(), Error> {
+        let cap = score_threads * 2; // bounded channel capacity — natural backpressure
 
         // -- Collect stores (Arc clones, O(1) each) ------------------------
         let stores: SmallVec<[Option<Arc<dyn StoreTrait>>; 2]> =
@@ -87,7 +86,7 @@ impl LineByLine<RecordBuf> {
         let (work_tx, work_rx) = bounded::<FragmentBundle>(cap);
         let (result_tx, result_rx) = bounded::<ScoredFragment>(cap);
 
-        let workers: Vec<_> = (0..n)
+        let workers: Vec<_> = (0..score_threads)
             .map(|id| {
                 let rx = work_rx.clone();
                 let tx = result_tx.clone();

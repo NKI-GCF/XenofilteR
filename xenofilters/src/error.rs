@@ -475,7 +475,7 @@ pub enum Error {
     TooManyAmbiguousRegionsFiles { count: usize },
 
     #[error("--diagnostic-variants: at most 2 files (one per stream), got {count}")]
-    TooManyDiagnosticVariantsFiles { count: usize },
+    TooManySegregateVariantsFiles { count: usize },
 
     #[error("Sample variant stream index {idx} out of bounds (max {max})")]
     SampleVariantIndexOutOfBounds { idx: usize, max: usize },

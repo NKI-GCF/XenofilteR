@@ -29,7 +29,7 @@ use crate::filter_algorithm::collated::reader::canonical_name;
 use crate::filter_algorithm::line_by_line::COUNTER_STRIDE;
 use crate::filter_algorithm::line_by_line::{ordering::Decision, Scratch, READ_CT};
 use crate::penalty::Penalty;
-use crate::region::{AmbiguousRegions, DiagnosticVariants};
+use crate::region::{AmbiguousRegions, SegregateVariants};
 use crate::region::{ScoreFn, ScoredRegions};
 use crate::variant::FragEvalVec;
 use crate::Error;
@@ -84,18 +84,18 @@ pub(crate) struct HashLookup<R: SimpleRec> {
     ambiguous_log_threshold: f64,
     strip: StripReadSuffix,
     bed: [Option<AmbiguousRegions>; 2],
-    vcf: [Option<DiagnosticVariants>; 2],
+    vcf: [Option<SegregateVariants>; 2],
     bisulfite: bool,
     positive: [Option<(ScoredRegions, ScoreFn)>; 2],
     codec_prefix: Vec<u8>,
 }
 
 impl<R: SimpleRec> HashLookup<R> {
-    pub(crate) fn new_from_hashlookup(
+    pub(crate) fn new(
         args: &RunConfig,
         aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>,
         bed: [Option<AmbiguousRegions>; 2],
-        vcf: [Option<DiagnosticVariants>; 2],
+        vcf: [Option<SegregateVariants>; 2],
         pos: [Option<(ScoredRegions, ScoreFn)>; 2],
     ) -> Result<HashLookup<RecordBuf>, Error> {
         let ambiguous_log_threshold =

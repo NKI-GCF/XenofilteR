@@ -1,6 +1,6 @@
 // src/variant/diagnostic_equiv.rs
 //
-// DiagnosticVariants indel equivalence expansion.
+// SegregateVariants indel equivalence expansion.
 //
 // DiagnosticSite is used purely for OVERLAP DETECTION (does the read touch a
 // diagnostic position?), not for per-base NW scoring.  Expanding equivalents
@@ -21,7 +21,7 @@ use tracing::{debug, warn};
 
 use crate::Error;
 use crate::{
-    region::diagnostic::{DiagnosticSite, DiagnosticVariants},
+    region::diagnostic::{DiagnosticSite, SegregateVariants},
     variant::indel_equiv::{classify, enumerate_equivalents, IndelEquivalenceExpander, IndelKind},
 };
 use noodles::vcf::variant::record::AlternateBases;
@@ -72,7 +72,7 @@ pub(crate) const INDEL_EXPAND_PADDING_DEFAULT: usize = 50;
 // build_diagnostic_store_expanded
 // ---------------------------------------------------------------------------
 
-/// Build `DiagnosticVariants` with indel equivalence expansion.
+/// Build `SegregateVariants` with indel equivalence expansion.
 ///
 /// Parses a VCF/BCF of diagnostic positions and expands each indel variant
 /// into all equivalent positions so that overlap detection works regardless
@@ -82,7 +82,7 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
     expander: &mut IndelEquivalenceExpander<R>,
     name_to_id: &HashMap<String, usize>,
     header: &vcf::Header,
-) -> Result<DiagnosticVariants, Error> {
+) -> Result<SegregateVariants, Error> {
     use std::{fs::File, io::BufReader};
 
     let is_bcf = vcf_path.extension().is_some_and(|e| e == "bcf");
@@ -220,7 +220,7 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
         "Diagnostic variant store built with indel equivalence expansion"
     );
 
-    Ok(DiagnosticVariants {
+    Ok(SegregateVariants {
         per_ref,
         max_ref_len,
     })

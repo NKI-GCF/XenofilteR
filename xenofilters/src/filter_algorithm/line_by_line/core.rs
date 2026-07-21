@@ -7,14 +7,13 @@
 use crate::{
     alignment::{FragmentState, SimpleRec},
     aln_stream::AlignmentStream,
-    config::{run_config::RunConfig, args::resolve_threshold, StripReadSuffix},
+    config::{run_config::RunConfig, StripReadSuffix},
     penalty::Penalty,
     progress::ProgressReporter,
     region::{ScoreFn, ScoredRegions},
     variant::name_to_id::header_name_to_id,
     Error,
 };
-use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::alignment::Record;
 use smallvec::SmallVec;
 use std::path::Path;
@@ -121,7 +120,6 @@ pub(crate) struct LineByLine<R> {
     /// Number of scoring worker threads.
     /// 1 = sequential (deterministic output order).
     /// N > 1 = parallel (output order is nondeterministic across fragments).
-    pub(super) score_threads: usize,
 
     /// Canonical chimeric stream-index pairs (lower index first).
     pub(super) chimeric_pairs: Vec<[usize; 2]>,
@@ -139,6 +137,8 @@ impl<R: SimpleRec> LineByLine<R> {
     pub(crate) fn new(
         config: &RunConfig,
         mut aln: SmallVec<[Box<dyn AlignmentStream<R>>; 2]>,
+        stream_labels: Vec<String>,
+        chimeric_pairs: Vec<[usize; 2]>,
     ) -> Result<Self, Error> {
         let is_unmapped_skipped = match config.io.discard_unmapped {
             true => unmapped_and_mate_unmapped,
@@ -185,22 +185,10 @@ impl<R: SimpleRec> LineByLine<R> {
             }
         }
 
-        // Clamp score_threads to aln.len() * 2 as a sanity bound; beyond that
-        // the IO thread becomes the bottleneck and extra workers are idle.
-        let score_threads = config.parallel.score_threads.max(1);
-
-        if score_threads > 1 {
-            tracing::info!(
-                score_threads,
-                "Fragment scoring will use a parallel worker pool. \
-                 Output order is nondeterministic."
-            );
-        }
         let progress = match config.io.quiet {
             true => None,
             false => Some(ProgressReporter::new()),
         };
-        let chimeric_pairs = config.chimeric.parse_pairs(aln_len)?;
 
         let mut positive_regions: [Option<Arc<ScoredRegions>>; MAX_STREAMS] = Default::default();
         for (i, path) in config
@@ -234,103 +222,11 @@ impl<R: SimpleRec> LineByLine<R> {
             ambiguous_log_threshold,
             scratch: Scratch::new(),
             chimeric_pairs,
-            stream_labels: config.chimeric.stream_labels.clone(),
-            score_threads,
+            stream_labels,
             progress,
             bisulfite: config.scoring.bisulfite,
             positive_regions,
-            region_score_fn: config.scoring.region_score_fn,
-        })
-    }
-}
-
-impl LineByLine<RecordBuf> {
-    pub(crate) fn new_from_namesorted(
-        args: &RunConfig,
-        aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>,
-    ) -> Result<Self, Error> {
-        let n = aln.len();
-        let chimeric_pairs = args.chimeric.parse_pairs(n)?;
-        let ambiguous_log_threshold = resolve_threshold(
-            args.scoring.ambiguous_threshold,
-            /* is_pass2 */ false,
-        );
-        let progress = match args.io.quiet {
-            true => None,
-            false => Some(ProgressReporter::new()),
-        };
-        let is_new_qname: fn(&FragmentBuffer<RecordBuf>, &[u8]) -> Option<bool> =
-            match args.io.strip_read_suffix {
-                StripReadSuffix::True => |best: &FragmentBuffer<RecordBuf>, qname2: &[u8]| {
-                    best.first()
-                        .map(|b| b.first_qname())
-                        .map(|q1| q1[..q1.len() - 2] != qname2[..qname2.len() - 2])
-                },
-                StripReadSuffix::False => |best: &FragmentBuffer<RecordBuf>, qname2: &[u8]| {
-                    best.first().map(|b| b.first_qname()).map(|q1| q1 != qname2)
-                },
-                StripReadSuffix::Variable => |best: &FragmentBuffer<RecordBuf>, qname2: &[u8]| {
-                    best.first().map(|b| b.first_qname()).map(|q1| {
-                        if q1.ends_with(b"/1") || q1.ends_with(b"/2") {
-                            q1[..q1.len() - 2] != qname2[..qname2.len() - 2]
-                        } else {
-                            q1 != qname2
-                        }
-                    })
-                },
-                StripReadSuffix::Auto => {
-                    #[cfg(not(test))]
-                    unreachable!("Auto mode should be resolved during AlnStream initialization");
-                    #[cfg(test)]
-                    debug_new_qname_fn()
-                }
-            };
-        let is_unmapped_skipped = match args.io.discard_unmapped {
-            true => unmapped_and_mate_unmapped,
-            false => always_false,
-        };
-        let is_secondary_skipped = match args.io.skip_secondary {
-            true => is_secondary,
-            false => always_false,
-        };
-        let mut positive_regions: [Option<Arc<ScoredRegions>>; MAX_STREAMS] = Default::default();
-        for (i, path) in args
-            .variants
-            .positive_regions
-            .iter()
-            .enumerate()
-            .map(|(i, f)| {
-                if let Some(idx) = f.idx {
-                    (idx, &f.path)
-                } else {
-                    (i, &f.path)
-                }
-            })
-        {
-            if i < MAX_STREAMS {
-                positive_regions[i] = Some(Arc::new(ScoredRegions::from_bed(
-                    Path::new(path),
-                    &header_name_to_id(aln[i].header()),
-                )?));
-            }
-        }
-        Ok(Self {
-            aln,
-            routing_counters: SmallVec::from_elem(0, n * COUNTER_STRIDE),
-            penalties: args.scoring.to_penalty(),
-            ambiguous_log_threshold,
-            add_decision_tag: args.io.add_decision_tag,
-            bisulfite: args.scoring.bisulfite,
-            score_threads: args.parallel.score_threads,
-            chimeric_pairs,
-            stream_labels: args.chimeric.stream_labels.clone(),
-            progress,
-            is_new_qname,
-            is_secondary_skipped,
-            is_unmapped_skipped,
-            scratch: Scratch::new(),
-            region_score_fn: args.scoring.region_score_fn,
-            positive_regions,
+            region_score_fn: config.variants.region_score_fn,
         })
     }
 }

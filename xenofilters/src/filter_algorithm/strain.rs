@@ -1,5 +1,5 @@
 use crate::{
-    config::args::{IoArgs, OutputArgsPair, ScoringArgs, VariantArgs},
+    config::args::{IoArgs, OutputArgs, ScoringArgs, RelatedArgs},
     config::run_config::RunConfig,
     Error,
 };
@@ -30,10 +30,13 @@ pub(crate) struct StrainArgs {
     /// --sample-variants or --population-variants must supply both
     /// indices 0 and 1 (one profile per strain).
     #[command(flatten)]
-    pub(crate) variants: VariantArgs,
+    pub(crate) variants: RelatedArgs,
 
     #[command(flatten)]
-    pub(crate) output: OutputArgsPair,
+    pub(crate) output: OutputArgs,
+
+    #[command(flatten)]
+    pub(crate) parallel: crate::config::args::ParallelArgs,
 
     #[arg(short = 't', long, default_value = "4", help_heading = "Parallelism")]
     pub(crate) threads: usize,
@@ -53,7 +56,6 @@ impl StrainArgs {
             variants: self.variants,
             output: self.output.into(),
             threads: self.threads,
-            score_threads: 1,
             chimeric_pairs: vec![],
             stream_labels: vec![],
             ..Default::default()

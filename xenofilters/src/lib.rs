@@ -16,31 +16,26 @@ pub mod stats;
 pub mod variant;
 
 use file_spec::{path_for_stream, FileSpec};
-use region::tabix_load::{open_tabix_bed, open_tabix_scored, open_tabix_vcf};
 use region::tabix_query::{TabixBed, TabixVcf};
 use clap::CommandFactory;
 use clap_complete::generate;
 use config::{
-    args::parse_chimeric_pairs, AlgorithmCommand, Cli, CollatedArgs, HashlookupArgs, NamesortedArgs,
+    MatchingAlgorithm,
+    run_config::RunConfig,
+    AlgorithmCommand, Cli, CollatedArgs, HashlookupArgs, NamesortedArgs,
 };
 pub use error::Error;
 use filter_algorithm::{
     strain::StrainArgs, viral_integration::ViralIntegrationArgs,
-    collated::CollatedMatcher,
     hash_lookup::HashLookup,
-    line_by_line::{LineByLine, MAX_STREAMS},
+    line_by_line::LineByLine,
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
-use noodles::sam::Header;
 use region::{
-    load::{
-        load_ambiguous_regions_memory, load_diagnostic_variants_memory,
-        load_positive_regions_memory,
-    },
-    AmbiguousRegions, DiagnosticVariants,
+    AmbiguousRegions, SegregateVariants,
 };
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tracing_subscriber::{fmt, EnvFilter};
 
 // Test helpers exposed only under cfg(test) or cfg(bench).
@@ -141,21 +136,42 @@ fn get_log_level(verbose_count: u8) -> &'static str {
 // ---------------------------------------------------------------------------
 fn run_namesorted(args: NamesortedArgs) -> Result<(), Error> {
     let stats_path = args.common.output.stats_output.clone();
-    let stream_labels = args.chimeric.stream_labels.clone();
+    let chimeric = args.chimeric.clone();
     let score_threads = args.parallel.score_threads;
-    let mut run = args.to_runconfig()?;
-    let aln = run.open_streams_unified(run.parallel.threads)?;
-    let n = aln.len();
+    let run = args.into_run_config()?;
+    let stream_labels = chimeric.stream_labels.clone();
+    let chimeric_pairs = chimeric.parse_pairs(stream_labels.len())?;
+    run_line_by_line(stats_path, stream_labels, chimeric_pairs, score_threads, run)
+}
 
+fn run_line_by_line(
+    stats_path: Option<PathBuf>,
+    stream_labels: Vec<String>,
+    chimeric_pairs: Vec<[usize; 2]>,
+    mut score_threads: usize,
+    mut run: RunConfig,
+) -> Result<(), Error> {
+    let aln = run.open_streams_unified(MatchingAlgorithm::Namesorted, run.threads)?;
+
+    // Clamp score_threads to aln.len() * 2 as a sanity bound; beyond that
+    // the IO thread becomes the bottleneck and extra workers are idle
+    let n = aln.len();
+    score_threads = score_threads.max(n * 2);
+
+    let mut lbl = LineByLine::new(&run, aln, stream_labels.clone(), chimeric_pairs)?;
     if score_threads > 1 {
-        let mut lbl = LineByLine::new(&run, aln)?;
-        let result = lbl.process_parallel(&run);
+        tracing::info!(
+            score_threads,
+            "Fragment scoring will use a parallel worker pool. \
+             Output order is nondeterministic."
+        );
+        let result = lbl.process_parallel(&run, score_threads);
         if let Some(p) = stats_path {
             crate::stats::write_stats(&p, &lbl.routing_counters, n, &stream_labels, "sample")?;
         }
         result
     } else {
-        LineByLine::new(&run, aln)?.process_sequential(&run)
+        lbl.process_sequential(&run)
     }
 }
 
@@ -173,28 +189,28 @@ fn run_hashlookup(mut args: HashlookupArgs) -> Result<(), Error> {
             .transpose()?,
     ];
     let vcf: [Option<TabixVcf>; 2] = [
-        path_for_stream(&args.diagnostic_variants, 0)
+        path_for_stream(&args.distinct_variants, 0)
             .map(|s| TabixVcf::open(Path::new(s)))
             .transpose()?,
-        path_for_stream(&args.diagnostic_variants, 1)
+        path_for_stream(&args.distinct_variants, 1)
             .map(|s| TabixVcf::open(Path::new(s)))
             .transpose()?,
     ];
-    let mut run = args.to_runconfig()?;
+    let mut run = args.into_run_config()?;
     let aln = run.open_indexed_streams()?;
     let name_to_id = aln
         .iter()
         .map(|s| crate::variant::name_to_id::header_name_to_id(s.header()))
         .collect::<Vec<HashMap<_, _>>>();
 
-    HashLookup::<RecordBuf>::new_from_hashlookup(&run, aln, bed, vcf, [None, None])?.process(&run)
+    HashLookup::<RecordBuf>::new(&run, aln, bed, vcf, [None, None])?.process(&run)
 }
 
 // ---------------------------------------------------------------------------
 // Collated — individually name-sorted streams
 // ---------------------------------------------------------------------------
 
-fn run_collated(mut args: CollatedArgs) -> Result<(), Error> {
+fn run_collated(args: CollatedArgs) -> Result<(), Error> {
 
     let bed: [Option<TabixBed>; 2] = [
         path_for_stream(&args.ambiguous_regions, 0)
@@ -205,14 +221,14 @@ fn run_collated(mut args: CollatedArgs) -> Result<(), Error> {
             .transpose()?,
     ];
     let vcf: [Option<TabixVcf>; 2] = [
-        path_for_stream(&args.diagnostic_variants, 0)
+        path_for_stream(&args.distinct_variants, 0)
             .map(|s| TabixVcf::open(Path::new(s)))
             .transpose()?,
-        path_for_stream(&args.diagnostic_variants, 1)
+        path_for_stream(&args.distinct_variants, 1)
             .map(|s| TabixVcf::open(Path::new(s)))
             .transpose()?,
     ];
-    let mut run = args.to_runconfig()?;
+    let mut run = args.into_run_config()?;
     let aln = run.open_streams()?;
 
 
@@ -226,48 +242,26 @@ fn run_collated(mut args: CollatedArgs) -> Result<(), Error> {
 // Strain — specialized collated matcher for strain detection
 // ---------------------------------------------------------------------------
 
-fn run_strain(mut args: StrainArgs) -> Result<(), Error> {
-    let mut run = args.into_run_config()?;
-    let threads = run.threads;
-    let aln = run.open_streams_unified(threads)?;
-    let n = aln.len();
-    let score_threads = run.score_threads;
-    let stats_path = run.output.stats_output.clone();
-    let stream_labels = run.stream_labels.clone();
-    if score_threads > 1 {
-        let mut lbl = LineByLine::new(&run, aln)?;
-        let result = lbl.process_parallel(&run);
-        if let Some(p) = stats_path {
-            crate::stats::write_stats(&p, &lbl.routing_counters, n, &stream_labels, "sample")?;
-        }
-        result
-    } else {
-        LineByLine::new(&run, aln)?.process_sequential(&run)
-    }
+fn run_strain(args: StrainArgs) -> Result<(), Error> {
+    let stats_path = args.output.stats_output.clone();
+    let score_threads = args.parallel.score_threads;
+    let stream_labels = vec![];
+    let chimeric_pairs = vec![];
+    let run = args.into_run_config()?;
+    run_line_by_line(stats_path, stream_labels, chimeric_pairs, score_threads, run)
 }
 
 // ---------------------------------------------------------------------------
 // Viral integration — specialized collated matcher for virus-host chimeras
 // ---------------------------------------------------------------------------
 
-fn run_viral_integration(mut args: ViralIntegrationArgs) -> Result<(), Error> {
-    let mut run = args.into_run_config()?;
-    let threads = run.threads;
-    let aln = run.open_streams_unified(threads)?;
-    let n = aln.len();
-    let score_threads = run.score_threads;
-    let stats_path = run.output.stats_output.clone();
-    let stream_labels = run.stream_labels.clone();
-    if score_threads > 1 {
-        let mut lbl = LineByLine::new(&run, aln)?;
-        let result = lbl.process_parallel(&run);
-        if let Some(p) = stats_path {
-            crate::stats::write_stats(&p, &lbl.routing_counters, n, &stream_labels, "sample")?;
-        }
-        result
-    } else {
-        LineByLine::new(&run, aln)?.process_sequential(&run)
-    }
+fn run_viral_integration(args: ViralIntegrationArgs) -> Result<(), Error> {
+    let stats_path = args.output.stats_output.clone();
+    let score_threads = args.score_threads;
+    let chimeric_pairs = vec![[0, 1]];
+    let stream_labels = args.stream_labels.clone();
+    let run = args.into_run_config()?;
+    run_line_by_line(stats_path, stream_labels, chimeric_pairs, score_threads, run)
 }
 
 // ---------------------------------------------------------------------------
@@ -301,11 +295,11 @@ fn load_ambiguous_regions(
     })
 }
 
-fn load_diagnostic_variants(
+fn load_distinct_variants(
     specs: &[FileSpec],
     name_to_id: &Vec<HashMap<String, usize>>,
-) -> Result<[Option<DiagnosticVariants>; 2], Error> {
+) -> Result<[Option<SegregateVariants>; 2], Error> {
     load_specs(specs, name_to_id, |p, name_to_id| {
-        DiagnosticVariants::from_vcf(p, name_to_id)
+        SegregateVariants::from_vcf(p, name_to_id)
     })
 }

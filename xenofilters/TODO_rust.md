@@ -17,7 +17,7 @@
 - [✓] `OutputMode` enum (`MultiFile` / `Merged`) with `expand_header()` and `rewrite_rg()`
 - [✓] `AmbiguousVcfEvaluator` trait stub (`src/filter_algorithm/ambiguous_vcf.rs`)
 - [✓] `--ambiguous-regions` BED and `--diagnostic-variants` VCF CLI flags
-- [✓] `AmbiguousRegions` and `DiagnosticVariants` wired into `HashLookup` and `Collated`
+- [✓] `AmbiguousRegions` and `SegregateVariants` wired into `HashLookup` and `Collated`
 - [✓] Tabix-indexed BED/VCF (`TabixBed`, `TabixVcf`) for `Collated`
 - [✓] Variant stores refactored to `Option<Arc<dyn StoreTrait>>` (`Send + Sync`)
 - [✓] `dvnt` double-population bug fixed

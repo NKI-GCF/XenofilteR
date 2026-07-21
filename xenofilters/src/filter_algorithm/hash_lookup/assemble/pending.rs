@@ -1,4 +1,4 @@
-use crate::region::{AmbiguousRegions, DiagnosticVariants};
+use crate::region::{AmbiguousRegions, SegregateVariants};
 use smallvec::SmallVec;
 use super::FragmentTable;
 use super::stream::{StreamAccumulator, StreamKind, RecordKind};
@@ -35,7 +35,7 @@ impl PendingFragment {
         rec: RecordKind,
         nr: usize,
         bed: Option<&AmbiguousRegions>,
-        vcf: Option<&DiagnosticVariants>,
+        vcf: Option<&SegregateVariants>,
     ) -> bool {
         if self.is_paired.is_none() {
             self.is_paired = Some(rec.flags().is_segmented());
@@ -59,7 +59,7 @@ impl PendingFragment {
     fn check_complete(
         &mut self,
         bed: Option<&AmbiguousRegions>,
-        vcf: Option<&DiagnosticVariants>,
+        vcf: Option<&SegregateVariants>,
     ) -> bool {
         let exp = self.expected_primaries();
         if self.driving.is_empty() && self.driving_buf.primary_count >= exp {
@@ -81,7 +81,7 @@ pub(crate) fn insert(
     nr: usize,
     seq_counter: &mut u64,
     bed: Option<&AmbiguousRegions>,
-    vcf: Option<&DiagnosticVariants>,
+    vcf: Option<&SegregateVariants>,
 ) -> (Box<[u8]>, bool) {
     let entry = table.entry(canonical_name.clone()).or_insert_with(|| {
         let sn = *seq_counter;

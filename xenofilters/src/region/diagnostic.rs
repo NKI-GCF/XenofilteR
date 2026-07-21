@@ -22,12 +22,12 @@ impl DiagnosticSite {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct DiagnosticVariants {
+pub(crate) struct SegregateVariants {
     pub(crate) per_ref: Vec<Vec<DiagnosticSite>>,
     pub(crate) max_ref_len: usize,
 }
 
-impl DiagnosticVariants {
+impl SegregateVariants {
     pub(crate) fn from_vcf(
         path: &Path,
         name_to_id: &HashMap<String, usize>,
@@ -113,7 +113,7 @@ mod tests {
         DiagnosticSite { pos, ref_len }
     }
 
-    fn store(sites: &[(usize, usize, usize)]) -> DiagnosticVariants {
+    fn store(sites: &[(usize, usize, usize)]) -> SegregateVariants {
         let mut per_ref: Vec<Vec<DiagnosticSite>> = Vec::new();
         let mut max_ref_len = 1;
         for &(rid, pos, ref_len) in sites {
@@ -126,7 +126,7 @@ mod tests {
         for v in per_ref.iter_mut() {
             v.sort_unstable_by_key(|s| s.pos);
         }
-        DiagnosticVariants {
+        SegregateVariants {
             per_ref,
             max_ref_len,
         }

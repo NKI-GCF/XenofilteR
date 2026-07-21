@@ -3,21 +3,19 @@ use crate::{
     config::{
         CommonArgs,
         args::{
-            IoArgs, OutputArgsMulti, RegionArgsTabix, ScoringArgs, VariantArgs, ChimericArgs
+            IoArgs, OutputArgs, SegregateArgs, ScoringArgs, RelatedArgs, ChimericArgs
         },
         MatchingAlgorithm, NameEncoderKind,
     },
     file_spec::path_for_stream,
-    filter_algorithm::line_by_line::MAX_STREAMS,
     Error,
     variant::name_to_id::header_name_to_id,
-    region::{ScoreFn, ScoredRegions},
+    region::ScoredRegions,
     ensure,
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::{smallvec, SmallVec};
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
 use std::ops::RangeInclusive;
 
 /// Single flat struct consumed by all three engines. No Args-struct
@@ -28,12 +26,12 @@ use std::ops::RangeInclusive;
 pub(crate) struct RunConfig {
     pub(crate) io: IoArgs,
     pub(crate) scoring: ScoringArgs,
-    pub(crate) variants: VariantArgs,
-    pub(crate) output: OutputArgsMulti,
+    pub(crate) variants: RelatedArgs,
+    pub(crate) output: OutputArgs,
     pub(crate) threads: usize,
     pub(crate) chimeric_pairs: Vec<String>,
     pub(crate) stream_labels: Vec<String>,
-    pub(crate) region_tabix: RegionArgsTabix,
+    pub(crate) segregate: Option<SegregateArgs>,
     pub(crate) name_encoder: Option<NameEncoderKind>,
     pub(crate) is_pass2: bool,
     pub(crate) is_paired: Option<bool>,
@@ -41,12 +39,13 @@ pub(crate) struct RunConfig {
 
 impl RunConfig {
     pub(crate) fn new(
-        common: CommonArgs,
+        mut common: CommonArgs,
         chimeric: Option<ChimericArgs>,
         name_encoder: Option<NameEncoderKind>,
         threads: usize,
         streams: RangeInclusive<usize>,
         max_stdin: usize,
+        segregate: Option<SegregateArgs>
     ) -> Result<Self, Error> {
         let io = common.io;
 
@@ -58,6 +57,10 @@ impl RunConfig {
 
         let output = common.output;
         output.validate(if max == 1 { 2 } else { n })?;
+        let (chimeric_pairs, stream_labels) = match chimeric {
+            Some(c) => (c.chimeric_pairs, c.stream_labels),
+            None => (vec![], vec![]),
+        };
 
         Ok(RunConfig {
             io,
@@ -65,19 +68,19 @@ impl RunConfig {
             variants: common.variants,
             output,
             threads,
-            score_threads: common.score_threads,
-            chimeric_pairs: chimeric.map_or(vec![], |c| c.chimeric_pairs),
-            stream_labels: chimeric.map_or(vec![], |c| c.stream_labels),
-            region_tabix: common.region_tabix,
+            chimeric_pairs,
+            stream_labels,
+            segregate,
             name_encoder,
             ..Default::default()
         })
     }
 
     /// Open all streams for namesorted/collated (unified reader path).
-    /// `bgzf_threads` applies to BAM decompression; ignored for SAM/CRAM.
+    /// `bgzf_threads` applies to BAM decompression; ignored for SAM.
     pub(crate) fn open_streams_unified(
         &mut self,
+        algorithm: MatchingAlgorithm,
         bgzf_threads: usize,
     ) -> Result<SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>, Error> {
         let mut aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> = smallvec![];
@@ -86,7 +89,7 @@ impl RunConfig {
         // Requires threads > 1 AND a non-seeking backend (namesorted / collated).
         // HashLookup pass-2 uses seek_vpos → must use Single.
         let threads = NonZeroUsize::new(bgzf_threads).unwrap_or(NonZeroUsize::MIN);
-        let score_fn = self.scoring.region_score_fn;
+        let score_fn = self.variants.region_score_fn;
 
         let n = self.io.alignment.len();
         for i in 0..n {
@@ -97,7 +100,7 @@ impl RunConfig {
             let name_to_id = header_name_to_id(aln[i].header());
             let positive_regions = path_for_stream(positive_regions, 0).map(|p| ScoredRegions::from_bed(p.as_path(), &name_to_id).map(|s| (s, score_fn))).transpose()?;
 
-            let stream = AlnStream::<RecordBuf>::new(self, i, threads.clone(), positive_regions)?;
+            let stream = AlnStream::<RecordBuf>::new(self, &algorithm, i, threads.clone(), positive_regions)?;
             aln.push(Box::new(stream));
             if i > 0 {
                 if aln[i].next_qname() != aln[0].next_qname() {
@@ -115,11 +118,11 @@ impl RunConfig {
     }
 
     /// Open exactly 2 streams as raw seekable BGZF BAM readers (HashLookup pass-2
-    /// requires seek_vpos, which the unified/CRAM-capable reader cannot provide).
+    /// requires seek_vpos, which the unified reader cannot provide).
     pub(crate) fn open_indexed_streams(
         &mut self,
     ) -> Result<SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>, Error> {
-        if !self.io.alignment.iter().any(|p| !p.ends_with(".bam")) {
+        if !self.io.alignment.iter().any(|p| !p.ends_with(".bam") && !p.ends_with(".cram")) {
             return Err(Error::InvalidInput(format!(
                 "hashlookup requires BAM/CRAM input. SAM does not support seek: {:?}",
                 self.io.alignment

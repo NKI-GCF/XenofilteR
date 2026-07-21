@@ -404,7 +404,7 @@ next_fragment()      next_fragment()
 ### Region overlap (Collated-specific)
 
 BED/VCF files must be bgzf-compressed and tabix-indexed. `HashLookup` uses in-memory
-`AmbiguousRegions` / `DiagnosticVariants` loaded at startup instead.
+`AmbiguousRegions` / `SegregateVariants` loaded at startup instead.
 
 ### Output order
 

@@ -1,5 +1,5 @@
 use crate::{
-    config::args::{IoArgs, OutputArgsMulti, ScoringArgs, VariantArgs},
+    config::args::{IoArgs, OutputArgs, ScoringArgs, RelatedArgs},
     config::run_config::RunConfig,
     Error,
 };
@@ -27,10 +27,10 @@ pub(crate) struct ViralIntegrationArgs {
     pub(crate) scoring: ScoringArgs,
 
     #[command(flatten)]
-    pub(crate) variants: VariantArgs,
+    pub(crate) variants: RelatedArgs,
 
     #[command(flatten)]
-    pub(crate) output: OutputArgsMulti,
+    pub(crate) output: OutputArgs,
 
     #[arg(short = 't', long, default_value = "4", help_heading = "Parallelism")]
     pub(crate) threads: usize,
@@ -47,7 +47,6 @@ impl ViralIntegrationArgs {
             variants: self.variants,
             output: self.output,
             threads: self.threads,
-            score_threads: self.score_threads,
             // Preset: streams 0 and 1 are always the host↔virus chimeric pair.
             chimeric_pairs: vec!["0:1".to_string()],
             stream_labels: self.stream_labels,

@@ -1,5 +1,5 @@
 use crate::alignment::{mate_slot, segment_id, MateKind};
-use crate::region::{AmbiguousRegions, DiagnosticVariants};
+use crate::region::{AmbiguousRegions, SegregateVariants};
 use noodles::sam::alignment::record::Flags;
 use smallvec::SmallVec;
 
@@ -106,7 +106,7 @@ impl StreamAccumulator {
     pub(super) fn classify(
         self,
         bed: Option<&AmbiguousRegions>,
-        vcf: Option<&DiagnosticVariants>,
+        vcf: Option<&SegregateVariants>,
     ) -> StreamKind {
         if self.primary_count == 0 {
             return StreamKind::Scoring {

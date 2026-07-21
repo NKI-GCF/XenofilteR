@@ -103,31 +103,33 @@ pub(crate) struct ScoringArgs {
 
     #[arg(long, default_value = "false", help_heading = "Scoring")]
     pub(crate) bisulfite: bool,
-
-    #[arg(long, default_value = "linear:1.0")]
-    pub(crate) region_score_fn: ScoreFn,
 }
 
 /// Variant-rescue flags. Arity varies (see AlignmentArgs*); the flags
 /// themselves are identical everywhere.
 #[derive(Args, Debug, Clone, Default)]
-pub(crate) struct VariantArgs {
+pub(crate) struct RelatedArgs {
     #[arg(short = 's', long, num_args = 0..=MAX_STREAMS, value_name = "[IDX:]FILE",
           help_heading = "Variants")]
     pub(crate) sample_variants: Vec<FileSpec>,
 
     #[arg(short = 'p', long, num_args = 0..=MAX_STREAMS, value_name = "[IDX:]FILE",
-          help_heading = "Variants")]
+          help_heading = "Diagnostic")]
     pub(crate) population_variants: Vec<FileSpec>,
 
+    #[arg(long, num_args = 0..=MAX_STREAMS, value_name = "[IDX:]FILE.bed.gz",
+          help_heading = "Regions")]
+    pub(crate) positive_regions: Vec<FileSpec>,
+
+    #[arg(long, default_value = "linear:1.0")]
+    pub(crate) region_score_fn: ScoreFn,
+
+    // FIXME: only expand if necessary.
     #[arg(long, default_value_t = false, requires = "reference")]
     pub(crate) expand_indels: bool,
 
     #[arg(long, default_value_t = 50)]
     pub(crate) indel_expand_padding: usize,
-
-    #[arg(long, num_args = 0..=MAX_STREAMS, value_name = "[IDX:]FILE")]
-    pub(crate) positive_regions: Vec<FileSpec>,
 }
 
 /// Parallelism — only meaningful for namesorted (hashlookup/collated force 1).
@@ -166,56 +168,31 @@ pub(crate) struct ChimericArgs {
     pub(crate) stream_labels: Vec<String>,
 }
 
-/// Tabix-indexed region flags (collated). Same flag *names*, different
-/// runtime loader (TabixBed vs AmbiguousRegions::from_bed). Kept as a
-/// separate struct only because the doc strings differ (tabix requirement).
+/// Tabix-indexed region flags. Hashmap and collated algorithm only.
 #[derive(Args, Debug, Clone, Default)]
-pub(crate) struct RegionArgsTabix {
+pub(crate) struct SegregateArgs {
     #[arg(long, num_args = 0..=2, value_name = "[IDX:]FILE.bed.gz",
           help_heading = "Regions")]
     pub(crate) ambiguous_regions: Vec<FileSpec>,
 
     #[arg(long, num_args = 0..=MAX_STREAMS, value_name = "[IDX:]FILE.vcf.gz",
           help_heading = "Regions")]
-    pub(crate) diagnostic_variants: Vec<FileSpec>,
-
-    #[arg(long, num_args = 0..=MAX_STREAMS, value_name = "[IDX:]FILE.bed.gz",
-          help_heading = "Regions")]
-    pub(crate) positive_regions: Vec<FileSpec>,
-
-    #[arg(long, default_value = "linear:1.0", help_heading = "Regions")]
-    pub(crate) region_score_fn: ScoreFn,
+    pub(crate) distinct_variants: Vec<FileSpec>,
 }
 
 /// Output paths: arity is 1..=MAX_STREAMS for general multi-stream use.
 /// Kept separate from IoArgs because strain/viral variants want stricter caps.
 #[derive(Args, Debug, Clone, Default)]
-pub(crate) struct OutputArgsMulti {
+pub(crate) struct OutputArgs {
     #[arg(short = 'o', long, num_args = 1..=MAX_STREAMS, help_heading = "Output")]
     pub(crate) output: Vec<PathBuf>,
 
     #[arg(short = 'a', long, num_args = 0..=MAX_STREAMS, help_heading = "Output")]
     pub(crate) ambiguous_output: Vec<PathBuf>,
 
-    #[arg(long, num_args = 0..=MAX_STREAMS)]
-    pub(crate) discarded_output: Vec<PathBuf>,
     #[arg(long)]
     pub(crate) stats_output: Option<PathBuf>,
 }
-
-/// Output paths for exactly-2-logical-stream subcommands (strain, hashlookup,
-/// collated, viral-integration). Same flags, tighter arity — better --help
-/// and earlier validation than a shared 1..=MAX_STREAMS bound.
-#[derive(Args, Debug, Clone, Default)]
-pub(crate) struct OutputArgsPair {
-    #[arg(short = 'o', long, num_args = 1..=2, help_heading = "Output")]
-    pub(crate) output: Vec<PathBuf>,
-
-    #[arg(short = 'a', long, num_args = 0..=2, help_heading = "Output")]
-    pub(crate) ambiguous_output: Vec<PathBuf>,
-}
-
-// src/config/args.rs
 
 impl IoArgs {
     pub(crate) fn validate(&self, max_stdin: usize) -> Result<usize, Error> {
@@ -262,13 +239,13 @@ impl ScoringArgs {
     }
 }
 
-impl VariantArgs {
+impl RelatedArgs {
     pub(crate) fn has_index(&self, idx: usize) -> bool {
         path_for_stream(&self.sample_variants, idx).is_some()
     }
 }
 
-impl OutputArgsMulti {
+impl OutputArgs {
     pub(crate) fn validate(&self, n_streams: usize) -> Result<(), Error> {
         if self.output.len() > n_streams {
             return Err(Error::TooManyOutputPaths {
@@ -283,28 +260,6 @@ impl OutputArgsMulti {
             });
         }
         Ok(())
-    }
-}
-
-impl OutputArgsPair {
-    pub(crate) fn validate(&self) -> Result<(), Error> {
-        if self.output.len() > 2 {
-            return Err(Error::TooManyOutputPathsPair);
-        }
-        if self.ambiguous_output.len() > 2 {
-            return Err(Error::TooManyAmbiguousPathsPair);
-        }
-        Ok(())
-    }
-}
-
-impl From<OutputArgsPair> for OutputArgsMulti {
-    fn from(p: OutputArgsPair) -> Self {
-        Self {
-            output: p.output,
-            ambiguous_output: p.ambiguous_output,
-            ..Default::default()
-        }
     }
 }
 

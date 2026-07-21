@@ -13,7 +13,7 @@ merge described in the inline comments of each file.
 | `src/variant/indel_equiv.rs`           | Core enumeration algorithm + build functions |
 | `src/variant/indel_equiv_impls.rs`     | `WithAllelesRefId` impls on Sample + Population |
 | `src/variant/indel_equiv_corrected.rs` | Corrected build functions with ref_id threading |
-| `src/variant/diagnostic_equiv.rs`      | DiagnosticVariants expansion |
+| `src/variant/diagnostic_equiv.rs`      | SegregateVariants expansion |
 | `src/variant/store_insert.rs`          | `Store::insert`, `insert_expanded`, `dedup` |
 | `src/variant/variant_window_test_hook.rs` | Test-only scoring hook |
 | `src/variant/name_to_id.rs`           | Header/FAI name→id mapping |
@@ -63,9 +63,9 @@ fn ref_id(&self) -> usize { self.ref_id }
 - Add `insert`, `insert_expanded`, `dedup` from `store_insert.rs`
 
 ### `src/region/diagnostic.rs`
-- Replace `DiagnosticVariants` with the version in `store_and_diagnostic.rs`
+- Replace `SegregateVariants` with the version in `store_and_diagnostic.rs`
   (adds `is_reverse` parameter to `overlaps()`, `from_per_ref` constructor)
-- Add `#[derive(Clone, Default)]` to `DiagnosticVariants`
+- Add `#[derive(Clone, Default)]` to `SegregateVariants`
 
 ### `src/config.rs`
 - Add `expand_indels: bool` field to `CommonArgs`
@@ -146,4 +146,4 @@ cargo clippy --all-features -- -D warnings
 1. MNP / complex allele expansion
 2. Sequence-aware BED padding (replace fixed-bp with repeat-boundary detection)
 3. `overlapping_multi` MAX_SCAN_BACK → interval-tree for SV VCFs
-4. Strand-aware DiagnosticVariants overlap
+4. Strand-aware SegregateVariants overlap

@@ -3,6 +3,7 @@ pub(crate) mod run_config;
 
 use crate::{
     config::run_config::RunConfig,
+    config::args::SegregateArgs,
     file_spec::FileSpec,
     filter_algorithm::{
         line_by_line::MAX_STREAMS, strain::StrainArgs, viral_integration::ViralIntegrationArgs,
@@ -176,9 +177,9 @@ pub(crate) struct CommonArgs {
     #[command(flatten)]
     pub(crate) scoring: crate::config::args::ScoringArgs,
     #[command(flatten)]
-    pub(crate) variants: crate::config::args::VariantArgs,
+    pub(crate) variants: crate::config::args::RelatedArgs,
     #[command(flatten)]
-    pub(crate) output: crate::config::args::OutputArgsMulti,
+    pub(crate) output: crate::config::args::OutputArgs,
 }
 
 // -- Per-algorithm arg structs -------------------------------------------------
@@ -206,7 +207,7 @@ pub(crate) struct NamesortedArgs {
 }
 
 impl NamesortedArgs {
-    pub(crate) fn to_runconfig(self) -> Result<RunConfig, Error> {
+    pub(crate) fn into_run_config(self) -> Result<RunConfig, Error> {
         RunConfig::new(
             self.common,
             Some(self.chimeric),
@@ -214,6 +215,7 @@ impl NamesortedArgs {
             self.threads,
             1..=MAX_STREAMS,
             1,
+            None,
         )
     }
 }
@@ -233,7 +235,7 @@ pub(crate) struct HashlookupArgs {
     /// In-memory VCF/BCF of diagnostic positions per stream.
     #[arg(long, num_args = 0..=2, value_name = "[IDX:]FILE",
           help_heading = "Regions", value_hint = clap::ValueHint::FilePath)]
-    pub(crate) diagnostic_variants: Vec<FileSpec>,
+    pub(crate) distinct_variants: Vec<FileSpec>,
 
     /// BED file(s) of regions giving reads a positive score bonus.
     #[arg(long, num_args = 0..=2, value_name = "FILE",
@@ -251,8 +253,16 @@ pub(crate) struct HashlookupArgs {
 }
 
 impl HashlookupArgs {
-    pub(crate) fn to_runconfig(self) -> Result<RunConfig, Error> {
-        RunConfig::new(self.common, None, Some(self.name_encoder), 1, 2..=2, 0)
+    pub(crate) fn into_run_config(self) -> Result<RunConfig, Error> {
+        let segregate = if self.distinct_variants.is_empty() && self.positive_regions.is_empty() {
+            None
+        } else {
+            Some(SegregateArgs {
+                ambiguous_regions: self.ambiguous_regions,
+                distinct_variants: self.distinct_variants,
+            })
+        };
+        RunConfig::new(self.common, None, Some(self.name_encoder), 1, 2..=2, 0, segregate)
     }
 }
 
@@ -270,7 +280,7 @@ pub(crate) struct CollatedArgs {
     /// Tabix-indexed VCF/BCF of diagnostic positions per stream.
     #[arg(long, num_args = 0..=2, value_name = "[IDX:]FILE",
           help_heading = "Regions", value_hint = clap::ValueHint::FilePath)]
-    pub(crate) diagnostic_variants: Vec<FileSpec>,
+    pub(crate) distinct_variants: Vec<FileSpec>,
 
     /// BED.gz file(s) of positive-score regions. Tabix-indexed.
     #[arg(long, num_args = 0..=2, value_name = "[IDX:]FILE",
@@ -282,8 +292,16 @@ pub(crate) struct CollatedArgs {
 }
 
 impl CollatedArgs {
-    pub(crate) fn to_runconfig(self) -> Result<RunConfig, Error> {
-        RunConfig::new(self.common, None, None, 1, 2..=2, 1)
+    pub(crate) fn into_run_config(self) -> Result<RunConfig, Error> {
+        let segregate = if self.distinct_variants.is_empty() && self.positive_regions.is_empty() {
+            None
+        } else {
+            Some(SegregateArgs {
+                ambiguous_regions: self.ambiguous_regions,
+                distinct_variants: self.distinct_variants,
+            })
+        };
+        RunConfig::new(self.common, None, None, 1, 2..=2, 1, segregate)
     }
 }
 

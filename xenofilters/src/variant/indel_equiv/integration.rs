@@ -24,7 +24,7 @@ mod indel_expansion_integration {
     use crate::{
         config::Config,
         filter_algorithm::line_by_line::Scratch,
-        region::diagnostic::{DiagnosticSite, DiagnosticVariants},
+        region::diagnostic::{DiagnosticSite, SegregateVariants},
         tests::{create_record, MockStream},
         variant::{
             population::Population,
@@ -124,7 +124,7 @@ mod indel_expansion_integration {
         }
         per_ref[0].sort_unstable_by_key(|s| s.pos);
 
-        let diag = DiagnosticVariants {
+        let diag = SegregateVariants {
             per_ref,
             max_ref_len: 2,
         };

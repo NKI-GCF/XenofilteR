@@ -7,7 +7,7 @@ use crate::bam::{
 use crate::config::run_config::RunConfig;
 use crate::config::{MatchingAlgorithm, StripReadSuffix};
 use crate::file_spec::path_for_stream;
-use crate::region::{diagnostic::DiagnosticVariants, PositiveRegions, ScoreFn};
+use crate::region::{diagnostic::SegregateVariants, PositiveRegions, ScoreFn};
 use crate::variant::{
     build_diagnostic_store_expanded,
     indel_equiv::corrected::read_vcf_or_bcf_header,
@@ -21,7 +21,6 @@ use crate::variant::{
     StoreTrait,
 };
 use crate::Error;
-use crate::{HashlookupArgs, NamesortedArgs};
 use noodles::bam::{io::Reader as BamReader, record::Record};
 use noodles::bgzf::{io::MultithreadedReader, VirtualPosition};
 use noodles::fasta::io::indexed_reader::Builder;
@@ -29,7 +28,6 @@ use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::Header;
 use std::fs::File;
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 pub(crate) trait AlignmentStream<R: SimpleRec> {
@@ -73,12 +71,13 @@ where
 {
     pub(crate) fn new(
         opt: &mut RunConfig,
+        algorithm: &MatchingAlgorithm,
         i: usize,
         threads: NonZeroUsize,
         positive_regions: Option<(PositiveRegions, ScoreFn)>,
     ) -> Result<Self, Error> {
         let path = opt.io.alignment[i].to_string_lossy();
-        let seekable_required = MatchingAlgorithm::Hashlookup == opt.algorithm;
+        let seekable_required = MatchingAlgorithm::Hashlookup == *algorithm;
 
         let file = File::open(&opt.io.alignment[i])?;
 
@@ -108,7 +107,7 @@ where
 
         // Sort-order check (namesorted only).
         let raw = bam.read_raw_header_bytes()?;
-        if MatchingAlgorithm::Namesorted == opt.algorithm {
+        if MatchingAlgorithm::Namesorted == *algorithm {
             for parts in raw
                 .split(|&b| b == b'\n')
                 .map(|s| s.split(|&b| b == b'\t').collect::<Vec<_>>())
@@ -394,37 +393,41 @@ fn build_variant_stores(
 /// Build the diagnostic variant store for one stream.
 ///
 /// Separated from `build_variant_stores` because the diagnostic store has
-/// a different type (`DiagnosticVariants`) and is consumed by different
+/// a different type (`SegregateVariants`) and is consumed by different
 /// code paths (HashLookup BED/VCF region check).
 pub(crate) fn build_diagnostic_store_for_stream(
     config: &RunConfig,
     header: &Header,
     stream_idx: usize,
-) -> Result<Option<crate::region::diagnostic::DiagnosticVariants>, Error> {
-    let diag_vcf_path = path_for_stream(&config.region_memory.diagnostic_variants, stream_idx);
-    let Some(path) = diag_vcf_path else {
-        return Ok(None);
-    };
+) -> Result<Option<crate::region::diagnostic::SegregateVariants>, Error> {
+    if let Some (segregate) = &config.segregate {
+        let diag_vcf_path = path_for_stream(&segregate.distinct_variants, stream_idx);
+        let Some(path) = diag_vcf_path else {
+            return Ok(None);
+        };
+        if !config.variants.expand_indels {
+            // Plain diagnostic loading: existing behavior.
+            return SegregateVariants::from_vcf(path, &header_name_to_id(header)).map(Some);
+        }
+        let fasta_path = path_for_stream(&config.io.reference, stream_idx);
+        let fasta_path = fasta_path
+            .as_deref()
+            .ok_or(crate::Error::ExpandIndelsRequiresReference)?;
 
-    if !config.variants.expand_indels {
-        // Plain diagnostic loading: existing behavior.
-        return DiagnosticVariants::from_vcf(path, &header_name_to_id(header)).map(Some);
+        let fasta_reader = Builder::default().build_from_path(fasta_path)?;
+
+        let mut expander = IndelEquivalenceExpander::new(fasta_reader);
+        let name_to_id = header_name_to_id(header);
+
+        // Read the VCF header separately so we can pass it by reference.
+        let vcf_header = read_vcf_or_bcf_header(path)?;
+
+        build_diagnostic_store_expanded(path, &mut expander, &name_to_id, &vcf_header).map(Some)
+    } else {
+        return Ok(None);
     }
 
-    let fasta_path = path_for_stream(&config.io.reference, stream_idx);
-    let fasta_path = fasta_path
-        .as_deref()
-        .ok_or(crate::Error::ExpandIndelsRequiresReference)?;
 
-    let fasta_reader = Builder::default().build_from_path(fasta_path)?;
-
-    let mut expander = IndelEquivalenceExpander::new(fasta_reader);
-    let name_to_id = header_name_to_id(header);
-
-    // Read the VCF header separately so we can pass it by reference.
-    let vcf_header = read_vcf_or_bcf_header(path)?;
-
-    build_diagnostic_store_expanded(path, &mut expander, &name_to_id, &vcf_header).map(Some)
 }
 
 #[cfg(test)]

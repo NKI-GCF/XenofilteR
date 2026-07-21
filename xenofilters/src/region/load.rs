@@ -1,6 +1,6 @@
 // src/region/load.rs
 use std::collections::HashMap;
-use crate::region::{AmbiguousRegions, DiagnosticVariants, ScoredRegions};
+use crate::region::{AmbiguousRegions, SegregateVariants, ScoredRegions};
 use crate::region::ScoreFn;
 use std::path::Path;
 use crate::error::Error;
@@ -14,12 +14,12 @@ pub(crate) fn load_ambiguous_regions_memory(
     })
 }
 
-pub(crate) fn load_diagnostic_variants_memory(
+pub(crate) fn load_distinct_variants_memory(
     specs: &[String],
     name_to_id: &HashMap<String, usize>,
-) -> Result<[Option<DiagnosticVariants>; 2], Error> {
+) -> Result<[Option<SegregateVariants>; 2], Error> {
     load_pair(specs, |p| {
-        DiagnosticVariants::from_vcf(Path::new(p), name_to_id)
+        SegregateVariants::from_vcf(Path::new(p), name_to_id)
     })
 }
 
