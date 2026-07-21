@@ -356,7 +356,7 @@ fn run_collated(mut args: CollatedArgs) -> Result<(), Error> {
     let vcf = open_tabix_vcf(&args.distinct_variants)?;
     let pos = open_tabix_scored(&args.positive_regions, args.region_score_fn)?;
     let aln = open_streams_unified(&mut args.common, 1)?;
-    let counters = CollatedMatcher::new_from_collated(&args, aln, bed, vcf, pos)?.process()?;
+    let counters = CollatedMatcher::new(&args, aln, bed, vcf, pos)?.process()?;
     print_routing_counters(&counters, "collated", &args.common);
     write_stats_if_configured(&counters, &args.common, n, "collated")
 }

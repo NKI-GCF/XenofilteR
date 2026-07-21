@@ -2,17 +2,17 @@ use crate::tests::common::{cfg, r, u};
 use crate::{
     aln_stream::tests::MockStream,
     aln_stream::AlignmentStream,
-    config::{Config, StripReadSuffix},
+    config::run_config::RunConfig,
     filter_algorithm::collated::CollatedMatcher,
     tests::create_record,
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::smallvec;
 
-fn make(s0: Vec<RecordBuf>, s1: Vec<RecordBuf>, cfg: &Config) -> CollatedMatcher<RecordBuf> {
+fn make(s0: Vec<RecordBuf>, s1: Vec<RecordBuf>, cfg: &RunConfig) -> CollatedMatcher<RecordBuf> {
     let a0 = Box::new(MockStream::new(0, s0)) as Box<dyn AlignmentStream<RecordBuf>>;
     let a1 = Box::new(MockStream::new(1, s1)) as Box<dyn AlignmentStream<RecordBuf>>;
-    CollatedMatcher::new(cfg, smallvec![a0, a1], [None, None], [None, None]).unwrap()
+    CollatedMatcher::<RecordBuf>::new(cfg, smallvec![a0, a1], [None, None], [None, None]).unwrap()
 }
 
 struct Row {
@@ -106,21 +106,4 @@ fn collated_table() {
     if !misses.is_empty() {
         panic!("{} test cases failed:\n{}", misses.len(), misses.join("\n"));
     }
-}
-
-#[test]
-fn collated_suffix_stripping() {
-    let config = Config {
-        strip_read_suffix: StripReadSuffix::True,
-        gap_open: 6.0,
-        gap_extend: 1.0,
-        mismatch_penalty: 4.0,
-        ..Config::default()
-    };
-    let s0 = vec![create_record(b"R1/1", "10M", &[], &[30u8; 10], "10", false).unwrap()];
-    let s1 = vec![create_record(b"R1/2", "5M5S", &[], &[30u8; 10], "5", false).unwrap()];
-    let mut m = make(s0, s1, &config);
-    m.process(&config).unwrap();
-    assert_eq!(m.routing_counters[1], 1, "s0 should win");
-    assert_eq!(m.routing_counters[4], 1, "s1 discarded");
 }

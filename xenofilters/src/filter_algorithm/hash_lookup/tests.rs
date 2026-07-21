@@ -1,8 +1,8 @@
-use crate::tests::common::{cfg, r, u};
+use crate::tests::common::{r, u};
 use crate::{
     aln_stream::tests::MockStream,
     aln_stream::AlignmentStream,
-    config::{Config, StripReadSuffix},
+    config::run_config::RunConfig,
     filter_algorithm::hash_lookup::HashLookup,
     tests::create_record,
 };
@@ -10,10 +10,10 @@ use noodles::sam::alignment::record::Flags;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::smallvec;
 
-fn make(s0: Vec<RecordBuf>, s1: Vec<RecordBuf>, config: &Config) -> HashLookup<RecordBuf> {
+fn make(s0: Vec<RecordBuf>, s1: Vec<RecordBuf>, config: &RunConfig) -> HashLookup<RecordBuf> {
     let a0 = Box::new(MockStream::new(0, s0)) as Box<dyn AlignmentStream<RecordBuf>>;
     let a1 = Box::new(MockStream::new(1, s1)) as Box<dyn AlignmentStream<RecordBuf>>;
-    HashLookup::new(&config, smallvec![a0, a1], [None, None], [None, None]).unwrap()
+    HashLookup::<RecordBuf>::new(&config, smallvec![a0, a1], [None, None], [None, None], [None, None]).unwrap()
 }
 
 fn disc0(h: &HashLookup<RecordBuf>) -> u64 {
@@ -179,28 +179,10 @@ fn hash_lookup_table() {
             ambg0: 2,
             ambg1: 2,
         },
-        // -- Suffix stripping ----------------------------------------------
-        Row {
-            label: "suffix stripped /1 /2 matched as same fragment",
-            s0: vec![create_record(b"R1/1", "10M", &[], &[30u8; 10], "10", false).unwrap()],
-            s1: vec![create_record(b"R1/2", "5S5M", &[], &[30u8; 10], "5", false).unwrap()],
-            // NOTE: this row needs strip_read_suffix=True; the default make() uses False.
-            // Tested separately below.
-            out0: 0,
-            out1: 0,
-            disc0: 0,
-            disc1: 0,
-            ambg0: 0,
-            ambg1: 0,
-        }, // placeholder — see below
     ];
-    let config = Config::default();
+    let config = RunConfig::default();
 
     for c in cases {
-        // Skip the suffix-stripping placeholder row.
-        if c.label.starts_with("suffix") {
-            continue;
-        }
         let mut h = make(c.s0.clone(), c.s1.clone(), &config);
         h.process(&config).unwrap();
         assert_eq!(out0(&h), c.out0, "[{}] out[0]", c.label);
@@ -210,27 +192,4 @@ fn hash_lookup_table() {
         assert_eq!(ambg0(&h), c.ambg0, "[{}] ambig[0]", c.label);
         assert_eq!(ambg1(&h), c.ambg1, "[{}] ambig[1]", c.label);
     }
-}
-
-#[test]
-fn hash_lookup_suffix_stripping() {
-    let config = Config {
-        strip_read_suffix: StripReadSuffix::True,
-        gap_open: 6.0,
-        gap_extend: 1.0,
-        mismatch_penalty: 4.0,
-        ..Config::default()
-    };
-    let a0 = Box::new(MockStream::new(
-        0,
-        vec![create_record(b"R1/1", "10M", &[], &[30u8; 10], "10", false).unwrap()],
-    )) as Box<dyn AlignmentStream<RecordBuf>>;
-    let a1 = Box::new(MockStream::new(
-        1,
-        vec![create_record(b"R1/2", "5M5S", &[], &[30u8; 10], "5", false).unwrap()],
-    )) as Box<dyn AlignmentStream<RecordBuf>>;
-    let mut h = HashLookup::new(&config, smallvec![a0, a1], [None, None], [None, None]).unwrap();
-    h.process(&config).unwrap();
-    assert_eq!(out0(&h), 1, "s0 perfect should win");
-    assert_eq!(disc1(&h), 1, "s1 should be discarded");
 }

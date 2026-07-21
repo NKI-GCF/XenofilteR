@@ -21,6 +21,8 @@ use noodles::sam::alignment::{
 };
 use noodles::sam::Header;
 use std::iter::repeat;
+use crate::region::load::{load_ambiguous_regions_memory, load_distinct_variants_memory};
+use crate::variant::name_to_id::header_name_to_id;
 
 fn create_cigar(cigar: &str) -> Result<Cigar, Error> {
     let mut ops = Vec::new();
@@ -124,16 +126,13 @@ fn test_header_name_to_id() {
 #[test]
 fn test_load_ambiguous_regions_ignores_empty_strings() {
     let name_to_id = HashMap::new();
-
-    // Two empty strings should return [None, None] without triggering a file-read error
     let specs = vec!["".to_string(), "".to_string()];
-    let result = load_ambiguous_regions(&specs, &name_to_id).unwrap();
+    let result = load_ambiguous_regions_memory(&specs, &name_to_id).unwrap();
     assert!(result[0].is_none());
     assert!(result[1].is_none());
 
-    // A single empty string should return [None, None]
     let specs_single = vec!["".to_string()];
-    let result_single = load_ambiguous_regions(&specs_single, &name_to_id).unwrap();
+    let result_single = load_ambiguous_regions_memory(&specs_single, &name_to_id).unwrap();
     assert!(result_single[0].is_none());
     assert!(result_single[1].is_none());
 }
@@ -141,40 +140,48 @@ fn test_load_ambiguous_regions_ignores_empty_strings() {
 #[test]
 fn test_load_distinct_variants_ignores_empty_strings() {
     let name_to_id = HashMap::new();
-
     let specs = vec!["".to_string(), "".to_string()];
-    let result = load_distinct_variants(&specs, &name_to_id).unwrap();
+    let result = load_distinct_variants_memory(&specs, &name_to_id).unwrap();
     assert!(result[0].is_none());
     assert!(result[1].is_none());
 }
 
 #[test]
 fn test_namesorted_sequential_single_alignment() {
-    let config = Config {
-        matching_algorithm: MatchingAlgorithm::Namesorted,
-        score_threads: 1, // Forces the sequential path
-        alignment: vec!["tests/fixtures/dummy1.bam".into()],
-        // .. populate remaining necessary fields
-        ..Default::default()
-    };
+    use crate::config::{CommonArgs, NamesortedArgs};
+    use crate::config::args::{ChimericArgs, IoArgs, ParallelArgs};
 
-    // We just care that the logic branches correctly.
-    let _ = run_namesorted(config);
+    let args = NamesortedArgs {
+        common: CommonArgs {
+            io: IoArgs { alignment: vec!["tests/fixtures/dummy1.bam".into()], ..Default::default() },
+            ..Default::default()
+        },
+        parallel: ParallelArgs { threads: 1, score_threads: 1 },
+        chimeric: ChimericArgs::default(),
+    };
+    let _ = run_namesorted(args);
 }
 
 #[test]
 fn test_namesorted_parallel_dual_alignment() {
-    let config = Config {
-        matching_algorithm: MatchingAlgorithm::Namesorted,
-        score_threads: 2, // Forces the parallel path
-        alignment: vec![
-            "tests/fixtures/dummy1.bam".into(),
-            "tests/fixtures/dummy2.bam".into(),
-        ],
-        ..Default::default()
-    };
+    use crate::config::{CommonArgs, NamesortedArgs};
+    use crate::config::args::{ChimericArgs, IoArgs, ParallelArgs};
 
-    let _ = run_namesorted(config);
+    let args = NamesortedArgs {
+        common: CommonArgs {
+            io: IoArgs {
+                alignment: vec![
+                    "tests/fixtures/dummy1.bam".into(),
+                    "tests/fixtures/dummy2.bam".into(),
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        parallel: ParallelArgs { threads: 1, score_threads: 2 },
+        chimeric: ChimericArgs::default(),
+    };
+    let _ = run_namesorted(args);
 }
 
 #[test]

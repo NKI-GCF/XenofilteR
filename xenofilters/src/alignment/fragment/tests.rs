@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     alignment::{fragment::SimpleRec, MdCigFlags},
-    config::Config,
+    config::args::ScoringArgs,
     filter_algorithm::line_by_line::Scratch,
     penalty::Penalty,
     tests::create_record,
@@ -19,8 +19,8 @@ use smallvec::{smallvec, SmallVec};
 /// Setup penalties: match=0, mismatch=-1, gap_open=-2, gap_extend=-0.5.
 /// Quality-independent — use for unit-testing score logic without Q noise.
 pub(crate) fn setup_penalties() -> Penalty {
-    let c = Config::default();
-    let mut p = c.to_penalties();
+    let c = ScoringArgs::default();
+    let mut p = c.to_penalty();
     p.log_likelihood_match = [0.0; 93];
     p.log_likelihood_mismatch = [-1.0; 93];
     p.gap_open = -2.0;
@@ -31,13 +31,13 @@ pub(crate) fn setup_penalties() -> Penalty {
 /// Real penalties: matches near 0, mismatch = -(q/10) × scaling.
 /// Use for quality-edge-case tests.
 fn real_penalties() -> Penalty {
-    Config {
+    ScoringArgs {
         mismatch_penalty: 4.0,
         gap_open: 6.0,
         gap_extend: 1.0,
-        ..Config::default()
+        ..ScoringArgs::default()
     }
-    .to_penalties()
+    .to_penalty()
 }
 
 fn score_one(cigar: &str, md: &str, qual: &[u8], pen: &Penalty) -> f64 {

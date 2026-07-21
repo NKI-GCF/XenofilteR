@@ -15,18 +15,13 @@
 #[cfg(test)]
 mod indel_expansion_integration {
     use std::{collections::HashMap, io::Cursor, sync::Arc};
-
     use noodles::sam::{alignment::record_buf::RecordBuf, Header};
-
-    use crate::variant::indel_equiv::EquivalentAlleles;
-    use crate::variant::indel_equiv::MAX_SHIFT;
-    use crate::variant::indel_equiv_corrected::enumerate_equivalents;
     use crate::{
-        config::Config,
         filter_algorithm::line_by_line::Scratch,
         region::diagnostic::{DiagnosticSite, SegregateVariants},
         tests::{create_record, MockStream},
         variant::{
+            indel_equiv::{EquivalentAlleles, enumerate_equivalents, MAX_SHIFT},
             population::Population,
             store::{Store, StoreTrait},
             Variant,

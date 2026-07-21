@@ -46,7 +46,7 @@ pub(crate) struct CollatedMatcher<R: SimpleRec> {
 }
 
 impl<R: SimpleRec> CollatedMatcher<R> {
-    pub(crate) fn new_from_collated(
+    pub(crate) fn new(
         args: &RunConfig,
         aln:  SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>,
         bed:  [Option<TabixBed>; 2],

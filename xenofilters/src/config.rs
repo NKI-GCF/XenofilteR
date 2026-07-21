@@ -177,16 +177,6 @@ pub(crate) struct NamesortedArgs {
     #[command(flatten)]
     pub(crate) common: CommonArgs,
 
-    /*/// bgzf decompression worker threads.
-    #[arg(
-        short = 't',
-        long,
-        default_value = "4",
-        env = "XENOFILTERS_THREADS",
-        help_heading = "Parallelism"
-    )]
-    pub(crate) threads: usize,*/
-
     #[command(flatten)]
     pub(crate) parallel: crate::config::args::ParallelArgs,
 

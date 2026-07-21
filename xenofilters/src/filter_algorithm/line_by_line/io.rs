@@ -49,14 +49,14 @@ impl<R: SimpleRec> LineByLine<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
+    use crate::config::run_config::RunConfig;
     use crate::tests::create_record;
     use smallvec::smallvec;
 
     #[test]
     fn test_add_aux_tags_inserts_expected_tag_and_value() -> Result<(), Error> {
-        let config = Config::default();
-        let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&config, smallvec![])?;
+        let config = RunConfig::default();
+        let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&config, smallvec![], vec![], vec![])?;
         let mut rec = create_record(b"r", "5M", &[], &[], "5", false)?;
         lbl.add_aux_tags(&mut rec, b"XF", 42)?;
 

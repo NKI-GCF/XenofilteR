@@ -2,7 +2,7 @@ use crate::tests::common::{r, u};
 use crate::{
     alignment::FragmentState,
     aln_stream::AlignmentStream,
-    config::Config,
+    config::{run_config::RunConfig, args::{IoArgs, ScoringArgs}},
     filter_algorithm::line_by_line::core::FragmentBuffer,
     tests::{create_record, MockStream},
     Error, LineByLine,
@@ -16,17 +16,15 @@ use smallvec::{smallvec, SmallVec};
 // ---------------------------------------------------------------------------
 
 fn lbl_chimeric(specs: &[(&str, Vec<RecordBuf>)], pairs: &[[usize; 2]]) -> LineByLine<RecordBuf> {
-    let mut cfg = Config::default();
-    cfg.parsed_chimeric_pairs = pairs.to_vec();
-    cfg.stream_labels = specs.iter().map(|(label, _)| label.to_string()).collect();
+    let mut cfg = RunConfig::default();
+    let stream_labels: Vec<String> = specs.iter().map(|(label, _)| label.to_string()).collect();
+    let chimeric_pairs = pairs.to_vec();
     let aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> = specs
         .iter()
         .enumerate()
-        .map(|(i, (_, recs))| {
-            Box::new(MockStream::new(i, recs.clone())) as Box<dyn AlignmentStream<RecordBuf>>
-        })
+        .map(|(i, (_, recs))| Box::new(MockStream::new(i, recs.clone())) as Box<dyn AlignmentStream<RecordBuf>>)
         .collect();
-    LineByLine::new(&cfg, aln).unwrap()
+    LineByLine::new(&cfg, aln, stream_labels, chimeric_pairs).unwrap()
 }
 
 /// Set flag bits and retain name.
@@ -66,7 +64,7 @@ struct TwoStreamCase {
 }
 
 fn run_2stream(cases: &[TwoStreamCase]) {
-    let config = Config::default();
+    let config = RunConfig::default();
     for c in cases {
         let mut lbl = lbl_chimeric(&[("a", c.s0.clone()), ("b", c.s1.clone())], &[]);
         lbl.process_sequential(&config).unwrap();
@@ -196,7 +194,7 @@ fn three_stream_tournament() {
             ambig: [0, 0, 0],
         },
     ];
-    let config = Config::default();
+    let config = RunConfig::default();
     for c in cases {
         let mut lbl = lbl_chimeric(
             &[
@@ -230,7 +228,7 @@ fn chimeric_mate_split() {
     // flags: 0x41 = read1+paired, 0x81 = read2+paired
     let s0 = vec![pe(b"R1", "10M", "10", 0x41)]; // read1 in human
     let s1 = vec![pe(b"R1", "10M", "10", 0x81)]; // read2 in HPV
-    let config = Config::default();
+    let config = RunConfig::default();
 
     let mut lbl = lbl_chimeric(&[("human", s0), ("hpv", s1)], &[[0, 1]]);
     lbl.process_sequential(&config).unwrap();
@@ -252,7 +250,7 @@ fn chimeric_read_split_complementary_clips() {
     use noodles::core::Position;
 
     let q = vec![30u8; 50];
-    let config = Config::default();
+    let config = RunConfig::default();
 
     // Stream 0 (human): read1 25M25S, read2 unmapped
     let mut r1_human = create_record(b"R1", "25M25S", &[b'A'; 50], &q, "25", false).unwrap();
@@ -285,7 +283,7 @@ fn chimeric_false_positive_rejected_when_supp_better() {
     use noodles::core::Position;
 
     let q = vec![30u8; 50];
-    let config = Config::default();
+    let config = RunConfig::default();
 
     // Stream A primary: read1 25M25S
     let mut r1_a = create_record(b"R1", "25M25S", &[b'A'; 50], &q, "25", false).unwrap();
@@ -327,7 +325,7 @@ fn chimeric_three_stream_pair_01_mouse_competes_normally() {
     let r1_human = pe(b"R1", "10M", "10", 0x41);
     let r2_hpv = pe(b"R1", "10M", "10", 0x81);
     let r_mouse = r(b"R1", "10M", "5A4"); // loses normally
-    let config = Config::default();
+    let config = RunConfig::default();
 
     let mut lbl = lbl_chimeric(
         &[
@@ -436,13 +434,12 @@ fn setup_mock_streams_observed_examples() -> SmallVec<[Box<dyn AlignmentStream<R
 
 #[test]
 fn test_branch_counters_and_skipping() -> Result<(), Error> {
-    let mut config = Config {
-        discard_unmapped: true,
-        skip_secondary: true,
-        ..Config::default()
+    let mut config = RunConfig {
+        io: IoArgs { discard_unmapped: true, skip_secondary: true, ..Default::default() },
+        ..Default::default()
     };
 
-    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&config, setup_mock_streams())?;
+    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&config, setup_mock_streams(), vec![], vec![])?;
 
     let mut unmapped_fwd = create_record(b"u", "*", &[], &[], "10", false)?;
     *unmapped_fwd.flags_mut() = Flags::from_bits(0x45).unwrap(); // unmapped, paired, first in
@@ -468,8 +465,8 @@ fn test_branch_counters_and_skipping() -> Result<(), Error> {
     assert!(!finished);
     assert!(best.is_empty());
 
-    config.discard_unmapped = false;
-    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&config, setup_mock_streams())?;
+    config.io.discard_unmapped = false;
+    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&config, setup_mock_streams(), vec![], vec![])?;
     assert!(lbl.write_record(0, unmapped_fwd, None).is_ok());
     assert!(lbl.write_record(0, unmapped_rev, None).is_ok());
     assert_eq!(lbl.routing_counters[2], 2); // ambiguous:0: 2
@@ -479,8 +476,8 @@ fn test_branch_counters_and_skipping() -> Result<(), Error> {
 
 #[test]
 fn test_handle_ordering_logic() -> Result<(), Error> {
-    let config = Config::default();
-    let lbl_setup: LineByLine<RecordBuf> = LineByLine::new(&config, setup_mock_streams())?;
+    let config = RunConfig::default();
+    let lbl_setup: LineByLine<RecordBuf> = LineByLine::new(&config, setup_mock_streams(), vec![], vec![])?;
     // Direct testing of routing_counters incrementation via write_record:
     let mut lbl: LineByLine<RecordBuf> = lbl_setup;
     let rec = create_record(b"r1", "M10", &[], &[], "10", false)?;
@@ -499,8 +496,8 @@ fn test_handle_ordering_logic() -> Result<(), Error> {
 
 #[test]
 fn test_fragment_finished_transitions() -> Result<(), Error> {
-    let config = Config::default();
-    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&config, setup_mock_streams())?;
+    let config = RunConfig::default();
+    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&config, setup_mock_streams(), vec![], vec![])?;
     let rec = create_record(b"R1", "M10", &[], &[], "10", false)?;
     let mut best: FragmentBuffer<RecordBuf> =
         smallvec![FragmentState::from_record(rec.clone(), 0, false)?];
@@ -517,8 +514,8 @@ fn test_fragment_finished_transitions() -> Result<(), Error> {
 
 #[test]
 fn test_complex_fragment_grouping() -> Result<(), Error> {
-    let config = Config::default();
-    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&config, setup_mock_streams())?;
+    let config = RunConfig::default();
+    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&config, setup_mock_streams(), vec![], vec![])?;
     let mut best: FragmentBuffer<RecordBuf> = smallvec![];
 
     // paired-end style: same QNAME twice
@@ -544,8 +541,8 @@ fn test_line_by_line_full_flow() -> Result<(), Error> {
     // Mocking AlnStream behavior
     // Note: You may need to wrap MockStream in AlnStream enum/trait if required by your types
     // This targets ingest_record coverage
-    let config = Config::default();
-    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&config, smallvec![])?;
+    let config = RunConfig::default();
+    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&config, smallvec![], vec![], vec![])?;
 
     let mut best: FragmentBuffer<RecordBuf> = smallvec![];
 
@@ -563,16 +560,14 @@ fn test_line_by_line_full_flow() -> Result<(), Error> {
 
 #[test]
 fn test_observed_pe_scoring1() -> Result<(), Error> {
-    let config = Config {
-        discard_unmapped: true,
-        gap_open: 6.0,
-        gap_extend: 1.0,
-        mismatch_penalty: 4.0,
-        ..Config::default()
+    let config = RunConfig {
+        io: IoArgs { discard_unmapped: true, ..Default::default() },
+        scoring: ScoringArgs { gap_open: 6.0, gap_extend: 1.0, mismatch_penalty: 4.0, ..Default::default() },
+        ..Default::default()
     };
 
     let mut lbl: LineByLine<RecordBuf> =
-        LineByLine::new(&config, setup_mock_streams_observed_examples())?;
+        LineByLine::new(&config, setup_mock_streams_observed_examples(), vec![], vec![])?;
 
     lbl.process_sequential(&config)?;
     assert_eq!(lbl.routing_counters[4], 2); // discard:1: both reads
@@ -596,9 +591,9 @@ impl LineByLine<RecordBuf> {
 
 #[test]
 fn test_ambiguous_log_threshold_conversion() -> Result<(), Error> {
-    let mut config = Config {
-        ambiguous_threshold: 0,
-        ..Config::default()
+    let mut config = RunConfig {
+        scoring: ScoringArgs { ambiguous_threshold: 0, ..Default::default() },
+        ..RunConfig::default()
     };
     let aln = setup_mock_streams(); // any valid stream works for new()
     let aln_clone1 = setup_mock_streams(); // any valid stream works for new()
@@ -606,21 +601,21 @@ fn test_ambiguous_log_threshold_conversion() -> Result<(), Error> {
     let aln_clone3 = setup_mock_streams(); // any valid stream works for new()
 
     // threshold = 0 → exactly 0.0 (or EPSILON if you changed it)
-    let lbl: LineByLine<RecordBuf> = LineByLine::new(&config, aln_clone1)?;
+    let lbl: LineByLine<RecordBuf> = LineByLine::new(&config, aln_clone1, vec![], vec![])?;
     assert_eq!(lbl.test_ambiguous_log_threshold(), 0.0);
 
     // standard phred values → correct natural-log ratio
-    config.ambiguous_threshold = 10;
-    let lbl: LineByLine<RecordBuf> = LineByLine::new(&config, aln_clone2)?;
+    config.scoring.ambiguous_threshold = 10;
+    let lbl: LineByLine<RecordBuf> = LineByLine::new(&config, aln_clone2, vec![], vec![])?;
     let ln_10 = std::f64::consts::LN_10;
     assert!((lbl.test_ambiguous_log_threshold() - ln_10).abs() < 1e-9);
 
-    config.ambiguous_threshold = 20;
-    let lbl: LineByLine<RecordBuf> = LineByLine::new(&config, aln_clone3)?;
+    config.scoring.ambiguous_threshold = 20;
+    let lbl: LineByLine<RecordBuf> = LineByLine::new(&config, aln_clone3, vec![], vec![])?;
     assert!((lbl.test_ambiguous_log_threshold() - ln_10 * 2.0).abs() < 1e-9);
 
-    config.ambiguous_threshold = 3;
-    let lbl: LineByLine<RecordBuf> = LineByLine::new(&config, aln)?;
+    config.scoring.ambiguous_threshold = 3;
+    let lbl: LineByLine<RecordBuf> = LineByLine::new(&config, aln, vec![], vec![])?;
     assert!((lbl.test_ambiguous_log_threshold() - ln_10 * 3.0 / 10.0).abs() < 1e-9);
 
     Ok(())

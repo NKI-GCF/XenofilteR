@@ -1,17 +1,20 @@
 //! Parametric test infrastructure shared across all test modules.
 //! Import with `use crate::tests::common::*;`
 
-use crate::config::{Config, StripReadSuffix};
+use crate::config::args::ScoringArgs;
+use crate::config::run_config::RunConfig;
 use crate::tests::create_record;
 use noodles::sam::alignment::record_buf::RecordBuf;
 
-pub(crate) fn cfg() -> Config {
-    Config {
-        gap_open: 6.0,
-        gap_extend: 1.0,
-        mismatch_penalty: 4.0,
-        strip_read_suffix: StripReadSuffix::False,
-        ..Config::default()
+pub(crate) fn cfg() -> RunConfig {
+    RunConfig {
+        scoring: ScoringArgs {
+            gap_open: 6.0,
+            gap_extend: 1.0,
+            mismatch_penalty: 4.0,
+            ..ScoringArgs::default()
+        },
+        ..RunConfig::default()
     }
 }
 

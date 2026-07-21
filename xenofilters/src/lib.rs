@@ -229,7 +229,7 @@ fn run_collated(args: CollatedArgs) -> Result<(), Error> {
     let aln = run.open_streams_unified(MatchingAlgorithm::Collated, run.threads)?;
 
 
-    crate::filter_algorithm::collated::CollatedMatcher::<RecordBuf>::new_from_collated(
+    crate::filter_algorithm::collated::CollatedMatcher::<RecordBuf>::new(
         &run, aln, bed, vcf,
     )?
     .process(&run)

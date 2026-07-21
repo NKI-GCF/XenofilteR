@@ -1,6 +1,7 @@
 use super::*;
 use crate::bam::AlnFormat;
 use crate::tests::create_record;
+use crate::config::run_config::RunConfig;
 
 // A dummy struct to test default trait methods
 struct DefaultStream;
@@ -104,7 +105,7 @@ impl AlignmentStream<RecordBuf> for MockStream {
     fn write_record(&mut self, rec: RecordBuf, is_best: Option<bool>) -> Result<(), Error> {
         self.write_record(rec, is_best)
     }
-    fn init_writers(&mut self, _opt: &Config, _i: usize) -> Result<(), Error> {
+    fn init_writers(&mut self, _opt: &RunConfig, _i: usize) -> Result<(), Error> {
         Ok(())
     }
     fn variant_store(&self) -> Option<Arc<dyn StoreTrait>> {
@@ -139,33 +140,6 @@ fn test_default_fetch_by_virtual_offset_returns_error() {
     let res = stream.fetch_by_virtual_offset(0);
     assert!(res.is_err(), "Default implementation should return Err");
 }
-
-/* Untestable
-#[test]
-fn test_from_bam_record_implementations() -> Result<(), Error> {
-    use noodles::bam::record::Record as BamRecord;
-    use crate::aln_stream::FromBamRecord;
-
-    let header = Header::default();
-    let bam_rec = BamRecord::default();
-
-    // We modify a field (e.g., flags) to ensure it's not just returning a default record
-    let mut modified_bam = BamRecord::default();
-    modified_bam
-        .flags_mut()
-        .insert(noodles::sam::alignment::record::Flags::UNMAPPED);
-
-    let rec1 = BamRecord::from_bam_record(&header, modified_bam.clone())?;
-    assert_eq!(rec1.flags(), modified_bam.flags());
-
-    let rec2 = RecordBuf::from_bam_record(&header, modified_bam)?;
-    assert_eq!(
-        rec2.flags(),
-        noodles::sam::alignment::record::Flags::UNMAPPED
-    );
-
-    Ok(())
-}*/
 
 #[test]
 fn test_bam_stream_reader_trait() -> Result<(), Error> {
@@ -207,68 +181,10 @@ fn test_aln_stream_header_returns_actual_reference() {
 #[test]
 fn test_aln_stream_init_writers() -> Result<(), Error> {
     let mut stream = empty_aln_stream();
-    let mut config = Config::default();
-
-    config.no_program_line = true;
-
+    let mut config = RunConfig::default();
+    config.io.no_program_line = true;
     stream.init_writers(&config, 1)?;
-
     Ok(())
-}
-
-/* FAILS: why?
-#[test]
-fn test_aln_stream_fetch_by_virtual_offset() -> Result<(), Error> {
-    use noodles::bam;
-    use noodles::sam;
-    use noodles::sam::alignment::io::Write; // Required for write_alignment_record
-    use tempfile::NamedTempFile;
-
-    // 1. Create a file on disk
-    let temp_file = NamedTempFile::new()?;
-    let path = temp_file.path().to_owned();
-
-    // 2. Write a complete BAM file WITH ONE dummy record
-    {
-        let header = sam::Header::default();
-        let mut writer = bam::io::Writer::from(std::fs::File::create(&path)?);
-
-        writer.write_header(&header)?;
-
-        // Write a single unmapped/empty record so AlnStream::new doesn't hit unexpected EOF
-        let dummy_record = RecordBuf::default();
-        writer.write_alignment_record(&header, &dummy_record)?;
-
-        writer.finish(&header)?;
-    } // Writer and File drop here, flushing everything to disk safely
-
-    // 3. Initialize config
-    let mut config = Config {
-        alignment: vec![path.to_str().unwrap().to_string()],
-        ..Default::default()
-    };
-
-    // AlnStream can now successfully read the header and peek the first record!
-    let mut stream = AlnStream::<RecordBuf>::new(&mut config, 0)?;
-
-    // 4. Test the invalid offset
-    let res = stream.fetch_by_virtual_offset(u64::MAX);
-
-    // If the mutant returns Ok(), res.is_err() evaluates to false and panics, killing the mutant.
-    assert!(res.is_err(), "Invalid virtual offset should produce an Err");
-
-    Ok(())
-}*/
-
-#[test]
-fn test_aln_stream_new_mismatch_strip_suffix_true_instead_of_false() {
-    let mut config = Config {
-        alignment: vec!["tests/data/test_input_1_a.bam".to_string()],
-        stdout_format: AlnFormat::Sam,
-        strip_read_suffix: StripReadSuffix::True,
-        ..Default::default()
-    };
-    assert!(AlnStream::<RecordBuf>::new(&mut config, 0, None).is_err());
 }
 
 #[test]
