@@ -5,10 +5,10 @@ use crate::file_spec::{path_for_stream, FileSpec};
 use crate::filter_algorithm::line_by_line::MAX_STREAMS;
 use crate::penalty::ErrorModel;
 use crate::region::ScoreFn;
-use crate::{Error, ensure};
+use crate::{ensure, Error};
 use clap::Args;
-use std::path::PathBuf;
 use std::ops::RangeInclusive;
+use std::path::PathBuf;
 
 /// Shared by every subcommand. No arity-specific fields here.
 #[derive(Args, Debug, Clone, Default)]
@@ -138,10 +138,20 @@ pub(crate) struct RelatedArgs {
     pub(crate) region_score_fn: ScoreFn,
 
     // FIXME: only expand if necessary.
-    #[arg(long, default_value_t = false, requires = "reference", help_heading = "Variants")]
+    #[arg(
+        long,
+        default_value_t = false,
+        requires = "reference",
+        help_heading = "Variants"
+    )]
     pub(crate) expand_indels: bool,
 
-    #[arg(long, default_value_t = 50, requires = "expand-indels", help_heading = "Variants")]
+    #[arg(
+        long,
+        default_value_t = 50,
+        requires = "expand-indels",
+        help_heading = "Variants"
+    )]
     pub(crate) indel_expand_padding: usize,
 }
 
@@ -198,7 +208,11 @@ pub(crate) struct SegregateArgs {
 }
 
 impl IoArgs {
-    pub(crate) fn validate(&self, max_stdin: usize, streams: RangeInclusive<usize>) -> Result<(), Error> {
+    pub(crate) fn validate(
+        &self,
+        max_stdin: usize,
+        streams: RangeInclusive<usize>,
+    ) -> Result<(), Error> {
         // stdin: at most one stream, namesorted only.
         let stdin_count = self
             .alignment
@@ -208,27 +222,38 @@ impl IoArgs {
         ensure!(stdin_count <= max_stdin, Error::TooManyStdinStreams);
 
         // CRAM sanity: any .cram input requires --reference.
-        let cram_lacks_ref = self.alignment
-            .iter()
-            .enumerate()
-            .any(|(i, p)| p.ends_with(".cram") && path_for_stream(&self.reference, i).is_none());
+        let cram_lacks_ref =
+            self.alignment.iter().enumerate().any(|(i, p)| {
+                p.ends_with(".cram") && path_for_stream(&self.reference, i).is_none()
+            });
         ensure!(!cram_lacks_ref, Error::CramRequiresReference);
 
         let n = self.alignment.len();
         let max = *streams.end();
-        ensure!(streams.contains(&n), Error::InvalidStreamCount { n, min: *streams.start(), max });
+        ensure!(
+            streams.contains(&n),
+            Error::InvalidStreamCount {
+                n,
+                min: *streams.start(),
+                max
+            }
+        );
         let n_streams = if max == 1 { 2 } else { n };
 
-        ensure!(self.output.len() <= n_streams,
+        ensure!(
+            self.output.len() <= n_streams,
             Error::TooManyOutputPaths {
                 count: self.output.len(),
                 max: n_streams,
-            });
-        ensure!(self.ambiguous_output.is_empty() || self.ambiguous_output.len() <= n_streams,
+            }
+        );
+        ensure!(
+            self.ambiguous_output.is_empty() || self.ambiguous_output.len() <= n_streams,
             Error::TooManyAmbiguousPaths {
                 given: self.ambiguous_output.len(),
                 streams: n_streams,
-            });
+            }
+        );
         Ok(())
     }
 }
@@ -260,6 +285,7 @@ impl ScoringArgs {
 impl RelatedArgs {
     pub(crate) fn has_index(&self, idx: usize) -> bool {
         path_for_stream(&self.sample_variants, idx).is_some()
+            || path_for_stream(&self.population_variants, idx).is_some()
     }
 }
 
