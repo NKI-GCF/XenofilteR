@@ -80,7 +80,7 @@ fn run_2stream(cases: &[TwoStreamCase]) {
 #[test]
 fn two_stream_tournament() {
     run_2stream(&[
-        // ── Tier 1: unmapped ─────────────────────────────────────────────
+        // -- Tier 1: unmapped ---------------------------------------------
         TwoStreamCase {
             label: "both unmapped → both ambiguous",
             s0: vec![u(b"R1")], s1: vec![u(b"R1")],
@@ -91,7 +91,7 @@ fn two_stream_tournament() {
             s0: vec![u(b"R1")], s1: vec![r(b"R1", "10M", "10")],
             out0:0, out1:1, disc0:1, disc1:0, ambig0:0, ambig1:0,
         },
-        // ── Tier 2: perfect-match ─────────────────────────────────────────
+        // -- Tier 2: perfect-match -----------------------------------------
         TwoStreamCase {
             label: "s0 perfect s1 imperfect → s0 wins",
             s0: vec![r(b"R1", "10M", "10")],
@@ -109,7 +109,7 @@ fn two_stream_tournament() {
             s1: vec![r(b"R1", "10M",  "10")],
             out0:0, out1:1, disc0:1, disc1:0, ambig0:0, ambig1:0,
         },
-        // ── Tier 2.5: match-count domination ─────────────────────────────
+        // -- Tier 2.5: match-count domination -----------------------------
         TwoStreamCase {
             label: "s0 more matches in CIGAR/MD → s0 wins via Tier2.5",
             // s0: 8 matches, s1: 6 matches (both imperfect so Tier2 doesn't resolve)
@@ -117,7 +117,7 @@ fn two_stream_tournament() {
             s1: vec![r(b"R1", "10M", "6AAAA")],
             out0:1, out1:0, disc0:0, disc1:1, ambig0:0, ambig1:0,
         },
-        // ── Tier 3: NW scoring breaks tie ────────────────────────────────
+        // -- Tier 3: NW scoring breaks tie --------------------------------
         TwoStreamCase {
             label: "equal match count, NW score from quality breaks tie — not testable with MockStream quality=30 constant",
             // With all q=30 and flat MD, both identical CIGARs → ambiguous
@@ -125,7 +125,7 @@ fn two_stream_tournament() {
             s1: vec![r(b"R1", "8M2S", "8")],
             out0:0, out1:0, disc0:0, disc1:0, ambig0:1, ambig1:1,
         },
-        // ── Multiple fragments ────────────────────────────────────────────
+        // -- Multiple fragments --------------------------------------------
         TwoStreamCase {
             label: "multiple fragments independent outcomes",
             s0: vec![r(b"R1","10M","10"), r(b"R2","5S5M","5"),  r(b"R3","10M","10")],

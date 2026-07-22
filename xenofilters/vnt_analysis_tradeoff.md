@@ -105,10 +105,10 @@ VCF record
     ▼  IndelEquivalenceExpander::expand()
     │  (one reference FASTA fetch per indel; ≤ MAX_SHIFT=100 new entries)
     │
-    ├─► canonical Variant entry  ─────────────┐
-    ├─► shifted Variant (pos+1, ...)  ────────┤
-    ├─► shifted Variant (pos+2, ...)  ────────┤  Store<V>::insert_all()
-    └─► ...                           ────────┘
+    ├-► canonical Variant entry  -------------┐
+    ├-► shifted Variant (pos+1, ...)  --------┤
+    ├-► shifted Variant (pos+2, ...)  --------┤  Store<V>::insert_all()
+    └-► ...                           --------┘
                                               │
                                               ▼
                               store.overlapping_multi(tid, start, end)

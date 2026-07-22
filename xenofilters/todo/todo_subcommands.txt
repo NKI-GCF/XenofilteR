@@ -26,7 +26,7 @@ use clap::{Args, Parser, Subcommand};
 use crate::penalty::ErrorModel;
 use std::path::PathBuf;
 
-// ── Top-level CLI ─────────────────────────────────────────────────────────────
+// -- Top-level CLI -------------------------------------------------------------
 
 /// Fast multi-stream read classifier for xenograft, PDX, viral integration,
 /// and cross-species sequencing experiments.
@@ -86,12 +86,12 @@ impl AlgorithmCommand {
     }
 }
 
-// ── Shared argument groups (flattened into each subcommand) ──────────────────
+// -- Shared argument groups (flattened into each subcommand) ------------------
 
 /// Arguments shared by all three algorithms.
 #[derive(Args, Debug, Clone, Default)]
 pub(crate) struct CommonArgs {
-    // ── Input ────────────────────────────────────────────────────────────────
+    // -- Input ----------------------------------------------------------------
     /// Input alignment files (BAM, CRAM, or - for stdin BAM).
     #[arg(required = true, num_args = 1..=32, help_heading = "Input")]
     pub(crate) alignment: Vec<String>,
@@ -104,7 +104,7 @@ pub(crate) struct CommonArgs {
     #[arg(short = 'R', long, default_value = "auto", help_heading = "Input")]
     pub(crate) strip_read_suffix: StripReadSuffix,
 
-    // ── Output ───────────────────────────────────────────────────────────────
+    // -- Output ---------------------------------------------------------------
     /// Winner output, one file per stream.
     #[arg(short = 'o', long, num_args = 1..=32, help_heading = "Output")]
     pub(crate) output: Vec<PathBuf>,
@@ -136,7 +136,7 @@ pub(crate) struct CommonArgs {
     #[arg(long, env = "XENOFILTERS_STATS_OUTPUT", help_heading = "Output")]
     pub(crate) stats_path: Option<PathBuf>,
 
-    // ── Scoring ───────────────────────────────────────────────────────────────
+    // -- Scoring ---------------------------------------------------------------
     /// Platform error model. Sets gap/quality defaults.
     /// illumina (default) | hifi | ont
     #[arg(long, default_value = "illumina", help_heading = "Scoring")]
@@ -174,7 +174,7 @@ pub(crate) struct CommonArgs {
     #[arg(long, default_value = "false", help_heading = "Scoring")]
     pub(crate) bisulfite: bool,
 
-    // ── Variants ──────────────────────────────────────────────────────────────
+    // -- Variants --------------------------------------------------------------
     /// Sample VCF/BCF per stream ([IDX:]FILE). FORMAT/GT + FORMAT/GQ required.
     #[arg(short = 's', long, num_args = 0..=32,
           value_name = "[IDX:]FILE", help_heading = "Variants")]
@@ -185,7 +185,7 @@ pub(crate) struct CommonArgs {
           value_name = "[IDX:]FILE", help_heading = "Variants")]
     pub(crate) population_variants: Vec<String>,
 
-    // ── Misc ──────────────────────────────────────────────────────────────────
+    // -- Misc ------------------------------------------------------------------
     /// Suppress progress output to stderr.
     #[arg(long, default_value = "false", help_heading = "Misc")]
     pub(crate) quiet: bool,
@@ -198,7 +198,7 @@ pub(crate) struct CommonArgs {
     #[arg(long, default_value = "false", hide = true)]
     pub(crate) write_unmapped: bool,
 
-    // ── Internal (skip) ───────────────────────────────────────────────────────
+    // -- Internal (skip) -------------------------------------------------------
     #[arg(skip)]
     pub(crate) is_pass2: bool,
 
@@ -206,7 +206,7 @@ pub(crate) struct CommonArgs {
     pub(crate) parsed_chimeric_pairs: Vec<[usize; 2]>,
 }
 
-// ── Per-algorithm arg structs ─────────────────────────────────────────────────
+// -- Per-algorithm arg structs -------------------------------------------------
 
 #[derive(Args, Debug)]
 pub(crate) struct NamesortedArgs {

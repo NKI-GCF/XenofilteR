@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 use tracing_subscriber::{fmt, EnvFilter};
 
 // Test helpers exposed only under cfg(test) or cfg(bench).
-#[cfg(any(test, feature = "bench-internals"))]
+#[cfg(test)]
 pub mod tests;
 
 pub fn run(mut cli: Cli) -> Result<(), Error> {

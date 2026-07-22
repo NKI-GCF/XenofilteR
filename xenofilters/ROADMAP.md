@@ -342,9 +342,9 @@ Cheap fragments behind it in the channel wait despite idle workers.
 
 ```
 IO thread
-  └─ injector.push(bundle)          // non-blocking; unbounded Injector
-  └─ in_flight.fetch_add(1)
-  └─ throttle: spin while in_flight > MAX_IN_FLIGHT
+  └- injector.push(bundle)          // non-blocking; unbounded Injector
+  └- in_flight.fetch_add(1)
+  └- throttle: spin while in_flight > MAX_IN_FLIGHT
                                      // MAX_IN_FLIGHT = score_threads * 4
 
 N workers (each owns a Worker<FragmentBundle> + knows all Stealers)

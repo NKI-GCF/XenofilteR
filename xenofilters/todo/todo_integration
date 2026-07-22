@@ -58,7 +58,7 @@ pub(crate) fn fai_name_to_id(fai_path: &std::path::Path) -> std::io::Result<Hash
 
 // Add inside the existing `#[derive(thiserror::Error, Debug)]` enum:
 
-//  // ── Indel equivalence expansion ──────────────────────────────────────────
+//  // -- Indel equivalence expansion ------------------------------------------
 //  #[error("--expand-indels requires --reference <fasta>")]
 //  ExpandIndelsRequiresReference,
 //
@@ -140,7 +140,7 @@ pub(crate) fn build_variant_stores(
     let population_vcf_path = variant_path_for_stream(&config.population_variants, stream_idx);
 
     if !config.expand_indels {
-        // ── Plain path: existing behavior, unchanged ─────────────────────────
+        // -- Plain path: existing behavior, unchanged -------------------------
         let sample_store: Option<Arc<dyn StoreTrait>> = sample_vcf_path
             .map(|p| Store::<Sample>::from_vcf(p, header).map(|s| Arc::new(s) as Arc<dyn StoreTrait>))
             .transpose()?;
@@ -152,7 +152,7 @@ pub(crate) fn build_variant_stores(
         return Ok((sample_store, population_store));
     }
 
-    // ── Expanded path: requires --reference ──────────────────────────────────
+    // -- Expanded path: requires --reference ----------------------------------
     let fasta_path = config
         .reference
         .as_deref()
@@ -230,7 +230,7 @@ pub(crate) fn build_diagnostic_store_for_stream(
         .map(Some)
 }
 
-// ── Private helper ────────────────────────────────────────────────────────────
+// -- Private helper ------------------------------------------------------------
 
 /// Resolve the VCF/BCF path for stream `stream_idx` from a list of
 /// `[IDX:]FILE` strings.

@@ -30,15 +30,15 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# ─── Metadata ─────────────────────────────────────────────────────────────────
+# --- Metadata -----------------------------------------------------------------
 readonly SCRIPT="$(basename "$0")"
 readonly VERSION="1.0.0"
 
-# ─── Tuneable defaults (override with env vars before calling) ─────────────────
+# --- Tuneable defaults (override with env vars before calling) -----------------
 ALIGNER="${ALIGNER:-bowtie2}"    # bowtie2 | bwa-mem2
 MAX_N_PCT="${MAX_N_PCT:-50}"     # skip windows with > this % N bases
 
-# ─── CLI parameters ───────────────────────────────────────────────────────────
+# --- CLI parameters -----------------------------------------------------------
 HUMAN_REF=""
 MOUSE_REF=""
 READ_LEN=150
@@ -46,7 +46,7 @@ EDIT_DIST=2
 THREADS=4
 OUT_DIR=""
 
-# ─── Runtime state ────────────────────────────────────────────────────────────
+# --- Runtime state ------------------------------------------------------------
 declare -a _TMP_FILES=()
 declare -a _TMP_DIRS=()
 STREAM_PY=""      # path of the embedded Python k-mer streamer (created at runtime)
@@ -418,11 +418,11 @@ run_direction() {
     info "Output BED    : $out_bed"
     info "Output VCF    : $out_vcf"
 
-    # ── Score thresholds ────────────────────────────────────────────────────
+    # -- Score thresholds ----------------------------------------------------
     local bt2_score_min="C,$(( -6 * EDIT_DIST )),0"
     local bwa_min_score=$(( READ_LEN - 4 * EDIT_DIST ))
 
-    # ── Read Group fields (required by bcftools / GATK) ─────────────────────
+    # -- Read Group fields (required by bcftools / GATK) ---------------------
     # ID  : direction-specific unique identifier
     # SM  : sample name (source species label)
     # PL  : platform
@@ -432,7 +432,7 @@ run_direction() {
     local rg_pl="ILLUMINA"
     local rg_lb="${rg_sm}"
 
-    # ── Per-direction work directory ─────────────────────────────────────────
+    # -- Per-direction work directory -----------------------------------------
     local work_dir; work_dir=$(_mk_tmpd)
 
     # Collect per-chromosome BED fragments
@@ -451,8 +451,8 @@ run_direction() {
     #
     #   FOR EACH CHROMOSOME:
     #     Python → FIFO → aligner (SAM to stdout)
-    #       ├─ awk  → per-chromosome source-coord BED
-    #       └─ pass-through → temp file (raw SAM records only, no @-lines)
+    #       ├- awk  → per-chromosome source-coord BED
+    #       └- pass-through → temp file (raw SAM records only, no @-lines)
     #
     #   AFTER ALL CHROMOSOMES:
     #     cat header + all raw SAM records | samtools sort → sorted BAM
@@ -465,7 +465,7 @@ run_direction() {
     local got_header=false
     local header_captured=false
 
-    info "─── Stage 1: k-mer alignment + BED extraction (per chromosome) ───"
+    info "--- Stage 1: k-mer alignment + BED extraction (per chromosome) ---"
 
     while IFS=$'\t' read -r chrom chrom_len _rest; do
         [[ "$chrom_len" -lt "$READ_LEN" ]] && {
@@ -480,13 +480,13 @@ run_direction() {
         local aln_log; aln_log=$(_mk_tmp ".aln.log")
         local chr_bed="${work_dir}/${chrom}.bed"
 
-        # ── Background: Python FASTA generator → FIFO ──────────────────────
+        # -- Background: Python FASTA generator → FIFO ----------------------
         python3 "$STREAM_PY" \
             "$src_fa" "$chrom" "$READ_LEN" "$READ_LEN" "$MAX_N_PCT" \
             > "$fifo" 2>>"$aln_log" &
         local gen_pid=$!
 
-        # ── Foreground: align → tee to BED awk + raw SAM accumulator ────────
+        # -- Foreground: align → tee to BED awk + raw SAM accumulator --------
         local n_ambig=0
         case "$ALIGNER" in
             bowtie2)
@@ -548,7 +548,7 @@ run_direction() {
             header_captured=true
         fi
 
-        # ── Reap generator ──────────────────────────────────────────────────
+        # -- Reap generator --------------------------------------------------
         wait "$gen_pid" || {
             local rc=$?
             [[ $rc -eq 141 || $rc -eq 0 ]] || {
@@ -562,7 +562,7 @@ run_direction() {
 
     done < "${src_fa}.fai"
 
-    # ── Stage 2: Sort + merge source-coordinate BED ───────────────────────
+    # -- Stage 2: Sort + merge source-coordinate BED -----------------------
     banner "Stage 2 [$src_label→$tgt_label]: Merge ambiguous BED"
     if [[ ${#chr_bed_list[@]} -eq 0 ]]; then
         warn "No ambiguous windows found ($src_label → $tgt_label)."
@@ -578,7 +578,7 @@ run_direction() {
         done_ "$out_bed  ($n_reg regions, ${bp} bp)"
     fi
 
-    # ── Stage 3: Build sorted BAM ─────────────────────────────────────────
+    # -- Stage 3: Build sorted BAM -----------------------------------------
     banner "Stage 3 [$src_label→$tgt_label]: Sort & index BAM"
 
     # The awk in the alignment loop uses ENVIRON variables to write the header.
@@ -625,7 +625,7 @@ run_direction() {
         touch "${sorted_bam}.empty"
     fi
 
-    # ── Stage 4: Cross-species variant calling ────────────────────────────
+    # -- Stage 4: Cross-species variant calling ----------------------------
     banner "Stage 4 [$src_label→$tgt_label]: Variant calling → $out_vcf"
 
     if [[ -f "$sorted_bam" && -s "$sorted_bam" ]]; then
@@ -688,12 +688,12 @@ main() {
 
     check_deps
 
-    # ── Reference FASTA indices ───────────────────────────────────────────────
+    # -- Reference FASTA indices -----------------------------------------------
     banner "Reference FASTA indexing"
     ensure_fai "$HUMAN_REF"
     ensure_fai "$MOUSE_REF"
 
-    # ── Aligner indices ───────────────────────────────────────────────────────
+    # -- Aligner indices -------------------------------------------------------
     banner "Aligner index preparation"
     local human_idx mouse_idx
     case "$ALIGNER" in
@@ -707,30 +707,30 @@ main() {
             ;;
     esac
 
-    # ── Python streaming engine ───────────────────────────────────────────────
+    # -- Python streaming engine -----------------------------------------------
     banner "Initialising k-mer streaming engine"
     create_stream_py
     info "Streaming script: $STREAM_PY"
 
-    # ── Define output paths ────────────────────────────────────────────────────
+    # -- Define output paths ----------------------------------------------------
     local human_bed="${OUT_DIR}/human_ambiguous_zones.bed"
     local mouse_bed="${OUT_DIR}/mouse_ambiguous_zones.bed"
     local human_vcf="${OUT_DIR}/human_on_mouse_variants.vcf"
     local mouse_vcf="${OUT_DIR}/mouse_on_human_variants.vcf"
 
-    # ── Direction 1: Human → Mouse ────────────────────────────────────────────
+    # -- Direction 1: Human → Mouse --------------------------------------------
     run_direction \
         "human" "mouse" \
         "$HUMAN_REF" "$MOUSE_REF" "$mouse_idx" \
         "$human_bed" "$human_vcf"
 
-    # ── Direction 2: Mouse → Human ────────────────────────────────────────────
+    # -- Direction 2: Mouse → Human --------------------------------------------
     run_direction \
         "mouse" "human" \
         "$MOUSE_REF" "$HUMAN_REF" "$human_idx" \
         "$mouse_bed" "$mouse_vcf"
 
-    # ── Summary ───────────────────────────────────────────────────────────────
+    # -- Summary ---------------------------------------------------------------
     banner "Pipeline complete — Summary"
     printf '\n'
     printf '  %-55s  %s\n' "Human ambiguous zones (BED):"    "$human_bed"

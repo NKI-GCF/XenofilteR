@@ -266,11 +266,11 @@ samtools view -d XC:hpv human_best.bam
 ```
 stream[0]  stream[1]  …
     │           │
-    └───────────┴──► handle_record_is_fragment_finished → AlnBuffer
+    └-----------┴--► handle_record_is_fragment_finished → AlnBuffer
                                     │
-                         resolve() ─┤
-                                    ├─ Ordered(ord) → handle_ordering
-                                    └─ Scored(delta, s1_vd, s2_vd) → apply_delta
+                         resolve() -┤
+                                    ├- Ordered(ord) → handle_ordering
+                                    └- Scored(delta, s1_vd, s2_vd) → apply_delta
                                               │
                                          write_record
 ```
@@ -377,7 +377,7 @@ CollatedReader[0]   CollatedReader[1]
       │                    │
 next_fragment()      next_fragment()
       │                    │
-      └──────► handle_fragment ◄──┘
+      └------► handle_fragment ◄--┘
                      │
           waiting_a / waiting_b  (HashMap buffers)
                      │

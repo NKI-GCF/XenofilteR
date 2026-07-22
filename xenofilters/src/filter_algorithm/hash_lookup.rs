@@ -360,7 +360,7 @@ impl<R: SimpleRec> HashLookup<R> {
         offsets_b: SmallVec<[u64; 2]>,
         supp_offsets: [SmallVec<[u64; 1]>; 2],
     ) -> Result<ScoredFragment, Error> {
-        // ── Mate cancellation ──────────────────────────────────────────────
+        // -- Mate cancellation ----------------------------------------------
         // A mate slot cancels when both streams classify it identically as
         // Unmapped or Perfect: its per-base contribution is provably equal in
         // both streams (same read, same quality string), so it can be excluded

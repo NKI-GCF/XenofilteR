@@ -333,7 +333,7 @@ fn detect_split_read<R: SimpleRec>(
             continue;
         }
 
-        // ── False-positive rejection ──────────────────────────────────────
+        // -- False-positive rejection --------------------------------------
         // Stream A's supplementary for this segment maps the *same read region*
         // as stream B's primary but on the wrong reference genome.  If the
         // supplementary has *fewer* mismatches than stream B's primary, the
@@ -393,7 +393,7 @@ pub(crate) fn detect_chimeric_event<R: SimpleRec>(
             _ => continue,
         };
 
-        // ── Phase 1: mate-split (requires paired-end data) ───────────────
+        // -- Phase 1: mate-split (requires paired-end data) ---------------
         let has_paired = sa
             .get_records()
             .iter()
@@ -416,7 +416,7 @@ pub(crate) fn detect_chimeric_event<R: SimpleRec>(
             }
         }
 
-        // ── Phase 2: read-split (single-end or paired-end) ───────────────
+        // -- Phase 2: read-split (single-end or paired-end) ---------------
         if let Some(seg_id) = detect_split_read(sa, sb) {
             return ChimericDecision::Chimeric {
                 stream_a: a,

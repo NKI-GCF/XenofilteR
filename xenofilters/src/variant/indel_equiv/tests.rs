@@ -24,7 +24,7 @@
 mod tests {
     use super::super::{enumerate_equivalents, left_normalize, MAX_SHIFT};
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    // -- Helpers ---------------------------------------------------------------
 
     /// Apply (pos_0based, ref_a, alt_a) to `reference` and return the
     /// resulting sequence.  Used to verify equivalence semantics.
@@ -86,7 +86,7 @@ mod tests {
         }
     }
 
-    // ── Table-driven test cases ───────────────────────────────────────────────
+    // -- Table-driven test cases -----------------------------------------------
 
     struct Case {
         label: &'static str,
@@ -391,7 +391,7 @@ mod tests {
         );
     }
 
-    // ── State-clearing: multiple calls on same inputs must be idempotent ─────
+    // -- State-clearing: multiple calls on same inputs must be idempotent -----
 
     #[test]
     fn enumerate_idempotent() {
@@ -406,9 +406,9 @@ mod tests {
         }
     }
 
-    // ── Proptest: no panics on arbitrary inputs ───────────────────────────────
+    // -- Proptest: no panics on arbitrary inputs -------------------------------
 
-    #[cfg(feature = "bench-internals")]
+    #[cfg(test)]
     mod property {
         use super::*;
         use proptest::prelude::*;
@@ -485,7 +485,7 @@ mod tests {
         }
     }
 
-    // ── Integration: Store insert_expanded dedup ──────────────────────────────
+    // -- Integration: Store insert_expanded dedup ------------------------------
 
     #[test]
     fn store_insert_expanded_count() {
