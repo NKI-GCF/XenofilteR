@@ -7,6 +7,9 @@ pub(crate) mod property;
 #[cfg(test)]
 pub(crate) use aln_stream::tests::*;
 
+use crate::region::load::load_ambiguous_regions_memory;
+use crate::region::load::load_distinct_variants_memory;
+use crate::variant::name_to_id::header_name_to_id;
 use noodles::core::Position;
 use noodles::sam::alignment::{
     record::data::field::Tag,
@@ -19,6 +22,7 @@ use noodles::sam::alignment::{
     },
     record_buf::{Cigar, QualityScores, RecordBuf, Sequence},
 };
+use noodles::sam::Header;
 
 fn create_cigar(cigar: &str) -> Result<Cigar, Error> {
     let mut ops = Vec::new();
@@ -144,15 +148,21 @@ fn test_load_distinct_variants_ignores_empty_strings() {
 
 #[test]
 fn test_namesorted_sequential_single_alignment() {
-    use crate::config::{CommonArgs, NamesortedArgs};
     use crate::config::args::{ChimericArgs, IoArgs, ParallelArgs};
+    use crate::config::{CommonArgs, NamesortedArgs};
 
     let args = NamesortedArgs {
         common: CommonArgs {
-            io: IoArgs { alignment: vec!["tests/fixtures/dummy1.bam".into()], ..Default::default() },
+            io: IoArgs {
+                alignment: vec!["tests/fixtures/dummy1.bam".into()],
+                ..Default::default()
+            },
             ..Default::default()
         },
-        parallel: ParallelArgs { threads: 1, score_threads: 1 },
+        parallel: ParallelArgs {
+            threads: 1,
+            score_threads: 1,
+        },
         chimeric: ChimericArgs::default(),
     };
     let _ = run_namesorted(args);
@@ -160,8 +170,8 @@ fn test_namesorted_sequential_single_alignment() {
 
 #[test]
 fn test_namesorted_parallel_dual_alignment() {
-    use crate::config::{CommonArgs, NamesortedArgs};
     use crate::config::args::{ChimericArgs, IoArgs, ParallelArgs};
+    use crate::config::{CommonArgs, NamesortedArgs};
 
     let args = NamesortedArgs {
         common: CommonArgs {
@@ -174,7 +184,10 @@ fn test_namesorted_parallel_dual_alignment() {
             },
             ..Default::default()
         },
-        parallel: ParallelArgs { threads: 1, score_threads: 2 },
+        parallel: ParallelArgs {
+            threads: 1,
+            score_threads: 2,
+        },
         chimeric: ChimericArgs::default(),
     };
     let _ = run_namesorted(args);

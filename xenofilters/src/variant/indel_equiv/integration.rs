@@ -17,7 +17,7 @@ mod indel_expansion_integration {
     use crate::{
         filter_algorithm::line_by_line::Scratch,
         region::diagnostic::{DiagnosticSite, SegregateVariants},
-        region::IntervalStore,
+        region::interval_store::IntervalStore,
         tests::{create_record, MockStream},
         variant::{
             indel_equiv::{enumerate_equivalents, EquivalentAlleles, MAX_SHIFT},
