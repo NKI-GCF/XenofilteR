@@ -350,3 +350,74 @@ pub(crate) fn resolve_threshold(phred: u32, is_pass2: bool) -> f64 {
     };
     (p as f64) * std::f64::consts::LN_10 / 10.0
 }
+
+#[cfg(test)]
+mod chimeric_pair_tests {
+    use super::*;
+
+    #[test]
+    fn valid_pair_normalizes_order() {
+        assert_eq!(
+            parse_chimeric_pairs(&["1:0".into()], 2).unwrap(),
+            vec![[0, 1]]
+        );
+    }
+
+    #[test]
+    fn missing_colon_is_format_error() {
+        assert!(matches!(
+            parse_chimeric_pairs(&["01".into()], 2),
+            Err(Error::InvalidChimericPairFormat { .. })
+        ));
+    }
+
+    #[test]
+    fn non_numeric_index_is_format_error() {
+        assert!(matches!(
+            parse_chimeric_pairs(&["a:b".into()], 2),
+            Err(Error::InvalidChimericPairFormat { .. })
+        ));
+    }
+
+    #[test]
+    fn identical_indices_rejected() {
+        assert!(matches!(
+            parse_chimeric_pairs(&["1:1".into()], 2),
+            Err(Error::ChimericPairSameIndex { .. })
+        ));
+    }
+
+    #[test]
+    fn out_of_range_index_rejected() {
+        assert!(matches!(
+            parse_chimeric_pairs(&["0:5".into()], 2),
+            Err(Error::ChimericPairIndexOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn duplicate_pairs_after_normalization_are_deduped() {
+        // "0:1" and "1:0" normalize to the same pair.
+        let got = parse_chimeric_pairs(&["0:1".into(), "1:0".into()], 2).unwrap();
+        assert_eq!(got, vec![[0, 1]]);
+    }
+
+    #[test]
+    fn multiple_pairs_are_sorted() {
+        let got = parse_chimeric_pairs(&["2:3".into(), "0:1".into()], 4).unwrap();
+        assert_eq!(got, vec![[0, 1], [2, 3]]);
+    }
+
+    #[test]
+    fn whitespace_around_indices_is_trimmed() {
+        assert_eq!(
+            parse_chimeric_pairs(&[" 0 : 1 ".into()], 2).unwrap(),
+            vec![[0, 1]]
+        );
+    }
+
+    #[test]
+    fn empty_specs_yields_empty_vec() {
+        assert!(parse_chimeric_pairs(&[], 2).unwrap().is_empty());
+    }
+}
