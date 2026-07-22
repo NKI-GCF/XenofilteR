@@ -312,4 +312,24 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn score_fn_from_str_table() {
+        use std::str::FromStr;
+        assert!(
+            matches!(ScoreFn::from_str("linear"), Ok(ScoreFn::Linear(w)) if (w - 1.0).abs() < 1e-9)
+        );
+        assert!(
+            matches!(ScoreFn::from_str("log:2.0"), Ok(ScoreFn::Log(w)) if (w - 2.0).abs() < 1e-9)
+        );
+        assert!(
+            matches!(ScoreFn::from_str("constant:5"), Ok(ScoreFn::Constant(w)) if (w - 5.0).abs() < 1e-9)
+        );
+        assert!(matches!(
+            ScoreFn::from_str("overlap_fraction:0.5"),
+            Ok(ScoreFn::OverlapFraction(w)) if (w - 0.5).abs() < 1e-9
+        ));
+        assert!(ScoreFn::from_str("bogus").is_err());
+        assert!(ScoreFn::from_str("linear:notanumber").is_err());
+        assert!(ScoreFn::from_str("linear:").is_err());
+    }
 }

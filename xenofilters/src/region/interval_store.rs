@@ -78,6 +78,10 @@ impl<T: Interval> IntervalStore<T> {
             v.dedup_by(|a, b| same(a, b));
         }
     }
+    #[cfg(test)]
+    pub(crate) fn per_ref(&self) -> &Vec<Vec<T>> {
+        &self.per_ref
+    }
 }
 
 /// Shared "open records, resolve chrom→ref_id, skip on miss, insert, sort" loop.
