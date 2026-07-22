@@ -1,5 +1,5 @@
 //! [`CollatedReader`] extracts complete [`FragmentState`]s from a collated
-//! BAM stream — consuming all records that share a canonical read name
+//! BAM stream -- consuming all records that share a canonical read name
 //! before returning.
 
 use crate::alignment::{FragmentState, SimpleRec};

@@ -18,7 +18,7 @@
 //   4. Semantic invariant: every equivalent representation produces the
 //      same sequence after applying the indel to the reference.
 //   5. proptest: enumerate_equivalents never panics on arbitrary input;
-//      always returns ≥ 1 entry; all entries apply to the same result.
+//      always returns >= 1 entry; all entries apply to the same result.
 
 #[cfg(test)]
 mod tests {
@@ -169,7 +169,7 @@ mod tests {
     fn homopolymer_slides_fully() {
         let cases = [
             Case {
-                label: "homopolymer A×4 deletion",
+                label: "homopolymer A*4 deletion",
                 reference: b"GAAAAG",
                 pos_0based: 0,
                 ref_a: b"GA",
@@ -178,7 +178,7 @@ mod tests {
                 positions: Some(&[0, 1, 2, 3]),
             },
             Case {
-                label: "homopolymer A×3 insertion",
+                label: "homopolymer A*3 insertion",
                 reference: b"GAAAG",
                 pos_0based: 0,
                 ref_a: b"G",
@@ -192,9 +192,9 @@ mod tests {
 
     #[test]
     fn tandem_repeat_dinucleotide_deletion() {
-        // Reference: CACACACAG — delete one AC unit.
+        // Reference: CACACACAG -- delete one AC unit.
         // right_shift_deletion moves 1 position at a time, generating
-        // both CAC/C and ACA/A forms → 6 equivalents at positions 0..5.
+        // both CAC/C and ACA/A forms -> 6 equivalents at positions 0..5.
         let cases = [Case {
             label: "dinucleotide AC repeat deletion",
             reference: b"CACACACAG",
@@ -279,22 +279,22 @@ mod tests {
         // Reference: CACACACAG
         // Delete CAC (3 bases) at pos 0: anchor C, delete CAC.
         // Remaining after deletion: ACAG.
-        // Next 3 bases after deletion: ACA; ref[1]='A' ≠ next_after[0]='A'?
+        // Next 3 bases after deletion: ACA; ref[1]='A' != next_after[0]='A'?
         // Actually check: first_del = cur_ref[1] = 'A'
         //   after_del = ref[pos + del_len + 1] = ref[0 + 3 + 1] = ref[4] = 'C'
-        //   'A' ≠ 'C' → no slide from position 0.
+        //   'A' != 'C' -> no slide from position 0.
         // Hmm, let me recount: ref = b"CACACACAG"
         //   pos 0=C, 1=A, 2=C, 3=A, 4=C, 5=A, 6=C, 7=A, 8=G
         // Delete CAC starting at pos 1 (anchor at 0):
-        //   ref_a = b"CCAC", alt_a = b"C" → anchor C, delete CAC
+        //   ref_a = b"CCAC", alt_a = b"C" -> anchor C, delete CAC
         //   first deleted = ref[1] = 'A'
-        //   base after deletion = ref[0 + 3 + 1] = ref[4] = 'C' ≠ 'A' → no slide
+        //   base after deletion = ref[0 + 3 + 1] = ref[4] = 'C' != 'A' -> no slide
         // Alternatively at pos=0: ref_a = b"CCAC", anchor=C[0], del=CAC
         //   This is reference positions 0-3: CACA
         // I need to be more careful. Let me use a simpler reference.
         // Reference: AACAACAAG, delete AAC (3 bases).
         // pos=0, ref=AAAC, alt=A (anchor A, delete AAC).
-        // first_del = ref[1] = 'A'. after_del = ref[4] = 'A'. Equal → can shift.
+        // first_del = ref[1] = 'A'. after_del = ref[4] = 'A'. Equal -> can shift.
         // New: pos=1, ref=AACG..., wait I need to think about this more carefully.
         // Just verify semantic equivalence.
         let reference = b"AACAACAAG";
@@ -330,12 +330,12 @@ mod tests {
         //   pos 0: G, 1-4: AAAA, 5: G
         // We provide a window starting at pos 1 (ctx_start=1):
         //   ref_ctx = b"AAAAG"
-        // Indel: pos=1 (0-based), anchor A, delete A → left-norm stays at 1
+        // Indel: pos=1 (0-based), anchor A, delete A -> left-norm stays at 1
         // because ctx_start=1 means we have no context before pos 1 to shift further.
         let ref_ctx: &[u8] = b"AAAAG";
         let ctx_start = 1usize;
         let equivalents = enumerate_equivalents(1, b"AA", b"A", ref_ctx, ctx_start);
-        // All positions must be ≥ ctx_start for the context to cover them.
+        // All positions must be >= ctx_start for the context to cover them.
         for eq in &equivalents {
             let ctx_idx = eq.pos.saturating_sub(ctx_start);
             assert!(
@@ -382,7 +382,7 @@ mod tests {
         let reference = b"GAAAAG";
         // Provide pos=3 (right-shifted form): anchor A, delete A.
         let equivalents = enumerate_equivalents(3, b"AA", b"A", reference, 0);
-        // Left-normalized form has pos=0 (anchor G, delete A → ref=GA alt=G).
+        // Left-normalized form has pos=0 (anchor G, delete A -> ref=GA alt=G).
         // Confirmed: enumerate_equivalents left-normalizes before expanding.
         assert_eq!(
             equivalents[0].pos, 0,
@@ -421,7 +421,7 @@ mod tests {
         }
 
         proptest! {
-            /// enumerate_equivalents must never panic and must always return ≥ 1 entry.
+            /// enumerate_equivalents must never panic and must always return >= 1 entry.
             #[test]
             fn no_panic_arbitrary_input(
                 pos      in 0usize..50usize,
@@ -436,7 +436,7 @@ mod tests {
                 let mut alt_a = vec![anchor];
                 alt_a.extend_from_slice(&alt_tail);
 
-                // ctx_start must be ≤ pos.
+                // ctx_start must be <= pos.
                 let ctx_start = pos.min(10);
                 let pos_clamped = pos.min(ctx.len().saturating_sub(ref_a.len() + 10));
 
@@ -445,7 +445,7 @@ mod tests {
                 });
                 prop_assert!(result.is_ok(), "enumerate_equivalents panicked");
                 let equivalents = result.unwrap();
-                prop_assert!(!equivalents.is_empty(), "must return ≥ 1 entry");
+                prop_assert!(!equivalents.is_empty(), "must return >= 1 entry");
             }
 
             /// For a proper deletion within a reference, every equivalent
@@ -512,7 +512,7 @@ mod tests {
         };
 
         // Manually create the expanded set as the expander would:
-        // del → 4 equivalents (GAAAAG context); snp → 1.
+        // del -> 4 equivalents (GAAAAG context); snp -> 1.
         let reference = b"GAAAAGCCCCT";
         let del_expanded: Vec<Population> =
             enumerate_equivalents(0, &del.ref_a, &del.alt_a, reference, 0)

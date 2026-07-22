@@ -34,7 +34,7 @@ pub trait Variant: Sync + Send {
     /// The alternate allele
     fn alt_allele(&self) -> &[u8];
 
-    /// End position (1-based, exclusive) — allows easy overlap check
+    /// End position (1-based, exclusive) -- allows easy overlap check
     fn end(&self) -> usize {
         self.pos() + self.ref_allele().len()
     }

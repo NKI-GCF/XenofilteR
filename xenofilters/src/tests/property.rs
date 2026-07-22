@@ -23,7 +23,7 @@ fn arb_md() -> impl Strategy<Value = Vec<u8>> {
 }
 
 /// Strategy: arbitrary BAM-encoded CIGAR bytes (4 bytes per op, LE u32).
-/// Opcodes 0–8 only (known valid). Length 1–300.
+/// Opcodes 0-8 only (known valid). Length 1-300.
 fn arb_cigar_bytes() -> impl Strategy<Value = Vec<u8>> {
     prop::collection::vec(
         (0u32..9u32, 1u32..=300u32).prop_map(|(op, len)| ((len << 4) | op).to_le_bytes()),
@@ -33,7 +33,7 @@ fn arb_cigar_bytes() -> impl Strategy<Value = Vec<u8>> {
 }
 
 proptest! {
-    /// md_mismatches must never panic and must return a value ≤ MD length.
+    /// md_mismatches must never panic and must return a value <= MD length.
     #[test]
     fn md_mismatches_no_panic_bounded(md in arb_md()) {
         let result = md_mismatches(&md);
@@ -46,7 +46,7 @@ proptest! {
         let _ = md_mismatches(&md);
     }
 
-    /// match_count_raw must never panic and must return a count ≤
+    /// match_count_raw must never panic and must return a count <=
     /// total bases implied by M/X/= ops in the CIGAR.
     #[test]
     fn match_count_raw_no_panic(

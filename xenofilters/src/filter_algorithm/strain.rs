@@ -10,7 +10,7 @@ use std::path::PathBuf;
 /// profiles (one per strain). No chimeric pairs, no multi-stream regions,
 /// no parallelism flags beyond bgzf threads (NW scoring is inherently
 /// single-pair here; --score-threads would only help with many fragments
-/// in flight, which the underlying engine already supports — exposed here
+/// in flight, which the underlying engine already supports -- exposed here
 /// as --threads only, kept simple).
 #[derive(Args, Clone, Debug)]
 pub(crate) struct StrainArgs {

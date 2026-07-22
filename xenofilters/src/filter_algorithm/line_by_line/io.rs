@@ -19,13 +19,13 @@ impl<R: SimpleRec> LineByLine<R> {
         Ok(())
     }
 
-    /// Write `rec` through stream `i`. Counter layout per stream — stride 4:
+    /// Write `rec` through stream `i`. Counter layout per stream -- stride 4:
     ///
     /// `best_state`:
-    /// - `Some(false)` → nr*4+0 → discard    (includes unmapped-discarded when --discard-unmapped)
-    /// - `Some(true)`  → nr*4+1 → out/winner
-    /// - `None`        → nr*4+2 → ambiguous  (includes unmapped-ambiguous when configured)
-    ///   <elsewhere>     nr*4+3 → chimeric   (XC:Z: tagged, both streams count)
+    /// - `Some(false)` -> nr*4+0 -> discard    (includes unmapped-discarded when --discard-unmapped)
+    /// - `Some(true)`  -> nr*4+1 -> out/winner
+    /// - `None`        -> nr*4+2 -> ambiguous  (includes unmapped-ambiguous when configured)
+    ///   <elsewhere>     nr*4+3 -> chimeric   (XC:Z: tagged, both streams count)
     pub(super) fn write_record(
         &mut self,
         i: usize,

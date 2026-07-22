@@ -78,7 +78,7 @@ mod tests {
     // -----------------------------------------------------------------------
     #[test]
     fn table_weighted_ref_and_alt_alignment_various_p() -> Result<(), crate::Error> {
-        // Read: AAGAA (positions 0..5) — we will target variant at 2 (0-based)
+        // Read: AAGAA (positions 0..5) -- we will target variant at 2 (0-based)
         let read = b"AAGAA";
         // create a read-record; reuse create_record helper (alignment tests do this)
         let rec = create_record(b"r", "5M", b"AAGAA", &[30u8; 5], "5", false)?;
@@ -187,7 +187,7 @@ mod tests {
             scratch.last_variant_delta != 0.0,
             "expected last_variant_delta set for variant p=1.0"
         );
-        // Now call again with empty dvnt → should reset to zero
+        // Now call again with empty dvnt -> should reset to zero
         let mut dvnt3: FragEvalVec<'static> = smallvec![smallvec![]];
         let _ = frag.score(&mut scratch, &mut dvnt3)?;
         assert_eq!(
@@ -428,7 +428,7 @@ mod tests {
             let flags = rec.flags();
             match MdCigFlags::try_from_record(&rec, &flags, false) {
                 Ok(mcf) => {
-                    // proceed to build fragment and score — must not panic
+                    // proceed to build fragment and score -- must not panic
                     let md_flags = smallvec![mcf];
                     match Fragment::new(&pen, smallvec![&rec], md_flags) {
                         Ok(mut frag) => {

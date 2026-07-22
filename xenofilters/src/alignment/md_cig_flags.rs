@@ -50,7 +50,7 @@ impl<'r> MdCigFlags<'r> {
             _ => return Err(Error::UnexpectedMdTagValueType),
         };
 
-        // SA:Z: "rname,pos,strand,CIGAR,mapQ,NM;" — one ';' per supplementary.
+        // SA:Z: "rname,pos,strand,CIGAR,mapQ,NM;" -- one ';' per supplementary.
         // Only meaningful on a primary record; supplementary records' own SA tags
         // list siblings, not additional supplementaries, so double-counting is
         // harmless (the `flags.is_supplementary()` guard in cmp_perfect already

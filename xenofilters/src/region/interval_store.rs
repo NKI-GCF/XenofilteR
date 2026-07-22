@@ -84,7 +84,7 @@ impl<T: Interval> IntervalStore<T> {
     }
 }
 
-/// Shared "open records, resolve chrom→ref_id, skip on miss, insert, sort" loop.
+/// Shared "open records, resolve chrom->ref_id, skip on miss, insert, sort" loop.
 ///
 /// `build` returns anything iterable (`Option<T>` for 0-or-1 items,
 /// `Vec<T>`/`SmallVec<T>` for indel-equivalence-style expansion into

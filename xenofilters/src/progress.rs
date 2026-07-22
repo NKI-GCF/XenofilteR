@@ -20,7 +20,7 @@ impl ProgressReporter {
         bar.set_style(
             ProgressStyle::with_template(STYLE)
                 .expect("progress template is valid")
-                .progress_chars("█░"),
+                .progress_chars("#."),
         );
         Self { bar }
     }

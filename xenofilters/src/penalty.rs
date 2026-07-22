@@ -2,7 +2,7 @@ pub(super) const MAX_Q: usize = 93;
 
 /// Platform-specific quality-score calibration and gap cost presets.
 ///
-/// Quality calibration factor: effective_q = reported_q × factor.
+/// Quality calibration factor: effective_q = reported_q * factor.
 /// ONT quality scores are systematically inflated; a factor of 0.7
 /// gives empirically better-calibrated effective error rates for R10.
 /// HiFi qualities are accurate but gap costs should reflect the lower
@@ -19,8 +19,8 @@ pub enum ErrorModel {
     /// PacBio HiFi (CCS): qualities highly accurate, SNR-based;
     /// indel rate ~0.01%.  Tighter gap penalties. gap_open=4, gap_extend=0.5.
     HiFi,
-    /// Oxford Nanopore (R9.4 / R10.4): quality calibration ~0.7×,
-    /// indel rate 1–10%.  Low gap penalties. gap_open=2, gap_extend=0.3.
+    /// Oxford Nanopore (R9.4 / R10.4): quality calibration ~0.7*,
+    /// indel rate 1-10%.  Low gap penalties. gap_open=2, gap_extend=0.3.
     Ont,
 }
 
@@ -63,14 +63,14 @@ pub struct Penalty {
     pub(crate) log_likelihood_mismatch: [f64; MAX_Q],
     pub(crate) log_likelihood_match: [f64; MAX_Q],
     /// Flat penalty applied once per supplementary alignment:
-    ///   `gap_open + chimeric_junction_bases × gap_extend`
+    ///   `gap_open + chimeric_junction_bases * gap_extend`
     ///
     /// Using a constant base-length (rather than the record's actual non-clipped
     /// length) decouples the penalty from read-length variation across
     /// supplementary records and makes it independently tunable.
     /// Both terms are negative after sign normalisation in `Config::to_penalties`.
     pub(crate) chimeric_junction_penalty: f64,
-    /// Zero-cost penalty for bisulfite conversions (C→T or G→A).
+    /// Zero-cost penalty for bisulfite conversions (C->T or G->A).
     /// Used only when --bisulfite is active.
     pub(crate) log_likelihood_bisulfite: f64,
 }

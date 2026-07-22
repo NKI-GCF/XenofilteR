@@ -44,7 +44,7 @@ impl crate::variant::indel_equiv::WithAlleles for DiagnosticSite {
 // ---------------------------------------------------------------------------
 //
 // AmbiguousRegions (BED-based) store intervals as (start, end).
-// Indel-shifted intervals expand identically: the start slides by ±1 per
+// Indel-shifted intervals expand identically: the start slides by +/-1 per
 // shift and the end follows.  Since BED regions are for MASKING (any overlap
 // forces full NW), we only need to expand the START positions.
 //
@@ -54,7 +54,7 @@ impl crate::variant::indel_equiv::WithAlleles for DiagnosticSite {
 //     - right-slide start by up to MAX_SHIFT
 //     - Insert all expanded intervals into the AmbiguousRegions store
 //
-// This ensures that a read whose CIGAR places an indel ±k bases from the BED
+// This ensures that a read whose CIGAR places an indel +/-k bases from the BED
 // boundary still triggers full scoring.  Expansion is conservative: overlapping
 // expanded intervals are merged by the existing BED merge step.
 //

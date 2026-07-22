@@ -56,7 +56,7 @@ fn hash_lookup_table() {
     let cases: &[Row] = &[
         // -- EarlyKind::AllPerfect / AllUnmapped --------------------------
         Row {
-            label: "s0 perfect s1 imperfect → s0 wins (AllPerfect vs Scoring)",
+            label: "s0 perfect s1 imperfect -> s0 wins (AllPerfect vs Scoring)",
             s0: vec![r(b"R1", "10M", "10")],
             s1: vec![r(b"R1", "5M5S", "5")],
             out0: 1,
@@ -67,7 +67,7 @@ fn hash_lookup_table() {
             ambg1: 0,
         },
         Row {
-            label: "s1 perfect s0 imperfect → s1 wins",
+            label: "s1 perfect s0 imperfect -> s1 wins",
             s0: vec![r(b"R1", "5M5S", "5")],
             s1: vec![r(b"R1", "10M", "10")],
             out0: 0,
@@ -78,7 +78,7 @@ fn hash_lookup_table() {
             ambg1: 0,
         },
         Row {
-            label: "both perfect → ambiguous",
+            label: "both perfect -> ambiguous",
             s0: vec![r(b"R1", "10M", "10")],
             s1: vec![r(b"R1", "10M", "10")],
             out0: 0,
@@ -89,7 +89,7 @@ fn hash_lookup_table() {
             ambg1: 1,
         },
         Row {
-            label: "both unmapped → ambiguous (AllUnmapped vs AllUnmapped)",
+            label: "both unmapped -> ambiguous (AllUnmapped vs AllUnmapped)",
             s0: vec![u(b"R1")],
             s1: vec![u(b"R1")],
             out0: 0,
@@ -100,7 +100,7 @@ fn hash_lookup_table() {
             ambg1: 1,
         },
         Row {
-            label: "s0 unmapped s1 mapped → s1 wins",
+            label: "s0 unmapped s1 mapped -> s1 wins",
             s0: vec![u(b"R1")],
             s1: vec![r(b"R1", "10M", "10")],
             out0: 0,
@@ -111,7 +111,7 @@ fn hash_lookup_table() {
             ambg1: 0,
         },
         Row {
-            label: "s0 mapped s1 unmapped → s0 wins",
+            label: "s0 mapped s1 unmapped -> s0 wins",
             s0: vec![r(b"R1", "10M", "10")],
             s1: vec![u(b"R1")],
             out0: 1,
@@ -123,7 +123,7 @@ fn hash_lookup_table() {
         },
         // -- Pre-assess (Tier 2.5) -----------------------------------------
         Row {
-            label: "s0 more matches (9 vs 7) → s0 wins via pre-assess",
+            label: "s0 more matches (9 vs 7) -> s0 wins via pre-assess",
             s0: vec![r(b"R1", "10M", "9A0")],
             s1: vec![r(b"R1", "10M", "6AAA")],
             out0: 1,
@@ -147,7 +147,7 @@ fn hash_lookup_table() {
         },
         // -- Paired-end: both mates must be present ------------------------
         Row {
-            label: "paired-end both perfect → ambiguous",
+            label: "paired-end both perfect -> ambiguous",
             s0: vec![
                 create_record(b"R1", "10M", &[], &[30u8; 10], "10", false)
                     .map(|mut r| {

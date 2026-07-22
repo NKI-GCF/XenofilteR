@@ -208,7 +208,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
                     self.refpos += len;
                 }
                 BaseOp::BisulfiteConversion => {
-                    // Zero penalty: genuine C→T or G→A conversion, not a sequencing error.
+                    // Zero penalty: genuine C->T or G->A conversion, not a sequencing error.
                     ref_score += self.pen.log_likelihood_bisulfite; // = 0.0
                 }
             }

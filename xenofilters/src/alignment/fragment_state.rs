@@ -280,7 +280,7 @@ impl<R: SimpleRec> MateClassifiable for FragmentState<R> {
                 match MdCigFlags::try_from_record(rec, flags, self.bisulfite) {
                     Ok(mcf) if mcf.is_perfect() => MateKind::Perfect,
                     Ok(_) => MateKind::Other,
-                    Err(_) => MateKind::Other, // malformed MD/CIGAR — must be scored
+                    Err(_) => MateKind::Other, // malformed MD/CIGAR -- must be scored
                 }
             };
             kinds[slot] = Some(kind);

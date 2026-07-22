@@ -299,7 +299,7 @@ where
 ///
 /// # Arguments
 /// - `config`    : parsed CLI args (CommonArgs + subcommand-specific fields)
-/// - `header`    : SAM/BAM header of stream `i` (for name→id mapping)
+/// - `header`    : SAM/BAM header of stream `i` (for name->id mapping)
 /// - `stream_idx`: which stream we are building stores for (0-based)
 ///
 /// # Returns

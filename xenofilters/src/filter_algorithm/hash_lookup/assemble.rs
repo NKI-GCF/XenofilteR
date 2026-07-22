@@ -2,11 +2,11 @@
 //! Design principle: always accumulate `RecordKind`s during pass 1, with the
 //! cheapest representation that fits the record's role:
 //!
-//! - `Secondary`        — virtual offset + flags only; never scored, tags along.
-//! - `UnmappedPrimary`   — virtual offset + flags + qualities; never NW-scored
+//! - `Secondary`        -- virtual offset + flags only; never scored, tags along.
+//! - `UnmappedPrimary`   -- virtual offset + flags + qualities; never NW-scored
 //!                          (no CIGAR/MD exists), qualities reserved for future
 //!                          quality-weighted ambiguous tie-breaking.
-//! - `Mapped`            — boxed full record (CIGAR/MD/qualities/etc.) for
+//! - `Mapped`            -- boxed full record (CIGAR/MD/qualities/etc.) for
 //!                          primary or supplementary mapped alignments; the
 //!                          only variant ever passed to NW scoring.
 //!
@@ -30,7 +30,7 @@ pub(crate) use stream::{EarlyKind, MappedRecord, RecordKind, StreamKind};
 use ahash::RandomState;
 
 /// Read names are attacker-uncontrolled; SipHash's DoS resistance is unnecessary.
-/// ahash is ~2–3× faster on short byte-string keys.
+/// ahash is ~2-3* faster on short byte-string keys.
 pub(crate) type FragmentTable = std::collections::HashMap<String, PendingFragment, RandomState>;
 
 pub(crate) fn new_fragment_table() -> FragmentTable {

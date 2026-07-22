@@ -1,8 +1,8 @@
-//! `SimpleRec` — the minimal interface `Fragment` requires from a BAM/SAM record.
+//! `SimpleRec` -- the minimal interface `Fragment` requires from a BAM/SAM record.
 //!
 //! Implemented for both `noodles::bam::Record` (zero-copy, lazy-decoded) and
 //! `noodles::sam::alignment::RecordBuf` (eager, owned).
-//! Static dispatch everywhere — no `dyn SimpleRec` in the hot path.
+//! Static dispatch everywhere -- no `dyn SimpleRec` in the hot path.
 
 use noodles::sam::{Header, alignment::record_buf::RecordBuf};
 

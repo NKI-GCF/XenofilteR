@@ -127,7 +127,7 @@ fn get_log_level(verbose_count: u8) -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
-// Name-sorted — streaming merge, sequential or parallel
+// Name-sorted -- streaming merge, sequential or parallel
 // ---------------------------------------------------------------------------
 fn run_namesorted(args: NamesortedArgs) -> Result<(), Error> {
     let stats_path = args.common.io.stats_output.clone();
@@ -177,7 +177,7 @@ fn run_line_by_line(
 }
 
 // ---------------------------------------------------------------------------
-// Hash-lookup — position-sorted BAMs, in-memory region filtering
+// Hash-lookup -- position-sorted BAMs, in-memory region filtering
 // ---------------------------------------------------------------------------
 
 fn run_hashlookup(args: HashlookupArgs) -> Result<(), Error> {
@@ -208,7 +208,7 @@ fn run_hashlookup(args: HashlookupArgs) -> Result<(), Error> {
 }
 
 // ---------------------------------------------------------------------------
-// Collated — individually name-sorted streams
+// Collated -- individually name-sorted streams
 // ---------------------------------------------------------------------------
 
 fn run_collated(args: CollatedArgs) -> Result<(), Error> {
@@ -236,7 +236,7 @@ fn run_collated(args: CollatedArgs) -> Result<(), Error> {
 }
 
 // ---------------------------------------------------------------------------
-// Strain — specialized collated matcher for strain detection
+// Strain -- specialized collated matcher for strain detection
 // ---------------------------------------------------------------------------
 
 fn run_strain(args: StrainArgs) -> Result<(), Error> {
@@ -255,7 +255,7 @@ fn run_strain(args: StrainArgs) -> Result<(), Error> {
 }
 
 // ---------------------------------------------------------------------------
-// Viral integration — specialized collated matcher for virus-host chimeras
+// Viral integration -- specialized collated matcher for virus-host chimeras
 // ---------------------------------------------------------------------------
 
 fn run_viral_integration(args: ViralIntegrationArgs) -> Result<(), Error> {

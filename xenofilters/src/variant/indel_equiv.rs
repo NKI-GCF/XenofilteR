@@ -1,6 +1,6 @@
 // src/variant/indel_equiv.rs
 //
-// Indel Equivalence Enumerator — Approach B implementation.
+// Indel Equivalence Enumerator -- Approach B implementation.
 //
 // Pre-computes all mathematically equivalent VCF representations of each
 // indel by sliding it through local repeat regions.  The hot path
@@ -8,8 +8,8 @@
 // is completely unchanged; the expansion happens once at startup.
 //
 // Coordinate contract (strict):
-//   VCF input  — 1-based, inclusive (noodles Variant::variant_start()).
-//   All output — 0-based (pos = vcf_pos - 1).
+//   VCF input  -- 1-based, inclusive (noodles Variant::variant_start()).
+//   All output -- 0-based (pos = vcf_pos - 1).
 pub(crate) mod corrected;
 pub(crate) mod impls;
 
@@ -40,7 +40,7 @@ use tracing::{debug, warn};
 // Constants
 // ---------------------------------------------------------------------------
 
-/// Hard limit on right-shift distance. Caps memory at ≤ MAX_SHIFT entries
+/// Hard limit on right-shift distance. Caps memory at <= MAX_SHIFT entries
 /// per indel; handles homopolymers up to 100 bp.
 pub(crate) const MAX_SHIFT: usize = 100;
 
@@ -49,14 +49,14 @@ pub(crate) const MAX_SHIFT: usize = 100;
 const CTX_WINDOW: usize = MAX_SHIFT + 16;
 
 // ---------------------------------------------------------------------------
-// EquivalentAlleles — one equivalent VCF representation
+// EquivalentAlleles -- one equivalent VCF representation
 // ---------------------------------------------------------------------------
 
 /// One equivalent (POS, REF, ALT) representation of a biological indel,
 /// stored in 0-based coordinates.
 #[derive(Debug, Clone)]
 pub(crate) struct EquivalentAlleles {
-    /// 0-based anchor position (VCF POS − 1).
+    /// 0-based anchor position (VCF POS - 1).
     pub(crate) pos: usize,
     /// REF allele bytes, ASCII uppercase, including anchor at index 0.
     pub(crate) ref_a: Vec<u8>,
@@ -72,9 +72,9 @@ pub(crate) struct EquivalentAlleles {
 pub(crate) enum IndelKind {
     /// Both alleles are single bases; no sliding possible.
     Snp,
-    /// len(ref) > len(alt) == 1 — pure deletion with VCF anchor base.
+    /// len(ref) > len(alt) == 1 -- pure deletion with VCF anchor base.
     Deletion,
-    /// len(ref) == 1 < len(alt) — pure insertion with VCF anchor base.
+    /// len(ref) == 1 < len(alt) -- pure insertion with VCF anchor base.
     Insertion,
     /// Multi-base on both sides; sliding undefined.
     Complex,
@@ -98,7 +98,7 @@ pub(crate) fn classify(ref_a: &[u8], alt_a: &[u8]) -> IndelKind {
 /// the local repeat region.
 ///
 /// # Parameters
-/// - `pos_0based` : 0-based anchor position (VCF POS − 1).
+/// - `pos_0based` : 0-based anchor position (VCF POS - 1).
 /// - `ref_a`      : REF bytes including anchor; ASCII uppercase.
 /// - `alt_a`      : ALT bytes including anchor; ASCII uppercase.
 /// - `ref_ctx`    : Reference sequence bytes; `ref_ctx[0]` corresponds to
@@ -107,7 +107,7 @@ pub(crate) fn classify(ref_a: &[u8], alt_a: &[u8]) -> IndelKind {
 /// - `ctx_start`  : 0-based chromosome position of `ref_ctx[0]`.
 ///
 /// # Returns
-/// `SmallVec` with inline capacity 8.  Always contains ≥ 1 entry
+/// `SmallVec` with inline capacity 8.  Always contains >= 1 entry
 /// (the left-normalized original).  SNPs and complex alleles return
 /// exactly 1 entry.
 pub(crate) fn enumerate_equivalents(
@@ -191,7 +191,7 @@ fn left_normalize(
             r.pop();
             a.pop();
         }
-        // Last chars differ → done.
+        // Last chars differ -> done.
         if r.last() != a.last() {
             break;
         }
@@ -329,7 +329,7 @@ fn right_shift_insertion(
 }
 
 // ---------------------------------------------------------------------------
-// IndelEquivalenceExpander — orchestrates FASTA fetch + enumeration
+// IndelEquivalenceExpander -- orchestrates FASTA fetch + enumeration
 // ---------------------------------------------------------------------------
 
 /// Wraps an indexed FASTA reader and expands each VCF indel into all

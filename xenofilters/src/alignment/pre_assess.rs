@@ -4,17 +4,17 @@
 //!
 //! The pre-assessment runs two sub-tiers from a SINGLE CIGAR+MD walk per record:
 //!
-//! **Tier 2.5a — match-count domination.**
+//! **Tier 2.5a -- match-count domination.**
 //! `AlignSig` stores the count of exact-match bases (CIGAR M/=/X positions where
 //! MD shows a digit, i.e. `BaseOp::Match` from `ScoreOpIter`) and the number of
 //! pending supplementary alignments (from the `SA:Z` tag on each primary).
 //! A higher match count is unambiguously better; fewer supplementaries is better.
-//! A stream dominates when it is ≥ on matches AND ≤ on supplementaries.
+//! A stream dominates when it is >= on matches AND <= on supplementaries.
 //! This single-axis match count replaces the old 3-axis (mismatches / clips / indels)
 //! approach: it is more efficient (one number instead of three comparisons) and more
 //! directly correlated with the NW log-likelihood score.
 //!
-//! **Tier 2.5b — read-coordinate-space comparison.**
+//! **Tier 2.5b -- read-coordinate-space comparison.**
 //! When Tier 2.5a cannot decide, `compare_fragment_profiles` identifies per-position
 //! dominance in read space (positions where one stream matches and the other does not).
 //!
@@ -30,7 +30,7 @@ use smallvec::SmallVec;
 use std::cmp::Ordering;
 
 // ---------------------------------------------------------------------------
-// AlignSig — match-count-based quality signature (private to this module)
+// AlignSig -- match-count-based quality signature (private to this module)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -48,7 +48,7 @@ struct AlignSig {
 ///
 /// Primary records contribute their `ReadOp::Match` count and `supp_count`.
 /// Supplementary records are NOT counted in `primary_match_bases` because
-/// the chimeric-junction penalty (gap_open + bases × gap_extend) is applied
+/// the chimeric-junction penalty (gap_open + bases * gap_extend) is applied
 /// in the NW phase and may negate the match contribution; without knowing
 /// the penalty magnitude we cannot compare supplementary matches across streams.
 /// del events are subtracted from the match count because they are not exact matches.
@@ -84,13 +84,13 @@ fn subsumes(a: &AlignSig, b: &AlignSig) -> Option<Ordering> {
         if a.primary_match_bases >= b.primary_match_bases {
             Some(Ordering::Greater)
         } else {
-            None // a has fewer supps but fewer matches → incomparable
+            None // a has fewer supps but fewer matches -> incomparable
         }
     } else {
         if b.primary_match_bases >= a.primary_match_bases {
             Some(Ordering::Less)
         } else {
-            None // b has fewer supps but fewer matches → incomparable
+            None // b has fewer supps but fewer matches -> incomparable
         }
     }
 }
@@ -116,7 +116,7 @@ pub fn match_count_raw(cigar_bytes: &[u8], md: &[u8]) -> usize {
         let len = (enc >> 4) as usize;
 
         match op {
-            // M (0), = (7), X (8): aligned bases — classify each against MD
+            // M (0), = (7), X (8): aligned bases -- classify each against MD
             0 | 7 | 8 => {
                 let mut cigar_remain = len;
                 while cigar_remain > 0 {
@@ -154,12 +154,12 @@ pub fn match_count_raw(cigar_bytes: &[u8], md: &[u8]) -> usize {
                                     md_pos += 1;
                                 }
                             }
-                            _ => return matches, // malformed — stop here
+                            _ => return matches, // malformed -- stop here
                         }
                     }
                 }
             }
-            // D (2): deletion from reference — skip the ^letters MD block
+            // D (2): deletion from reference -- skip the ^letters MD block
             2 if md.get(md_pos) == Some(&b'^') => {
                 md_pos += 1;
                 while let Some(&d) = md.get(md_pos) {
@@ -198,10 +198,10 @@ pub enum PreAssessResult {
 /// Builds `ReadProfile`s once (single `ScoreOpIter` walk per record) and runs
 /// both sub-tiers from the same data:
 ///
-/// * **Tier 2.5a** — match-count domination via `AlignSig` (O(record) counter
+/// * **Tier 2.5a** -- match-count domination via `AlignSig` (O(record) counter
 ///   increments derived for free from the already-built profile; no extra
 ///   CIGAR/MD parsing).
-/// * **Tier 2.5b** — per-position read-space comparison via
+/// * **Tier 2.5b** -- per-position read-space comparison via
 ///   `compare_fragment_profiles`.
 ///
 /// Falls back to `FullScoring` on segment-count mismatch, malformed MD/CIGAR,
@@ -234,7 +234,7 @@ pub fn pre_assess_alignments(
         return PreAssessResult::FullScoring;
     }
 
-    // Tier 2.5a: match-count domination — derived from profiles at zero extra cost.
+    // Tier 2.5a: match-count domination -- derived from profiles at zero extra cost.
     let sig_a = sig_from_fragment_profile(&fp_a);
     let sig_b = sig_from_fragment_profile(&fp_b);
     if let Some(ord) = subsumes(&sig_a, &sig_b) {
@@ -246,7 +246,7 @@ pub fn pre_assess_alignments(
         return PreAssessResult::EarlyDecision(ord);
     }
 
-    // Tier 2.5b: per-position read-space comparison — reuses the same profiles.
+    // Tier 2.5b: per-position read-space comparison -- reuses the same profiles.
     match compare_fragment_profiles(&fp_a, &fp_b) {
         ReadSpaceDecision::EarlyDecision(ord) => {
             #[cfg(test)]
@@ -376,7 +376,7 @@ mod tests {
         md_a: &'static str,
         cigar_b: &'static str,
         md_b: &'static str,
-        want: Option<Ordering>, // None → FullScoring
+        want: Option<Ordering>, // None -> FullScoring
     }
 
     #[test]
@@ -385,7 +385,7 @@ mod tests {
         let cases: &[Row] = &[
             // -- Aggregate subsumption (Tier 2.5a) ------------------------
             Row {
-                label: "a perfect b imperfect → a wins",
+                label: "a perfect b imperfect -> a wins",
                 cigar_a: "10M",
                 md_a: "10",
                 cigar_b: "10M",
@@ -393,7 +393,7 @@ mod tests {
                 want: Some(Greater),
             },
             Row {
-                label: "a imperfect b perfect → b wins",
+                label: "a imperfect b perfect -> b wins",
                 cigar_a: "10M",
                 md_a: "5A4",
                 cigar_b: "10M",
@@ -401,7 +401,7 @@ mod tests {
                 want: Some(Less),
             },
             Row {
-                label: "both perfect → equal",
+                label: "both perfect -> equal",
                 cigar_a: "10M",
                 md_a: "10",
                 cigar_b: "10M",
@@ -409,7 +409,7 @@ mod tests {
                 want: Some(Equal),
             },
             Row {
-                label: "a has soft clip b does not → b wins (more matches)",
+                label: "a has soft clip b does not -> b wins (more matches)",
                 cigar_a: "5S5M",
                 md_a: "5",
                 cigar_b: "10M",
@@ -417,7 +417,7 @@ mod tests {
                 want: Some(Less),
             },
             Row {
-                label: "a has 2 mismatch b has 1 → b wins",
+                label: "a has 2 mismatch b has 1 -> b wins",
                 cigar_a: "10M",
                 md_a: "3A3A2",
                 cigar_b: "10M",
@@ -426,7 +426,7 @@ mod tests {
             },
             Row {
                 label: "incomparable: a wins on matches but b has more clips",
-                // a: 8M2S → 8 matches; b: 10M, MD 8A1 → 9 matches
+                // a: 8M2S -> 8 matches; b: 10M, MD 8A1 -> 9 matches
                 // b wins (more matches)
                 cigar_a: "8M2S",
                 md_a: "8",
@@ -435,9 +435,9 @@ mod tests {
                 want: Some(Less),
             },
             Row {
-                label: "a has deletion b does not → indels make a worse",
+                label: "a has deletion b does not -> indels make a worse",
                 // 5M+1D+5M = 10 matches; 10M = 10 matches, same match count
-                // but deletion in a → supp_count same, match count same → falls to Tier 2.5b
+                // but deletion in a -> supp_count same, match count same -> falls to Tier 2.5b
                 cigar_a: "5M1D5M",
                 md_a: "5^A5",
                 cigar_b: "10M",
@@ -445,7 +445,7 @@ mod tests {
                 want: Some(Less),
             },
             Row {
-                label: "a has insertion b does not → fallthrough (read-space ambiguity)",
+                label: "a has insertion b does not -> fallthrough (read-space ambiguity)",
                 cigar_a: "5M2I3M",
                 md_a: "10",
                 cigar_b: "10M",
@@ -573,7 +573,7 @@ mod tests {
         }
         let cases = &[
             Row {
-                label: "equal matches, a no supp → a wins",
+                label: "equal matches, a no supp -> a wins",
                 a: AlignSig {
                     primary_match_bases: 80,
                     supp_count: 0,
@@ -585,7 +585,7 @@ mod tests {
                 want: Some(Greater),
             },
             Row {
-                label: "a more matches but more supp → incomparable → NW",
+                label: "a more matches but more supp -> incomparable -> NW",
                 a: AlignSig {
                     primary_match_bases: 90,
                     supp_count: 2,
@@ -597,7 +597,7 @@ mod tests {
                 want: None,
             },
             Row {
-                label: "a more matches and equal supp → a wins",
+                label: "a more matches and equal supp -> a wins",
                 a: AlignSig {
                     primary_match_bases: 90,
                     supp_count: 0,
@@ -609,7 +609,7 @@ mod tests {
                 want: Some(Greater),
             },
             Row {
-                label: "identical → equal",
+                label: "identical -> equal",
                 a: AlignSig {
                     primary_match_bases: 80,
                     supp_count: 0,

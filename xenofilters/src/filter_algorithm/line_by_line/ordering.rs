@@ -10,7 +10,7 @@
 //! ```text
 //!  IO thread (main)
 //!  ------------------------------------------------------------------
-//!  ingest_record() per stream → assemble FragmentBundle → work_tx ->.
+//!  ingest_record() per stream -> assemble FragmentBundle -> work_tx ->.
 //!                                                                   | N workers
 //!  result_rx <-- ScoredFragment <---------------------------------- +
 //!  |                                                                |
@@ -371,8 +371,8 @@ pub(super) fn score_bundle(
 /// # No-variant fast path
 ///
 /// When `store` is `None` the entire `overlapping_multi` call chain is
-/// skipped.  The check is a single `Option::is_some()` per candidate — not
-/// per segment — so the no-variant case is as lean as possible.
+/// skipped.  The check is a single `Option::is_some()` per candidate -- not
+/// per segment -- so the no-variant case is as lean as possible.
 fn score_candidate_owned(
     state: &FragmentState<RecordBuf>,
     mcfs: SmallVec<[MdCigFlags<'_>; READ_CT]>,
@@ -454,7 +454,7 @@ fn score_candidate_owned(
         let rec = &state.get_records()[idx];
 
         // Supplementary alignments contribute BOTH a chimeric-junction
-        // penalty (gap_open + chimeric_junction_bases × gap_extend) AND per-base NW
+        // penalty (gap_open + chimeric_junction_bases * gap_extend) AND per-base NW
         // scoring.
         if flags.is_supplementary() {
             supplementary_penalty += ctx.penalties.chimeric_junction_penalty;
@@ -510,7 +510,7 @@ fn score_candidate_owned(
     Ok(base_score + supplementary_penalty + region_bonus)
 }
 
-// -- LineByLine::process — dispatcher -----------------------------------------
+// -- LineByLine::process -- dispatcher -----------------------------------------
 
 impl<R: SimpleRec> LineByLine<R> {
     /// Original single-threaded process loop.
@@ -600,17 +600,17 @@ impl<R: SimpleRec> LineByLine<R> {
     /// N-way round-robin tournament.
     ///
     /// Runs all scoring tiers in a single scan of `best`, storing per-stream
-    /// scalar results in fixed-size STACK arrays (N ≤ MAX_STREAMS = 32).
+    /// scalar results in fixed-size STACK arrays (N <= MAX_STREAMS = 32).
     /// Discards happen after the scan in O(N) backward sweeps; no additional
     /// heap containers are allocated.
     ///
     /// # Tier progression
     ///
     /// ```text
-    /// Tier 1   — unmapped filter      O(N) flag checks
-    /// Tier 2   — perfect/imperfect    O(N) MCF builds  (shared with tiers below)
-    /// Tier 2.5 — match-count max      O(N) ScoreOpIter walks per stream
-    /// Tier 3   — NW argmax            O(N) NW score evaluations
+    /// Tier 1   -- unmapped filter      O(N) flag checks
+    /// Tier 2   -- perfect/imperfect    O(N) MCF builds  (shared with tiers below)
+    /// Tier 2.5 -- match-count max      O(N) ScoreOpIter walks per stream
+    /// Tier 3   -- NW argmax            O(N) NW score evaluations
     /// ```
     ///
     /// Each tier exits early when a winner is resolved; later tiers are skipped.
@@ -664,7 +664,7 @@ impl<R: SimpleRec> LineByLine<R> {
     }
 
     /// Emit stream at position `idx` in `best` as filtered output and remove it.
-    /// O(N) shift; N ≤ MAX_STREAMS = 32 so this is acceptable.
+    /// O(N) shift; N <= MAX_STREAMS = 32 so this is acceptable.
     fn discard_at(&mut self, best: &mut FragmentBuffer<R>, idx: usize) -> Result<(), Error> {
         let mut loser = best.remove(idx);
         let nr = loser.get_nr();

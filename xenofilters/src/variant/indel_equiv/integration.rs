@@ -203,8 +203,8 @@ mod indel_expansion_integration {
     //
     // Stream 0: read aligns to human ref with deletion at canonical pos.
     // Stream 1: same read aligns to mouse ref with deletion at shifted pos.
-    // Without expansion, the variant is missed in stream 1 → wrong route.
-    // With expansion, both streams see the variant → correct rescue delta.
+    // Without expansion, the variant is missed in stream 1 -> wrong route.
+    // With expansion, both streams see the variant -> correct rescue delta.
 
     #[test]
     fn two_stream_routing_with_expanded_stores() {

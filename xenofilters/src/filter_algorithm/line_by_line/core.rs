@@ -24,7 +24,7 @@ pub(crate) const VNT_LEN: usize = 16;
 
 pub(crate) const MAX_STREAMS: usize = 32;
 
-/// Counter layout per stream — stride 4:
+/// Counter layout per stream -- stride 4:
 ///   nr*4+0  discard   (includes unmapped-discarded when --discard-unmapped)
 ///   nr*4+1  out/winner
 ///   nr*4+2  ambiguous (includes unmapped-ambiguous when configured)

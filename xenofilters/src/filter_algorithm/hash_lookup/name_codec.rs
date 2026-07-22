@@ -9,7 +9,7 @@ pub(crate) trait NameEncoder: Send + Sync {
     fn verify(&mut self, _name: &[u8], _expected: &[u8]) {}
 }
 
-/// Passthrough: full name → heap key. Correct for any platform.
+/// Passthrough: full name -> heap key. Correct for any platform.
 pub(crate) struct PassthroughEncoder;
 impl NameEncoder for PassthroughEncoder {
     fn encode(&self, name: &[u8]) -> Box<[u8]> { name.into() }
@@ -66,7 +66,7 @@ impl NameEncoder for IlluminaEncoder {
     }
 }
 
-/// Select encoder from config. Unknown platform → PassthroughEncoder.
+/// Select encoder from config. Unknown platform -> PassthroughEncoder.
 pub(crate) fn make_encoder(cfg: &Config) -> Box<dyn NameEncoder> {
     match cfg.name_encoder {
         NameEncoderKind::Illumina    => Box::new(IlluminaEncoder::new()),

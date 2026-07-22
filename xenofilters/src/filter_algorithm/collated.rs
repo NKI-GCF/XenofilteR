@@ -1,4 +1,4 @@
-//! [`CollatedMatcher`] — fragment-matching for individually-collated BAM streams
+//! [`CollatedMatcher`] -- fragment-matching for individually-collated BAM streams
 //! whose inter-stream name order may differ.
 //!
 //! Each input stream must have all records for a given read name contiguous
@@ -67,7 +67,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             waiting_b: HashMap::with_hasher(RandomState::new()),
             penalties: args.scoring.to_penalty(),
             scratch: Scratch::new(),
-            routing_counters: SmallVec::from_elem(0, 2 * 4), // 2 streams × 4 counters per stream
+            routing_counters: SmallVec::from_elem(0, 2 * 4), // 2 streams * 4 counters per stream
             add_decision_tag: args.io.add_decision_tag,
             ambiguous_log_threshold,
             bed,
@@ -75,7 +75,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         })
     }
 
-    // CONCURRENCY STUB — CollatedMatcher parallel worker pool
+    // CONCURRENCY STUB -- CollatedMatcher parallel worker pool
     //
     // `score_pair` / `nw_score_fragment` are embarrassingly parallel once a pair
     // has been extracted from `waiting_a` / `waiting_b`.  A crossbeam bounded
@@ -86,7 +86,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
     //   Writers remain on the IO thread (no Mutex needed).
     //
     // Output order is NOT guaranteed (acceptable for Collated).
-    // N-STREAM: scales to N waiting maps; memory is O(name-order skew × streams).
+    // N-STREAM: scales to N waiting maps; memory is O(name-order skew * streams).
     pub(crate) fn process(&mut self, config: &RunConfig) -> Result<(), Error> {
         loop {
             let fa = self.a.next_fragment()?;
@@ -154,7 +154,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
     }
 
     fn score_pair(&mut self, a: FragmentState<R>, b: FragmentState<R>) -> Result<(), Error> {
-        // Tier 1: unmapped fast-path — before BED/VCF I/O.
+        // Tier 1: unmapped fast-path -- before BED/VCF I/O.
         let mut ord = a.partial_cmp(&b);
         if let Some(o) = ord {
             return self.apply_ordered(a, b, o);
@@ -175,7 +175,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             return self.apply_ordered(a, b, o);
         }
 
-        // Tier 2.5: unified pre-assessment — single CIGAR+MD walk per record.
+        // Tier 2.5: unified pre-assessment -- single CIGAR+MD walk per record.
         // Guard: only when no BED/VCF region forces full scoring (diagnostic variants
         // must be scored via NW to properly account for variant rescue).
         if !a_needs_scoring

@@ -6,7 +6,7 @@
 //   2. `expand_sample` / `expand_population` return `(ref_id, Vec<V>)` tuples.
 //   3. `IndelEquivalenceExpander::fetch_context` is `pub(crate)` so
 //      `diagnostic_equiv.rs` can call it.
-//   4. The name→id mapping is passed into both build functions.
+//   4. The name->id mapping is passed into both build functions.
 
 use std::{
     collections::HashMap,
@@ -174,7 +174,7 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// WithAllelesRefId — variant of WithAlleles that also sets ref_id
+// WithAllelesRefId -- variant of WithAlleles that also sets ref_id
 // ---------------------------------------------------------------------------
 //
 // Avoids two separate clone+update steps. Implemented on Sample + Population

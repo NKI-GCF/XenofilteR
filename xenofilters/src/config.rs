@@ -29,7 +29,7 @@ pub enum MatchingAlgorithm {
     Collated,
 
     /// Hash-table matching. Works on arbitrary (non-sorted, non-collated) BAM
-    /// input. High memory usage — proportional to the number of in-flight
+    /// input. High memory usage -- proportional to the number of in-flight
     /// fragments. Single-threaded only. Preserves driving-stream (stream 0)
     /// output order.
     Hashlookup,
@@ -42,7 +42,7 @@ pub enum MatchingAlgorithm {
     /// with a restricted flag surface.
     Strain,
 
-    /// Cross-species viral integration detection (HPV, HBV, HTLV-1, …).
+    /// Cross-species viral integration detection (HPV, HBV, HTLV-1, ...).
     ///
     /// Preconfigures chimeric-pair detection between the first two streams.
     /// Equivalent to `namesorted --chimeric-pairs 0:1` with --stream-labels
@@ -106,7 +106,7 @@ pub(crate) enum AlgorithmCommand {
     /// with a restricted flag surface.
     Strain(StrainArgs),
 
-    /// Cross-species viral integration detection (HPV, HBV, HTLV-1, …).
+    /// Cross-species viral integration detection (HPV, HBV, HTLV-1, ...).
     ///
     /// Preconfigures chimeric-pair detection between the first two streams.
     /// Equivalent to `namesorted --chimeric-pairs 0:1` with --stream-labels

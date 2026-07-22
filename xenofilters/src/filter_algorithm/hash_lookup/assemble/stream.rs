@@ -5,7 +5,7 @@ use noodles::sam::alignment::record::Flags;
 use smallvec::SmallVec;
 
 // ---------------------------------------------------------------------------
-// MappedRecord — full data, only ever built for mapped (primary or
+// MappedRecord -- full data, only ever built for mapped (primary or
 // supplementary) records.
 // ---------------------------------------------------------------------------
 
@@ -38,7 +38,7 @@ impl MappedRecord {
 }
 
 // ---------------------------------------------------------------------------
-// RecordKind — minimal-cost representation per record role.
+// RecordKind -- minimal-cost representation per record role.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
@@ -47,7 +47,7 @@ pub(crate) enum RecordKind {
     /// final decision. Only a virtual offset is needed for pass-2 retrieval.
     Secondary { flags: Flags, virtual_offset: u64 },
     /// Unmapped primary: never NW-scored (no CIGAR/MD exists for an unmapped
-    /// read). Qualities are retained — not currently consumed by scoring, but
+    /// read). Qualities are retained -- not currently consumed by scoring, but
     /// reserved for a possible future quality-weighted ambiguous tie-break.
     UnmappedPrimary {
         flags: Flags,
@@ -87,7 +87,7 @@ impl RecordKind {
 }
 
 // ---------------------------------------------------------------------------
-// StreamAccumulator — accumulates records for one stream before classification
+// StreamAccumulator -- accumulates records for one stream before classification
 // ---------------------------------------------------------------------------
 
 #[derive(Default)]
@@ -205,7 +205,7 @@ impl StreamAccumulator {
 }
 
 // ---------------------------------------------------------------------------
-// StreamKind — post-classification state
+// StreamKind -- post-classification state
 // ---------------------------------------------------------------------------
 
 /// Why a stream was fast-pathed without per-base NW scoring.
@@ -294,7 +294,7 @@ mod is_perfect_tests {
 
     #[test]
     fn multi_op_cigar_forces_imperfect() {
-        // 8 bytes = 2 ops (e.g. 5M5S) — must not be misread as one op.
+        // 8 bytes = 2 ops (e.g. 5M5S) -- must not be misread as one op.
         let mut bytes = encode_op(5, 0).to_vec();
         bytes.extend_from_slice(&encode_op(5, 4 /* SoftClip */));
         let m = base(bytes, b"5", 0);
@@ -303,7 +303,7 @@ mod is_perfect_tests {
 
     #[test]
     fn single_non_match_op_forces_imperfect() {
-        // e.g. a lone Insertion op (code 1) — same length encoding as Match
+        // e.g. a lone Insertion op (code 1) -- same length encoding as Match
         // but wrong op kind; must not be treated as perfect.
         let m = base(encode_op(10, 1).to_vec(), b"10", 0);
         assert!(!m.is_perfect());

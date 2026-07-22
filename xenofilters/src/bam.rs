@@ -88,7 +88,7 @@ pub(crate) fn expand_header(mut header: Header, write_discarded: bool) -> Header
 
 /// Rewrite the `RG:Z` tag on `rec` by appending `suffix` to its current value.
 ///
-/// If the record carries no `RG:Z` tag it is left unchanged — downstream tools
+/// If the record carries no `RG:Z` tag it is left unchanged -- downstream tools
 /// will interpret it as belonging to no read group, which is the least-
 /// surprising behaviour.
 ///
@@ -99,7 +99,7 @@ pub(crate) fn expand_header(mut header: Header, write_discarded: bool) -> Header
 pub(crate) fn rewrite_rg(rec: &mut RecordBuf, suffix: &str) -> Result<(), Error> {
     // Read the current value.
     match rec.data_mut().get_mut(&TAG_RG) {
-        None => Ok(()), // no RG tag — leave record unchanged
+        None => Ok(()), // no RG tag -- leave record unchanged
         Some(Value::String(s)) => {
             s.extend_from_slice(suffix.as_bytes());
             Ok(())
@@ -194,7 +194,7 @@ mod tests {
         rewrite_rg(&mut rec, SUFFIX_FILTERED)?;
         match rec.data().get(&TAG_RG) {
             Some(Value::String(s)) => {
-                // Double-application stacks suffixes — this is wrong and
+                // Double-application stacks suffixes -- this is wrong and
                 // the test exists to catch accidental double-calls.
                 assert_eq!(&s.to_string(), "rg0_xenofilt_xenofilt");
             }

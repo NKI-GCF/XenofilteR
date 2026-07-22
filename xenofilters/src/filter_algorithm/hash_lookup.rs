@@ -1,4 +1,4 @@
-//! [`HashLookup`] — two-pass fragment-matching for position-sorted BAMs.
+//! [`HashLookup`] -- two-pass fragment-matching for position-sorted BAMs.
 //!
 //! **Pass 1** (sequential scan, lightweight `MappedRecord`s):
 //! Reads name, flags, ref_id, pos, CIGAR, MD, qualities, virtual_offset.
@@ -55,7 +55,7 @@ pub(crate) struct ScoredFragment {
     pub(crate) winner_offsets: SmallVec<[(usize, u64); 2]>,
     /// (stream_nr, virtual_offset) for losing records.
     pub(crate) loser_offsets: SmallVec<[(usize, u64); 2]>,
-    /// Supplementary offsets per stream — follow winner's decision.
+    /// Supplementary offsets per stream -- follow winner's decision.
     pub(crate) supp_offsets: [SmallVec<[u64; 1]>; 2],
     pub(crate) decision: Option<Decision>,
     pub(crate) winner_nr: usize,
@@ -169,7 +169,7 @@ impl<R: SimpleRec> HashLookup<R> {
         let virtual_offset = self.record_counters[nr];
         self.record_counters[nr] += 1;
 
-        // Secondary: virtual offset only — no CIGAR/MD parsing needed.
+        // Secondary: virtual offset only -- no CIGAR/MD parsing needed.
         if flags.is_secondary() {
             return Ok(Some((
                 key,
@@ -180,7 +180,7 @@ impl<R: SimpleRec> HashLookup<R> {
             )));
         }
 
-        // Unmapped primary: never NW-scored — skip CIGAR/MD/ref_len, keep qualities.
+        // Unmapped primary: never NW-scored -- skip CIGAR/MD/ref_len, keep qualities.
         if flags.is_unmapped() {
             let qualities: Vec<u8> = rec
                 .quality_scores()
@@ -382,7 +382,7 @@ impl<R: SimpleRec> HashLookup<R> {
             }
         }
 
-        // Every present mate cancelled → guaranteed tie, no NW needed at all.
+        // Every present mate cancelled -> guaranteed tie, no NW needed at all.
         if all_present_cancel && any_present {
             let mut both: SmallVec<[(usize, u64); 2]> = offsets_a.iter().map(|&o| (0, o)).collect();
             both.extend(offsets_b.iter().map(|&o| (1, o)));
@@ -473,7 +473,7 @@ impl<R: SimpleRec> HashLookup<R> {
             let slot = mate_slot(segment_id(&flags));
             if cancel_slot[slot] {
                 continue;
-            } // identical contribution in both streams — skip
+            } // identical contribution in both streams -- skip
 
             let RecordKind::Mapped(m) = rk else { continue }; // Unmapped never scored
 

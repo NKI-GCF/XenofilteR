@@ -39,7 +39,7 @@ impl VariantWindow {
     }
 
     /// 0-based read offset corresponding to `eff_ref_start` (assumes no
-    /// indels between the segment's own start and this window — same
+    /// indels between the segment's own start and this window -- same
     /// assumption the original code made).
     pub(crate) fn read_offset(&self, seg_ref_start: usize) -> usize {
         self.eff_ref_start - seg_ref_start
@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn test_align_wrong_offset_reproduces_the_original_bug() -> Result<(), Error> {
-        // Same read/allele, but offset 0 instead of 2 — this is exactly what
+        // Same read/allele, but offset 0 instead of 2 -- this is exactly what
         // the pre-fix `nt_i_base = ref_start - seg_ref_start` produced.
         let mut scratch = Scratch::new();
         let read = b"AAGAA";

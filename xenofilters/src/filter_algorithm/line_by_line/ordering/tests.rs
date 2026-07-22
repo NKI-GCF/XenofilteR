@@ -48,7 +48,7 @@ fn chim(lbl: &LineByLine<RecordBuf>, stream: usize) -> u64 {
 }
 
 // ---------------------------------------------------------------------------
-// 2-stream tournament — table-driven
+// 2-stream tournament -- table-driven
 // ---------------------------------------------------------------------------
 
 struct TwoStreamCase {
@@ -82,36 +82,36 @@ fn two_stream_tournament() {
     run_2stream(&[
         // -- Tier 1: unmapped ---------------------------------------------
         TwoStreamCase {
-            label: "both unmapped → both ambiguous",
+            label: "both unmapped -> both ambiguous",
             s0: vec![u(b"R1")], s1: vec![u(b"R1")],
             out0:0, out1:0, disc0:0, disc1:0, ambig0:1, ambig1:1,
         },
         TwoStreamCase {
-            label: "s0 unmapped s1 mapped → s1 wins",
+            label: "s0 unmapped s1 mapped -> s1 wins",
             s0: vec![u(b"R1")], s1: vec![r(b"R1", "10M", "10")],
             out0:0, out1:1, disc0:1, disc1:0, ambig0:0, ambig1:0,
         },
         // -- Tier 2: perfect-match -----------------------------------------
         TwoStreamCase {
-            label: "s0 perfect s1 imperfect → s0 wins",
+            label: "s0 perfect s1 imperfect -> s0 wins",
             s0: vec![r(b"R1", "10M", "10")],
             s1: vec![r(b"R1", "10M", "5A4")],
             out0:1, out1:0, disc0:0, disc1:1, ambig0:0, ambig1:0,
         },
         TwoStreamCase {
-            label: "both perfect → ambiguous",
+            label: "both perfect -> ambiguous",
             s0: vec![r(b"R1", "10M", "10")], s1: vec![r(b"R1", "10M", "10")],
             out0:0, out1:0, disc0:0, disc1:0, ambig0:1, ambig1:1,
         },
         TwoStreamCase {
-            label: "s1 perfect s0 softclip → s1 wins",
+            label: "s1 perfect s0 softclip -> s1 wins",
             s0: vec![r(b"R1", "5S5M", "5")],
             s1: vec![r(b"R1", "10M",  "10")],
             out0:0, out1:1, disc0:1, disc1:0, ambig0:0, ambig1:0,
         },
         // -- Tier 2.5: match-count domination -----------------------------
         TwoStreamCase {
-            label: "s0 more matches in CIGAR/MD → s0 wins via Tier2.5",
+            label: "s0 more matches in CIGAR/MD -> s0 wins via Tier2.5",
             // s0: 8 matches, s1: 6 matches (both imperfect so Tier2 doesn't resolve)
             s0: vec![r(b"R1", "10M", "8AA")],
             s1: vec![r(b"R1", "10M", "6AAAA")],
@@ -119,8 +119,8 @@ fn two_stream_tournament() {
         },
         // -- Tier 3: NW scoring breaks tie --------------------------------
         TwoStreamCase {
-            label: "equal match count, NW score from quality breaks tie — not testable with MockStream quality=30 constant",
-            // With all q=30 and flat MD, both identical CIGARs → ambiguous
+            label: "equal match count, NW score from quality breaks tie -- not testable with MockStream quality=30 constant",
+            // With all q=30 and flat MD, both identical CIGARs -> ambiguous
             s0: vec![r(b"R1", "8M2S", "8")],
             s1: vec![r(b"R1", "8M2S", "8")],
             out0:0, out1:0, disc0:0, disc1:0, ambig0:1, ambig1:1,
@@ -150,7 +150,7 @@ fn three_stream_tournament() {
     }
     let cases = &[
         Row {
-            label: "s0 perfect others imperfect → s0 wins",
+            label: "s0 perfect others imperfect -> s0 wins",
             s: [
                 vec![r(b"R1", "10M", "10")],
                 vec![r(b"R1", "10M", "5A4")],
@@ -161,7 +161,7 @@ fn three_stream_tournament() {
             ambig: [0, 0, 0],
         },
         Row {
-            label: "all three perfect → all ambiguous",
+            label: "all three perfect -> all ambiguous",
             s: [
                 vec![r(b"R1", "10M", "10")],
                 vec![r(b"R1", "10M", "10")],
@@ -172,7 +172,7 @@ fn three_stream_tournament() {
             ambig: [1, 1, 1],
         },
         Row {
-            label: "s2 has most matches → s2 wins via Tier 2.5",
+            label: "s2 has most matches -> s2 wins via Tier 2.5",
             s: [
                 vec![r(b"R1", "10M", "6AAAA")], // 6 matches
                 vec![r(b"R1", "10M", "8AA")],   // 8 matches
@@ -183,7 +183,7 @@ fn three_stream_tournament() {
             ambig: [0, 0, 0],
         },
         Row {
-            label: "s0 unmapped, s1/s2 mapped, s1 perfect → s1 wins",
+            label: "s0 unmapped, s1/s2 mapped, s1 perfect -> s1 wins",
             s: [
                 vec![u(b"R1")],
                 vec![r(b"R1", "10M", "10")],
@@ -214,7 +214,7 @@ fn three_stream_tournament() {
 }
 
 // ---------------------------------------------------------------------------
-// Chimeric detection — mate-split and read-split
+// Chimeric detection -- mate-split and read-split
 // ---------------------------------------------------------------------------
 
 /// Build a paired-end record: flags encode first/last segment.
@@ -224,7 +224,7 @@ fn pe(name: &[u8], cigar: &str, md: &str, flags_bits: u16) -> RecordBuf {
 
 #[test]
 fn chimeric_mate_split() {
-    // read1 → stream 0 (human), read2 → stream 1 (HPV)
+    // read1 -> stream 0 (human), read2 -> stream 1 (HPV)
     // flags: 0x41 = read1+paired, 0x81 = read2+paired
     let s0 = vec![pe(b"R1", "10M", "10", 0x41)]; // read1 in human
     let s1 = vec![pe(b"R1", "10M", "10", 0x81)]; // read2 in HPV
@@ -242,9 +242,9 @@ fn chimeric_mate_split() {
 
 #[test]
 fn chimeric_read_split_complementary_clips() {
-    // read1: human maps [0,25), HPV maps [25,50) — complementary 25S25M / 25M25S
+    // read1: human maps [0,25), HPV maps [25,50) -- complementary 25S25M / 25M25S
     // read2: entirely in HPV (0x81)
-    // Both streams' read1 primary — segment IDs *not* disjoint (both claim read1),
+    // Both streams' read1 primary -- segment IDs *not* disjoint (both claim read1),
     // so mate-split detection doesn't fire. Read-split detection must fire.
 
     use noodles::core::Position;
@@ -297,7 +297,7 @@ fn chimeric_false_positive_rejected_when_supp_better() {
     *r1_a_supp.alignment_start_mut() = Some(Position::new(100).unwrap());
     *r1_a_supp.reference_sequence_id_mut() = Some(0);
 
-    // Stream B primary for same read: 25S25M, but MD has mismatches → worse than A's supp
+    // Stream B primary for same read: 25S25M, but MD has mismatches -> worse than A's supp
     let mut r1_b = create_record(b"R1", "25S25M", &[b'A'; 50], &q, "15AAAAAAAAAA", false).unwrap();
     *r1_b.flags_mut() = Flags::from_bits(0x41).unwrap();
     *r1_b.alignment_start_mut() = Some(Position::new(1).unwrap());
@@ -319,8 +319,8 @@ fn chimeric_false_positive_rejected_when_supp_better() {
 
 #[test]
 fn chimeric_three_stream_pair_01_mouse_competes_normally() {
-    // human=0, hpv=1, mouse=2 — chimeric pair [0,1]
-    // Fragment: read1→human, read2→hpv — chimeric event on [0,1]
+    // human=0, hpv=1, mouse=2 -- chimeric pair [0,1]
+    // Fragment: read1->human, read2->hpv -- chimeric event on [0,1]
     // mouse records should be discarded normally
     let r1_human = pe(b"R1", "10M", "10", 0x41);
     let r2_hpv = pe(b"R1", "10M", "10", 0x81);
@@ -583,7 +583,7 @@ fn test_observed_pe_scoring1() -> Result<(), Error> {
 
 #[cfg(test)]
 impl LineByLine<RecordBuf> {
-    /// Only for tests — lets us assert the converted log threshold.
+    /// Only for tests -- lets us assert the converted log threshold.
     fn test_ambiguous_log_threshold(&self) -> f64 {
         self.ambiguous_log_threshold
     }
@@ -600,11 +600,11 @@ fn test_ambiguous_log_threshold_conversion() -> Result<(), Error> {
     let aln_clone2 = setup_mock_streams(); // any valid stream works for new()
     let aln_clone3 = setup_mock_streams(); // any valid stream works for new()
 
-    // threshold = 0 → exactly 0.0 (or EPSILON if you changed it)
+    // threshold = 0 -> exactly 0.0 (or EPSILON if you changed it)
     let lbl: LineByLine<RecordBuf> = LineByLine::new(&config, aln_clone1, vec![], vec![])?;
     assert_eq!(lbl.test_ambiguous_log_threshold(), 0.0);
 
-    // standard phred values → correct natural-log ratio
+    // standard phred values -> correct natural-log ratio
     config.scoring.ambiguous_threshold = 10;
     let lbl: LineByLine<RecordBuf> = LineByLine::new(&config, aln_clone2, vec![], vec![])?;
     let ln_10 = std::f64::consts::LN_10;

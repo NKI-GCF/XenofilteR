@@ -17,7 +17,7 @@ use smallvec::{smallvec, SmallVec};
 // ---------------------------------------------------------------------------
 
 /// Setup penalties: match=0, mismatch=-1, gap_open=-2, gap_extend=-0.5.
-/// Quality-independent — use for unit-testing score logic without Q noise.
+/// Quality-independent -- use for unit-testing score logic without Q noise.
 pub(crate) fn setup_penalties() -> Penalty {
     let c = ScoringArgs::default();
     let mut p = c.to_penalty();
@@ -28,7 +28,7 @@ pub(crate) fn setup_penalties() -> Penalty {
     p
 }
 
-/// Real penalties: matches near 0, mismatch = -(q/10) × scaling.
+/// Real penalties: matches near 0, mismatch = -(q/10) * scaling.
 /// Use for quality-edge-case tests.
 fn real_penalties() -> Penalty {
     ScoringArgs {
@@ -55,7 +55,7 @@ fn score_one(cigar: &str, md: &str, qual: &[u8], pen: &Penalty) -> f64 {
 }
 
 // ---------------------------------------------------------------------------
-// NW scoring — table-driven
+// NW scoring -- table-driven
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -65,9 +65,9 @@ fn scoring_table() {
     //   All match: 0.0
     //   1 mismatch in 10M: -1.0
     //   2 mismatch in 10M: -2.0
-    //   5S5M (5 clips): 5×(-1) + 5×0 = -5.0
-    //   5M1D5M: 10×0 + gap_open + 1×gap_extend = -2.5
-    //   5M2I5M: 10×0 + gap_open + 2×gap_extend = -3.0
+    //   5S5M (5 clips): 5*(-1) + 5*0 = -5.0
+    //   5M1D5M: 10*0 + gap_open + 1*gap_extend = -2.5
+    //   5M2I5M: 10*0 + gap_open + 2*gap_extend = -3.0
     struct Row {
         cigar: &'static str,
         md: &'static str,
@@ -88,7 +88,7 @@ fn scoring_table() {
         Row::new("5S5M", "5", -5.0),
         Row::new("5M1D5M", "5^A5", -2.5),
         Row::new("5M2I3M", "10", -3.0),
-        Row::new("5M1D2I2M", "5^A5", -5.5), // gap_open×2 + 1×ext + 2×ext = -2-0.5-2-1 = -5.5
+        Row::new("5M1D2I2M", "5^A5", -5.5), // gap_open*2 + 1*ext + 2*ext = -2-0.5-2-1 = -5.5
     ];
 
     crate::tests::common::run_collecting(
@@ -106,14 +106,14 @@ fn scoring_table() {
 }
 
 /// A single base mismatch at quality 5 should cost -0.5 with real penalties
-/// (mismatch = -(q/10) × 1.0).  If stream A has mismatch at q=5 and stream B
+/// (mismatch = -(q/10) * 1.0).  If stream A has mismatch at q=5 and stream B
 /// at q=30, stream A pays less penalty and wins, even though both have the same
 /// CIGAR/MD profile.  This is the intended quality-weighted behaviour.
 #[test]
 fn quality_determines_winner_at_equal_cigar_md() {
     let pen = real_penalties();
-    let score_q5 = score_one("5M", "4A0", &[5u8; 5], &pen); // mismatch at q=5  → -0.5
-    let score_q30 = score_one("5M", "4A0", &[30u8; 5], &pen); // mismatch at q=30 → -3.0
+    let score_q5 = score_one("5M", "4A0", &[5u8; 5], &pen); // mismatch at q=5  -> -0.5
+    let score_q30 = score_one("5M", "4A0", &[30u8; 5], &pen); // mismatch at q=30 -> -3.0
     assert!(
         score_q5 > score_q30,
         "lower-quality mismatch should score higher (less penalised): q5={score_q5} q30={score_q30}"
@@ -121,7 +121,7 @@ fn quality_determines_winner_at_equal_cigar_md() {
 }
 
 // ---------------------------------------------------------------------------
-// Weighted interval scheduling — table-driven
+// Weighted interval scheduling -- table-driven
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy)]
@@ -209,7 +209,7 @@ fn wis_table() {
             }],
             want: 0.0,
         },
-        // [10,11) and [20,21) — non-overlapping → sum
+        // [10,11) and [20,21) -- non-overlapping -> sum
         Row {
             label: "two non-overlapping",
             variants: &[
@@ -228,7 +228,7 @@ fn wis_table() {
             ],
             want: 5.0,
         },
-        // [10,20) and [15,25) — overlapping; pick the larger
+        // [10,20) and [15,25) -- overlapping; pick the larger
         Row {
             label: "two overlapping pick best",
             variants: &[
@@ -247,7 +247,7 @@ fn wis_table() {
             ],
             want: 8.0,
         },
-        // [10,20) and [15,17) and [40,41) — inner + disjoint
+        // [10,20) and [15,17) and [40,41) -- inner + disjoint
         // Best chain: inner(20.0) + disjoint(3.0) = 23.0 vs outer(5.0) + disjoint(3.0)
         Row {
             label: "nested variants best chain",
@@ -273,7 +273,7 @@ fn wis_table() {
             ],
             want: 23.0,
         },
-        // Touching but non-overlapping: [10,20) [20,30) → both count
+        // Touching but non-overlapping: [10,20) [20,30) -> both count
         Row {
             label: "touching boundaries non-overlapping",
             variants: &[
@@ -333,10 +333,10 @@ fn wis_table() {
 
 #[test]
 fn variant_rescue_p_variant_table() {
-    // delta = alt_score - incurred = (p×lm + (1-p)×lmm) - ((1-p)×lm + p×lmm)
-    //       = (2p-1)×(lm-lmm)
-    // With flat penalties (lm=0, lmm=-1): delta = (2p-1)×1 = 2p-1
-    // p < 0.5 → negative → no rescue; p=0.5 → 0; p > 0.5 → positive.
+    // delta = alt_score - incurred = (p*lm + (1-p)*lmm) - ((1-p)*lm + p*lmm)
+    //       = (2p-1)*(lm-lmm)
+    // With flat penalties (lm=0, lmm=-1): delta = (2p-1)*1 = 2p-1
+    // p < 0.5 -> negative -> no rescue; p=0.5 -> 0; p > 0.5 -> positive.
     struct Row {
         label: &'static str,
         p: f64,

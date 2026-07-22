@@ -186,7 +186,7 @@ pub enum Error {
     #[error("--chimeric-pairs: expected format 'A:B' (e.g. '0:1'), got '{raw}'")]
     InvalidChimericPairFormat { raw: String },
 
-    #[error("--chimeric-pairs: '{raw}' — stream index must differ")]
+    #[error("--chimeric-pairs: '{raw}' -- stream index must differ")]
     ChimericPairSameIndex { raw: String },
 
     #[error("--chimeric-pairs: index out of range for {streams} streams, got '{raw}'")]

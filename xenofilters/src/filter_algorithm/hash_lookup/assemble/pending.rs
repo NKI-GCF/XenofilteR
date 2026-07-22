@@ -5,7 +5,7 @@ use super::stream::{StreamAccumulator, StreamKind, RecordKind};
 use crate::Error;
 
 // ---------------------------------------------------------------------------
-// PendingFragment — unchanged structurally; type updated to RecordKind
+// PendingFragment -- unchanged structurally; type updated to RecordKind
 // ---------------------------------------------------------------------------
 
 pub struct PendingFragment {

@@ -33,7 +33,7 @@ impl TabixScored {
     /// NEEDS FOLLOW-UP: currently returns overlap existence + a constant score;
     /// full per-record score/strand parsing from tabix chunks requires reading
     /// the matched byte ranges, not just checking chunk non-emptiness.
-    /// Tracked in ROADMAP — this unblocks compilation with correct semantics
+    /// Tracked in ROADMAP -- this unblocks compilation with correct semantics
     /// for the constant/linear default case only.
     pub(crate) fn overlapping_bonus(
         &self,

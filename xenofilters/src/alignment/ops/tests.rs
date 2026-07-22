@@ -165,7 +165,7 @@ fn table_driven_ops_tests_collect_misses() {
 
 #[test]
 fn bisulfite_forward_conversion_table() {
-    // Forward strand: ref=C, read=T → BisulfiteConversion; other combos → Mis
+    // Forward strand: ref=C, read=T -> BisulfiteConversion; other combos -> Mis
     struct Row {
         ref_b: u8,
         read_b: u8,
@@ -233,7 +233,7 @@ fn error_model_quality_calibration() {
     use crate::penalty::{ErrorModel, Penalty};
     let ill = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina);
     let ont = Penalty::build(2.0, 0.3, 2.0, 20, ErrorModel::Ont);
-    // At Q30, ONT should trust the quality less → higher (less negative) log_lik_mismatch
+    // At Q30, ONT should trust the quality less -> higher (less negative) log_lik_mismatch
     // i.e. the mismatch is less penalised for ONT at the same reported Q.
     assert!(
         ont.log_likelihood_mismatch[30] > ill.log_likelihood_mismatch[30],

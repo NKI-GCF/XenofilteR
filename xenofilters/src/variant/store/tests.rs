@@ -83,7 +83,7 @@ fn test_overlap_multi_variant_binary_search_selects_correct_one() {
 fn insert_preserves_stable_order_for_equal_positions() {
     let mut store = Store::<FakeVariant>::new();
     store.insert(1, fv(100, 1));
-    store.insert(1, fv(100, 2)); // same pos, different ref_len — must land after
+    store.insert(1, fv(100, 2)); // same pos, different ref_len -- must land after
     store.insert(1, fv(100, 3));
     let bucket = &store.inner.per_ref()[1];
     let lens: Vec<usize> = bucket.iter().map(|v| v.ref_allele().len()).collect();
@@ -99,7 +99,7 @@ fn dedup_only_merges_byte_identical_adjacent_entries() {
     let mut store = Store::<FakeVariant>::new();
     store.insert(1, fv(100, 1));
     store.insert(1, fv(100, 1)); // exact duplicate
-    store.insert(1, fv(100, 2)); // different ref_len — must survive
+    store.insert(1, fv(100, 2)); // different ref_len -- must survive
     store.dedup();
     assert_eq!(store.inner.per_ref()[1].len(), 2);
 }

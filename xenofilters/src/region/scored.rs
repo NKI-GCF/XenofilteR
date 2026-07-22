@@ -37,13 +37,13 @@ impl Strand {
 /// Variants are intentionally simple; add via PR after empirical evaluation.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ScoreFn {
-    /// `bed_score / 1000 × weight`  — linear scale (default weight = 1.0)
+    /// `bed_score / 1000 * weight`  -- linear scale (default weight = 1.0)
     Linear(f64),
-    /// `ln(bed_score + 1) / ln(1001) × weight`
+    /// `ln(bed_score + 1) / ln(1001) * weight`
     Log(f64),
     /// Constant `weight` regardless of bed_score
     Constant(f64),
-    /// `(overlap_bases / region_len) × (bed_score / 1000) × weight`
+    /// `(overlap_bases / region_len) * (bed_score / 1000) * weight`
     OverlapFraction(f64),
 }
 

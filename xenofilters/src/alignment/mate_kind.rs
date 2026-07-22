@@ -13,7 +13,7 @@ pub(crate) enum MateKind {
     /// Mate unmapped: contributes 0 to NW scoring in this stream.
     Unmapped,
     /// Mate is a perfect match (no SA, single CIGAR op, all-digit MD):
-    /// contributes `Σ log_lik_match[q_i]`, identical across streams because
+    /// contributes `Sigma log_lik_match[q_i]`, identical across streams because
     /// the quality string is the same physical read regardless of reference.
     Perfect,
     /// Mapped but imperfect, malformed, or disqualified by an overlapping
@@ -45,7 +45,7 @@ pub(crate) fn mate_slot(seg_id: u8) -> usize {
 ///
 /// - **HashLookup / Collated** (2 streams): a mate cancels when both
 ///   streams agree (`Unmapped`/`Unmapped` or `Perfect`/`Perfect`).
-/// - **LineByLine** (N ≤ `MAX_STREAMS` streams): a mate cancels only when
+/// - **LineByLine** (N <= `MAX_STREAMS` streams): a mate cancels only when
 ///   *every* stream still competing agrees on the same non-`Other` kind.
 pub(crate) trait MateClassifiable {
     /// Index 0 = forward/single-end mate, index 1 = reverse mate.

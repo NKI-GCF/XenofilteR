@@ -4,7 +4,7 @@ pub(crate) mod mate_kind;
 mod md_cig_flags;
 pub(crate) mod ops;
 pub mod pre_assess;
-mod read_profile; // private — used only by pre_assess
+mod read_profile; // private -- used only by pre_assess
 mod variant_window;
 
 pub(crate) use fragment::{Fragment, SimpleRec};

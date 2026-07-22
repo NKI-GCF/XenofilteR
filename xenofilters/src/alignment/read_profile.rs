@@ -1,6 +1,6 @@
 //! Read-coordinate-space profile for alignment comparison.
 //!
-//! Every physical read position `i ∈ [0, L)` is a shared index between the
+//! Every physical read position `i  in  [0, L)` is a shared index between the
 //! two BAM streams: the same base was sequenced once and aligned to two
 //! different references. This module builds per-read-base operation vectors
 //! from the existing `MdCigFlags` abstraction and compares them to determine
@@ -9,7 +9,7 @@
 //!
 //! # Deletions
 //! Deletions consume reference bases but zero read positions. Their gap
-//! penalty is quality-independent (`gap_open + len × gap_extend`), so they
+//! penalty is quality-independent (`gap_open + len * gap_extend`), so they
 //! are accumulated as counts and compared separately from per-base ops.
 //!
 //! # Insertions
@@ -26,7 +26,7 @@ use crate::alignment::{BaseOp, MdCigFlags, ScoreOpIter};
 use smallvec::SmallVec;
 use std::cmp::Ordering;
 
-/// Operation at a single read position in 5′→3′ read space.
+/// Operation at a single read position in 5'->3' read space.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ReadOp {
     Match,
@@ -42,7 +42,7 @@ pub(crate) struct ReadProfile {
     pub(crate) ops: SmallVec<[ReadOp; 150]>,
     /// Number of deletion CIGAR events (each costs one `gap_open`).
     pub(crate) del_events: u32,
-    /// Total deleted reference bases (total extra cost: `del_bases × gap_extend`).
+    /// Total deleted reference bases (total extra cost: `del_bases * gap_extend`).
     pub(crate) del_bases: u32,
     /// True when any insertion is present; triggers fall-through in comparison.
     pub(crate) has_insertions: bool,
@@ -148,16 +148,16 @@ impl FragmentProfile {
 /// Outcome of comparing two read-coordinate-space profiles.
 #[derive(Debug)]
 pub(crate) enum ReadSpaceDecision {
-    /// All per-base positions where A ≠ B favour the same stream, and deletion
+    /// All per-base positions where A != B favour the same stream, and deletion
     /// counts are consistent with that direction.  No quality scores needed.
     EarlyDecision(Ordering), // Greater = A wins, Less = B wins, Equal = identical
 
     /// Per-base positions favouring A and B both exist; only these need
     /// quality-weighted scoring.  Deletion delta is pre-computed.
     PartialScoring {
-        /// Positions (read index) where A = Match and B ≠ Match (A is better).
+        /// Positions (read index) where A = Match and B != Match (A is better).
         a_better: SmallVec<[usize; 16]>,
-        /// Positions where B = Match and A ≠ Match (B is better).
+        /// Positions where B = Match and A != Match (B is better).
         b_better: Box<SmallVec<[usize; 16]>>,
         /// Signed counts for quality-independent deletion contribution.
         del: DelCounts,
@@ -210,19 +210,19 @@ fn compare_mate_profiles(a: &ReadProfile, b: &ReadProfile) -> ReadSpaceDecision 
 
     for (i, (&op_a, &op_b)) in a.ops.iter().zip(b.ops.iter()).enumerate() {
         match (op_a, op_b) {
-            // Same effective log-likelihood at this position → delta_i = 0.
+            // Same effective log-likelihood at this position -> delta_i = 0.
             (ReadOp::Match, ReadOp::Match) => {}
             (ReadOp::Mismatch, ReadOp::Mismatch) => {}
             (ReadOp::SoftClip, ReadOp::SoftClip) => {}
-            // Both score log_lik_mismatch[q_i]; same quality index → delta_i = 0.
+            // Both score log_lik_mismatch[q_i]; same quality index -> delta_i = 0.
             (ReadOp::Mismatch, ReadOp::SoftClip) => {}
             (ReadOp::SoftClip, ReadOp::Mismatch) => {}
 
-            // A pays log_lik_match, B pays log_lik_mismatch → delta_i > 0 always.
+            // A pays log_lik_match, B pays log_lik_mismatch -> delta_i > 0 always.
             (ReadOp::Match, ReadOp::Mismatch) => a_better.push(i),
             (ReadOp::Match, ReadOp::SoftClip) => a_better.push(i),
 
-            // B pays log_lik_match, A pays log_lik_mismatch → delta_i < 0 always.
+            // B pays log_lik_match, A pays log_lik_mismatch -> delta_i < 0 always.
             (ReadOp::Mismatch, ReadOp::Match) => b_better.push(i),
             (ReadOp::SoftClip, ReadOp::Match) => b_better.push(i),
 
@@ -477,10 +477,10 @@ mod tests {
 
     #[test]
     fn a_better_on_bases_but_worse_on_deletions_is_partial() {
-        // A wins all per-base positions but has more deletions → cannot early-decide.
+        // A wins all per-base positions but has more deletions -> cannot early-decide.
         let a = profile(&[ReadOp::Match, ReadOp::Match], 2, 5);
         let b = profile(&[ReadOp::Mismatch, ReadOp::Mismatch], 0, 0);
-        // Both b_better is empty, but del disfavours A → PartialScoring.
+        // Both b_better is empty, but del disfavours A -> PartialScoring.
         assert!(matches!(
             compare_mate_profiles(&a, &b),
             ReadSpaceDecision::PartialScoring { .. }

@@ -1,6 +1,6 @@
 //! `src/bam/reader.rs`
 //!
-//! [`BgzfBamReader`] — wraps single-threaded (seekable) and multithreaded
+//! [`BgzfBamReader`] -- wraps single-threaded (seekable) and multithreaded
 //! bgzf BAM readers behind a uniform interface.
 
 use noodles::bam::{io::Reader as BamReader, record::Record};

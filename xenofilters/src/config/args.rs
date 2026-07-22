@@ -67,7 +67,7 @@ pub(crate) struct IoArgs {
     #[arg(short, long, action = clap::ArgAction::Count)]
     pub(crate) verbose: u8,
 
-    // Mutable state set during stream init — not CLI args.
+    // Mutable state set during stream init -- not CLI args.
     #[arg(skip)]
     pub(crate) is_pass2: bool,
     #[arg(skip)]
@@ -133,7 +133,7 @@ pub(crate) struct RelatedArgs {
     pub(crate) positive_regions: Vec<FileSpec>,
 
     /// Score function for --positive-regions BED score column.
-    /// Format: fn[:weight]  fn ∈ {linear, log, constant, overlap_fraction}
+    /// Format: fn[:weight]  fn  in  {linear, log, constant, overlap_fraction}
     #[arg(long, default_value = "linear:1.0", help_heading = "Regions")]
     pub(crate) region_score_fn: ScoreFn,
 
@@ -155,7 +155,7 @@ pub(crate) struct RelatedArgs {
     pub(crate) indel_expand_padding: usize,
 }
 
-/// Parallelism — only meaningful for namesorted (hashlookup/collated force 1).
+/// Parallelism -- only meaningful for namesorted (hashlookup/collated force 1).
 #[derive(Args, Debug, Clone)]
 pub(crate) struct ParallelArgs {
     /// Number of threads to use for alignment scoring. Default: 4.
@@ -179,7 +179,7 @@ pub(crate) struct ParallelArgs {
     pub(crate) score_threads: usize,
 }
 
-/// Chimeric-pair detection — only meaningful for namesorted (paired-end,
+/// Chimeric-pair detection -- only meaningful for namesorted (paired-end,
 /// multi-stream). Shared verbatim between `namesorted` and `viral-integration`.
 #[derive(Args, Debug, Clone, Default)]
 pub(crate) struct ChimericArgs {

@@ -22,7 +22,7 @@ use std::thread;
 /// Everything a scoring worker needs for one fragment.
 /// All data is owned or `Arc`-wrapped; no lifetime entanglement.
 pub(super) struct FragmentBundle {
-    /// Collected alignments, one [`FragmentState`] per stream. Length ≥ 2.
+    /// Collected alignments, one [`FragmentState`] per stream. Length >= 2.
     pub(super) best: FragmentBuffer<RecordBuf>,
     /// Per-stream variant stores.  Each `Arc` is a cheap clone (atomic
     /// increment) of the one held by [`AlnStream`].  `None` for streams with
@@ -73,7 +73,7 @@ impl LineByLine<RecordBuf> {
         config: &RunConfig,
         score_threads: usize,
     ) -> Result<(), Error> {
-        let cap = score_threads * 2; // bounded channel capacity — natural backpressure
+        let cap = score_threads * 2; // bounded channel capacity -- natural backpressure
 
         // -- Collect stores (Arc clones, O(1) each) ------------------------
         let stores: SmallVec<[Option<Arc<dyn StoreTrait>>; 2]> =
@@ -148,7 +148,7 @@ impl LineByLine<RecordBuf> {
                     break;
                 }
                 if best.len() == 1 {
-                    // Single-stream fragment — no scoring needed.
+                    // Single-stream fragment -- no scoring needed.
                     self.write_scored(ScoredFragment {
                         best: best.drain(..).collect(),
                         decision: None,
@@ -181,7 +181,7 @@ impl LineByLine<RecordBuf> {
                             continue;
                         }
                     }
-                    // Clone the Arc per bundle — O(1) per store.
+                    // Clone the Arc per bundle -- O(1) per store.
                     let bundle = FragmentBundle {
                         best: best.drain(..).collect(),
                         stores: stores.iter().cloned().collect(),

@@ -1,6 +1,6 @@
 //! `src/bam/io.rs`
 //!
-//! BAM output helpers — single-threaded and multithreaded writers,
+//! BAM output helpers -- single-threaded and multithreaded writers,
 //! plus the merged-output variant.
 
 use crate::Error;
@@ -38,8 +38,8 @@ fn add_pg_line(header: &mut Header) -> Result<(), Error> {
 
 /// A BAM writer that is either single-threaded or multithreaded.
 ///
-/// `threads == 1` → single-threaded [`bgzf::io::Writer`].
-/// `threads  > 1` → [`bgzf::MultithreadedWriter`] with a crossbeam thread
+/// `threads == 1` -> single-threaded [`bgzf::io::Writer`].
+/// `threads  > 1` -> [`bgzf::MultithreadedWriter`] with a crossbeam thread
 ///                  pool of `threads` compression workers.
 pub(crate) enum BamOutput {
     Single(BamWriter<BgzfSyncWriter<File>>),
@@ -171,7 +171,7 @@ mod tests {
     fn test_path_unicode_ok() {
         assert!(path_unicode_ok("file.bam").is_ok());
         assert!(path_unicode_ok("file with spaces.bam").is_ok());
-        assert!(path_unicode_ok("file_with_üñîçødé.bam").is_ok());
+        assert!(path_unicode_ok("file_with_unicode.bam").is_ok());
     }
 
     #[test]

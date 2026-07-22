@@ -6,11 +6,11 @@ use noodles::sam::alignment::record::cigar::op::{Kind, Op};
 pub(crate) enum BaseOp {
     Match,
     Mis,
-    Del(usize), // still worth grouping — no per-base work
+    Del(usize), // still worth grouping -- no per-base work
     Ins(usize),
     Clip(usize),
     RefSkip(usize),
-    /// C→T on the forward strand or G→A on the reverse strand.
+    /// C->T on the forward strand or G->A on the reverse strand.
     /// Caused by bisulfite conversion of unmethylated cytosines; not a
     /// true substitution error.  Scored with zero penalty (Penalty::log_likelihood_bisulfite).
     BisulfiteConversion,
@@ -24,7 +24,7 @@ pub(crate) struct ScoreOpIter<'a> {
     /// Remaining length in the current CIGAR M-op we haven't emitted yet.
     cig_m_remain: usize,
     // Bisulfite support
-    seq: Option<&'a [u8]>, // read sequence; None → bisulfite detection disabled
+    seq: Option<&'a [u8]>, // read sequence; None -> bisulfite detection disabled
     is_reverse: bool,      // true = reverse-complemented read
     read_pos: usize,       // current position in read sequence
 }
@@ -76,11 +76,11 @@ impl<'a> ScoreOpIter<'a> {
         };
 
         let is_conversion = if !self.is_reverse {
-            // Forward strand: bisulfite converts C → T.
+            // Forward strand: bisulfite converts C -> T.
             ref_base == b'C' && rb == b'T'
         } else {
-            // Reverse strand: bisulfite converts C → T on the original strand,
-            // which appears as G → A in the read-as-sequenced orientation.
+            // Reverse strand: bisulfite converts C -> T on the original strand,
+            // which appears as G -> A in the read-as-sequenced orientation.
             ref_base == b'G' && rb == b'A'
         };
 

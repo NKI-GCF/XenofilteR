@@ -2,17 +2,17 @@
 //!
 //! # Two detection phases
 //!
-//! ## Phase 1 — Mate-split (paired-end only)
+//! ## Phase 1 -- Mate-split (paired-end only)
 //!
 //! Different mates map to different streams with disjoint segment identifiers:
 //!
 //! ```text
 //!   Human stream  : read1 mapped  (0x40)
 //!   HPV stream    : read2 mapped  (0x80)
-//!   → disjoint  →  chimeric
+//!   -> disjoint  ->  chimeric
 //! ```
 //!
-//! ## Phase 2 — Read-split (single-end or paired-end)
+//! ## Phase 2 -- Read-split (single-end or paired-end)
 //!
 //! The **same** mate appears as a primary alignment in **both** streams, but
 //! with complementary soft-clip patterns that together cover the full read:
@@ -20,7 +20,7 @@
 //! ```text
 //!   Human stream  : read1 primary  25M25S   mapped read range [0,  25)
 //!   HPV stream    : read1 primary  25S25M   mapped read range [25, 50)
-//!   → non-overlapping union ≈ full read  →  split-read chimeric
+//!   -> non-overlapping union ~= full read  ->  split-read chimeric
 //! ```
 //!
 //! # False-positive rejection
@@ -29,8 +29,8 @@
 //! on the human reference.  This supplementary is a false positive: HPV sequence
 //! aligns poorly to human and its MD mismatch count will be high.  We compare:
 //!
-//! - `mismatches(stream_A_supplementary)` — HPV bases on human reference
-//! - `mismatches(stream_B_primary)`        — HPV bases on HPV reference
+//! - `mismatches(stream_A_supplementary)` -- HPV bases on human reference
+//! - `mismatches(stream_B_primary)`        -- HPV bases on HPV reference
 //!
 //! If the supplementary is *better* (fewer mismatches) than stream B's primary,
 //! the split is likely a repetitive-sequence artefact and we do not call chimeric.
@@ -41,16 +41,16 @@
 //!
 //! ```text
 //! Fragment with HPV-integration breakpoint:
-//!   read1 — 5′ 25 bp → human primary  +  HPV supplementary (false positive)
-//!         — 3′ 25 bp → HPV primary    (after read-split detection)
-//!   read2 — entirely → HPV primary
+//!   read1 -- 5' 25 bp -> human primary  +  HPV supplementary (false positive)
+//!         -- 3' 25 bp -> HPV primary    (after read-split detection)
+//!   read2 -- entirely -> HPV primary
 //!
 //! Outcome:
 //!   human output  : read1 primary  tagged XC:Z:hpv
 //!                   read1 supp     tagged XC:Z:hpv  (false positive; flag 0x800)
 //!   hpv output    : read1 primary  tagged XC:Z:human
 //!                   read2 primary  tagged XC:Z:human
-//!   mouse output  : all records    → discarded output (normal tournament)
+//!   mouse output  : all records    -> discarded output (normal tournament)
 //! ```
 
 use super::core::{LineByLine, COUNTER_STRIDE};
@@ -109,7 +109,7 @@ pub(crate) fn detect_chimeric_mate_complement<R: SimpleRec>(
         let mk_a = flag_mate_map(sa);
         let mk_b = flag_mate_map(sb);
 
-        // Complement: [unmapped, mapped] ↔ [mapped, unmapped]
+        // Complement: [unmapped, mapped] <-> [mapped, unmapped]
         let complement = |x: [Option<bool>; 2], y: [Option<bool>; 2]| {
             x == [Some(false), Some(true)] && y == [Some(true), Some(false)]
         };
@@ -227,9 +227,9 @@ fn mapped_read_range<R: SimpleRec>(rec: &R) -> (usize, usize) {
 /// together cover most of `read_len` bases.
 ///
 /// Thresholds:
-/// - Each arm must contribute ≥ 15 aligned bases.
+/// - Each arm must contribute >= 15 aligned bases.
 /// - Overlap < 20 % of `read_len` (tolerance for aligner boundary fuzz).
-/// - Union ≥ 80 % of `read_len` (together they explain the full read).
+/// - Union >= 80 % of `read_len` (together they explain the full read).
 fn is_complementary(range_a: (usize, usize), range_b: (usize, usize), read_len: usize) -> bool {
     let (a0, a1) = range_a;
     let (b0, b1) = range_b;
@@ -248,7 +248,7 @@ fn is_complementary(range_a: (usize, usize), range_b: (usize, usize), read_len: 
     // Union of mapped ranges.
     let union = a1.max(b1) - a0.min(b0);
 
-    // overlap < 20 % of read_len  AND  union ≥ 80 % of read_len
+    // overlap < 20 % of read_len  AND  union >= 80 % of read_len
     overlap * 5 < read_len && union * 10 >= read_len * 8
 }
 
@@ -268,12 +268,12 @@ fn md_mismatches_from_record<R: SimpleRec>(rec: &R) -> usize {
         .and_then(|v| v.ok())
     {
         Some(Value::String(s)) => crate::alignment::pre_assess::md_mismatches(s.as_ref()),
-        _ => usize::MAX, // MD absent → treat as maximally mismatched
+        _ => usize::MAX, // MD absent -> treat as maximally mismatched
     }
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2 — read-split detection
+// Phase 2 -- read-split detection
 // ---------------------------------------------------------------------------
 
 /// Attempt to detect a read-split chimeric event between `state_a` and `state_b`.
@@ -283,7 +283,7 @@ fn md_mismatches_from_record<R: SimpleRec>(rec: &R) -> usize {
 /// 1. Both streams have a **primary** alignment for that mate.
 /// 2. The two primaries' aligned read-position ranges are **complementary**.
 /// 3. If stream A has a **supplementary** alignment for the same mate,
-///    its mismatch count must be ≥ stream B's primary mismatch count
+///    its mismatch count must be >= stream B's primary mismatch count
 ///    (otherwise stream A's supplementary is a better explanation for
 ///    the complementary region and the split is likely a false positive).
 ///
@@ -350,7 +350,7 @@ fn detect_split_read<R: SimpleRec>(
 
             if mis_supp < mis_b {
                 // Stream A's supplementary alignment of the complementary region
-                // is better than stream B's primary → false positive; skip.
+                // is better than stream B's primary -> false positive; skip.
                 tracing::debug!(
                     seg_id,
                     mismatches_supp_a = mis_supp,
@@ -361,7 +361,7 @@ fn detect_split_read<R: SimpleRec>(
                 continue;
             }
         }
-        // No supplementary, or supplementary is worse → read-split confirmed.
+        // No supplementary, or supplementary is worse -> read-split confirmed.
         return Some(seg_id);
     }
     None

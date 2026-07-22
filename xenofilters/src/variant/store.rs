@@ -52,7 +52,7 @@ impl<V: Variant> Store<V> {
     ///
     /// `ref_id` is the 0-based chromosome index from the reference header.
     /// Uses `partition_point` (binary search) to find the insertion index;
-    /// O(log n + n) per call — acceptable at startup, never called on the
+    /// O(log n + n) per call -- acceptable at startup, never called on the
     /// hot path.
     pub(crate) fn insert(&mut self, ref_id: usize, v: V) { self.inner.insert(ref_id, v); }
 

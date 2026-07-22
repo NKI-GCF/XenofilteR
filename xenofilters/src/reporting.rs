@@ -1,4 +1,4 @@
-// src/reporting.rs — new shared module, no longer on Config
+// src/reporting.rs -- new shared module, no longer on Config
 use crate::filter_algorithm::line_by_line::COUNTER_STRIDE;
 use crate::Error;
 use std::path::Path;

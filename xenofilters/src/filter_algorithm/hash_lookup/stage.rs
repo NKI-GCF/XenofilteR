@@ -14,7 +14,7 @@ use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::SmallVec;
 use std::collections::BTreeMap;
 
-// CONCURRENCY STUB — HashLookup pass-2 seek-IO thread
+// CONCURRENCY STUB -- HashLookup pass-2 seek-IO thread
 //
 // In `emit_scored`, each `fetch_by_virtual_offset` call serialises on disk
 // seeks.  To overlap seeks with scoring work, offload to a dedicated thread:
@@ -31,7 +31,7 @@ use std::collections::BTreeMap;
 // Writers stay on the IO thread (no Mutex); the seek thread owns BAM handles.
 // Bounded work-channel capacity provides back-pressure.
 //
-// N-STREAM NOTE: `FragmentTable` memory scales as O(in-flight × streams).
+// N-STREAM NOTE: `FragmentTable` memory scales as O(in-flight * streams).
 // Beyond 2 streams the table can exhaust RAM; profile before enabling.
 pub(crate) struct StagedOutput {
     next_emit: u64,
@@ -179,7 +179,7 @@ mod ordering_tests {
 
     fn names(aln: &SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>) -> Vec<String> {
         // Downcast not available; instead re-derive via a second accessor path.
-        // Simplify by asserting count only if downcasting is impractical —
+        // Simplify by asserting count only if downcasting is impractical --
         // see note below on refactor to expose written() through the trait
         // or via a concrete type in tests.
         unimplemented!()
@@ -190,7 +190,7 @@ mod ordering_tests {
     // downcasting or restructuring the test to hold the MockStream directly
     // and pass `&mut vec of trait objects` referencing it via Rc<RefCell<..>>
     // OR (simpler) give MockStream an `Rc<RefCell<Vec<_>>>` sink.
-    // See refactor suggestion below — the concrete recommended pattern:
+    // See refactor suggestion below -- the concrete recommended pattern:
 
     #[test]
     fn flush_holds_back_until_gap_is_filled_flush_all_does_not() {

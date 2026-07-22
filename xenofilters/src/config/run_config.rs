@@ -19,7 +19,7 @@ use std::ops::RangeInclusive;
 
 /// Single flat struct consumed by all three engines. No Args-struct
 /// indirection survives past `into_run_config()`. This is what
-/// `LineByLine::new`, `HashLookup::new`, `CollatedMatcher::new` accept —
+/// `LineByLine::new`, `HashLookup::new`, `CollatedMatcher::new` accept --
 /// identical to before subcommands were introduced.
 #[derive(Debug, Default)]
 pub(crate) struct RunConfig {
@@ -80,7 +80,7 @@ impl RunConfig {
 
         // MultithreadedReader parallelises bgzf block decompression.
         // Requires threads > 1 AND a non-seeking backend (namesorted / collated).
-        // HashLookup pass-2 uses seek_vpos → must use Single.
+        // HashLookup pass-2 uses seek_vpos -> must use Single.
         let threads = NonZeroUsize::new(bgzf_threads).unwrap_or(NonZeroUsize::MIN);
         let score_fn = self.variants.region_score_fn;
 
