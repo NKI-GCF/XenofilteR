@@ -1,5 +1,8 @@
 
 
+# remove non-ascii characters under the src directory:
+python scripts/ascii_converter.py src
+
 cargo check --message-format short 2>&1 | grep error | python scripts/cargo_check_short_parser.py | tee /dev/stderr | xclip -selection clipboard
 
 python scripts/find_conflicts.py --comments |  xclip -selection clipboard
