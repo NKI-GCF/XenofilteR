@@ -73,46 +73,22 @@ fn scoring_table() {
         md: &'static str,
         want: f64,
     }
+    impl Row {
+        fn new(cigar: &'static str, md: &'static str, want: f64) -> Self {
+            Row { cigar, md, want }
+        }
+    }
 
     let q30 = vec![30u8; 15]; // generous budget
     let flat = setup_penalties();
     let cases: &[Row] = &[
-        Row {
-            cigar: "10M",
-            md: "10",
-            want: 0.0,
-        },
-        Row {
-            cigar: "10M",
-            md: "9A0",
-            want: -1.0,
-        },
-        Row {
-            cigar: "10M",
-            md: "4A4A0",
-            want: -2.0,
-        },
-        Row {
-            cigar: "5S5M",
-            md: "5",
-            want: -5.0,
-        },
-        Row {
-            cigar: "5M1D5M",
-            md: "5^A5",
-            want: -2.5,
-        },
-        Row {
-            cigar: "5M2I3M",
-            md: "10",
-            want: -3.0,
-        },
-        Row {
-            cigar: "5M1D2I2M",
-            md: "5^A5",
-            want: -5.5,
-        }, // gap_open×2 + 1×ext + 2×ext = -2-0.5-2-1 = -5.5
-        },
+        Row::new("10M", "10", 0.0),
+        Row::new("10M", "9A0", -1.0),
+        Row::new("10M", "4A4A0", -2.0),
+        Row::new("5S5M", "5", -5.0),
+        Row::new("5M1D5M", "5^A5", -2.5),
+        Row::new("5M2I3M", "10", -3.0),
+        Row::new("5M1D2I2M", "5^A5", -5.5), // gap_open×2 + 1×ext + 2×ext = -2-0.5-2-1 = -5.5
     ];
 
     crate::tests::common::run_collecting(
@@ -195,6 +171,7 @@ fn wis_table() {
         variants: &'static [V],
         want: f64,
     }
+
     // Interval [pos, pos + max(ref_len, alt_len))
     let cases: &[Row] = &[
         Row {
