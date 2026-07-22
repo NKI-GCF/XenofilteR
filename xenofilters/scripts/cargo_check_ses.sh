@@ -5,8 +5,8 @@ cargo check --message-format short 2>&1 | grep error | python scripts/cargo_chec
 python scripts/find_conflicts.py --comments |  xclip -selection clipboard
 
 git ls-files | grep -E '(\.rs|\.toml)' | ctags --fields=+n -L /dev/stdin
-
-ctags --excmd=nr -R src
+#git ls-files | grep -Ev '(\.(md|txt|sh)$|^todo/)' | ctags -L /dev/stdin  --fields=+n
+#ctags --excmd=nr -R src
 
 cat tags | python ctags_parser.py --skip-tests /dev/stdin |  xclip -selection clipboard
 
@@ -21,8 +21,7 @@ git diff master | python filter_diff.py --matches /tmp/check_matches.txt
 
 python ctags_parser.py tags | grep -f <((echo [./];cargo check --message-format short 2>&1 | sed -n -r 's/^.*`&*([^`]+)`.*$/ \1$/; /[<>:]/!p' | sort | uniq)) | xclip -selection clipboard
 
-
-git ls-files | grep -Ev '(\.(md|txt|sh)$|^todo/)' | ctags -L /dev/stdin  --fields=+n
+cargo dupes -s --min-nodes 50 | python scripts/parse_fdupes_output.py --code --compact --prompt --no-comments | xclip -selection clipboard
 
 python scripts/cargo_parser.py > /tmp/check_matches.txt
 
@@ -34,8 +33,6 @@ cargo check --message-format short 2>&1| grep error | xclip -selection clipboard
 
 
 cargo check --message-format short 2>&1| grep error | python scripts/cargo_check_short_parser.py | xclip -selection clipboard
-
-ctags --excmd=nr -R src
 
 cat tags | python ctags_parser.py --skip-tests /dev/stdin |  xclip -selection clipboard
 
