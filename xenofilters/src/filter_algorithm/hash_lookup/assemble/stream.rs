@@ -1,8 +1,8 @@
 use crate::alignment::{mate_slot, segment_id, MateKind};
 use crate::region::tabix_query::{TabixBed, TabixVcf};
+use crate::Error;
 use noodles::sam::alignment::record::Flags;
 use smallvec::SmallVec;
-use crate::Error;
 
 // ---------------------------------------------------------------------------
 // MappedRecord — full data, only ever built for mapped (primary or
@@ -137,8 +137,14 @@ impl StreamAccumulator {
             match r {
                 RecordKind::Mapped(m) => {
                     if !m.is_perfect()
-                        || bed.map(|b| b.overlaps(m.ref_id, m.pos, m.pos + m.ref_len)).transpose()? != Some(true)
-                        || vcf.map(|v| v.overlaps(m.ref_id, m.pos, m.pos + m.ref_len)).transpose()? != Some(true)
+                        || bed
+                            .map(|b| b.overlaps(m.ref_id, m.pos, m.pos + m.ref_len))
+                            .transpose()?
+                            != Some(true)
+                        || vcf
+                            .map(|v| v.overlaps(m.ref_id, m.pos, m.pos + m.ref_len))
+                            .transpose()?
+                            != Some(true)
                     {
                         all_perfect = false;
                         break;
@@ -168,8 +174,14 @@ impl StreamAccumulator {
                 }
                 RecordKind::Mapped(m) => {
                     let perfect_here = m.is_perfect()
-                        && bed.map(|b| b.overlaps(m.ref_id, m.pos, m.pos + m.ref_len)).transpose()? != Some(true)
-                        && vcf.map(|v| v.overlaps(m.ref_id, m.pos, m.pos + m.ref_len)).transpose()? != Some(true);
+                        && bed
+                            .map(|b| b.overlaps(m.ref_id, m.pos, m.pos + m.ref_len))
+                            .transpose()?
+                            != Some(true)
+                        && vcf
+                            .map(|v| v.overlaps(m.ref_id, m.pos, m.pos + m.ref_len))
+                            .transpose()?
+                            != Some(true);
                     (
                         segment_id(&m.flags),
                         if perfect_here {
@@ -239,5 +251,73 @@ impl StreamKind {
             }
             StreamKind::Empty => SmallVec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod is_perfect_tests {
+    use super::*;
+    use noodles::sam::alignment::record::Flags;
+
+    fn encode_op(len: u32, code: u32) -> [u8; 4] {
+        ((len << 4) | code).to_le_bytes()
+    }
+
+    fn base(cigar_bytes: Vec<u8>, md: &[u8], supp_count: usize) -> MappedRecord {
+        MappedRecord {
+            flags: Flags::empty(),
+            ref_id: 0,
+            pos: 1,
+            ref_len: 10,
+            cigar_bytes,
+            md: md.to_vec(),
+            qualities: vec![30; 10],
+            virtual_offset: 0,
+            supp_count,
+        }
+    }
+
+    #[test]
+    fn single_match_op_clean_md_is_perfect() {
+        let m = base(encode_op(10, 0 /* Match */).to_vec(), b"10", 0);
+        assert!(m.is_perfect());
+    }
+
+    #[test]
+    fn pending_supplementary_forces_imperfect() {
+        let m = base(encode_op(10, 0).to_vec(), b"10", 1);
+        assert!(
+            !m.is_perfect(),
+            "supp_count > 0 must disqualify perfect fast-path"
+        );
+    }
+
+    #[test]
+    fn multi_op_cigar_forces_imperfect() {
+        // 8 bytes = 2 ops (e.g. 5M5S) — must not be misread as one op.
+        let mut bytes = encode_op(5, 0).to_vec();
+        bytes.extend_from_slice(&encode_op(5, 4 /* SoftClip */));
+        let m = base(bytes, b"5", 0);
+        assert!(!m.is_perfect());
+    }
+
+    #[test]
+    fn single_non_match_op_forces_imperfect() {
+        // e.g. a lone Insertion op (code 1) — same length encoding as Match
+        // but wrong op kind; must not be treated as perfect.
+        let m = base(encode_op(10, 1).to_vec(), b"10", 0);
+        assert!(!m.is_perfect());
+    }
+
+    #[test]
+    fn empty_md_forces_imperfect() {
+        let m = base(encode_op(10, 0).to_vec(), b"", 0);
+        assert!(!m.is_perfect());
+    }
+
+    #[test]
+    fn md_with_mismatch_letter_forces_imperfect() {
+        let m = base(encode_op(10, 0).to_vec(), b"5A4", 0);
+        assert!(!m.is_perfect());
     }
 }
