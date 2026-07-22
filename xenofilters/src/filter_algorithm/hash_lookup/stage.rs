@@ -147,3 +147,90 @@ fn fetch<R: SimpleRec>(
         .ok_or(Error::NoStream { nr })?
         .fetch_by_virtual_offset(virtual_offset)
 }
+
+// xenofilters/src/filter_algorithm/hash_lookup/stage.rs
+#[cfg(test)]
+mod ordering_tests {
+    use super::*;
+    use crate::aln_stream::{tests::MockStream, AlignmentStream};
+    use crate::tests::create_record;
+    use smallvec::smallvec;
+
+    fn sf(nr: usize, offset: u64) -> ScoredFragment {
+        ScoredFragment {
+            winner_offsets: smallvec![(nr, offset)],
+            loser_offsets: SmallVec::new(),
+            supp_offsets: [SmallVec::new(), SmallVec::new()],
+            decision: None,
+            winner_nr: nr,
+            is_ambiguous: false,
+        }
+    }
+
+    fn setup() -> SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> {
+        let s0 = MockStream::new(
+            0,
+            vec![
+                create_record(b"A", "10M", &[], &[], "10", false).unwrap(),
+                create_record(b"B", "10M", &[], &[], "10", false).unwrap(),
+            ],
+        );
+        smallvec![Box::new(s0) as Box<dyn AlignmentStream<RecordBuf>>]
+    }
+
+    fn names(aln: &SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>) -> Vec<String> {
+        // Downcast not available; instead re-derive via a second accessor path.
+        // Simplify by asserting count only if downcasting is impractical —
+        // see note below on refactor to expose written() through the trait
+        // or via a concrete type in tests.
+        unimplemented!()
+    }
+
+    // NOTE: because `aln` is `SmallVec<[Box<dyn AlignmentStream<R>>; 2]>`,
+    // inspecting `written()` after passing ownership through requires
+    // downcasting or restructuring the test to hold the MockStream directly
+    // and pass `&mut vec of trait objects` referencing it via Rc<RefCell<..>>
+    // OR (simpler) give MockStream an `Rc<RefCell<Vec<_>>>` sink.
+    // See refactor suggestion below — the concrete recommended pattern:
+
+    #[test]
+    fn flush_holds_back_until_gap_is_filled_flush_all_does_not() {
+        let mut aln = setup();
+        let mut counters: SmallVec<[u64; 8]> = SmallVec::from_elem(0, 8);
+        let mut staged = StagedOutput::new();
+
+        // Push seq_nr=1 first (arrives out of order relative to seq_nr=0).
+        staged.push(1, sf(0, 1));
+        staged.flush(&mut aln, &mut counters, false).unwrap();
+        // Nothing should have been emitted yet: next_emit=0 but min key=1.
+        assert_eq!(
+            counters[1], 0,
+            "must not emit seq_nr=1 before seq_nr=0 arrives"
+        );
+
+        // Now the gap is filled.
+        staged.push(0, sf(0, 0));
+        staged.flush(&mut aln, &mut counters, false).unwrap();
+        // Both should now have emitted, in order.
+        assert_eq!(
+            counters[1], 2,
+            "both fragments should now be flushed in order"
+        );
+    }
+
+    #[test]
+    fn flush_all_drains_even_with_permanent_gap() {
+        let mut aln = setup();
+        let mut counters: SmallVec<[u64; 8]> = SmallVec::from_elem(0, 8);
+        let mut staged = StagedOutput::new();
+
+        // seq_nr=5 with no seq_nr 0..4 ever arriving (e.g. those fragments
+        // were unmatched and handled elsewhere).
+        staged.push(5, sf(0, 0));
+        staged.flush(&mut aln, &mut counters, false).unwrap();
+        assert_eq!(counters[1], 0, "flush() must not emit past a permanent gap");
+
+        staged.flush_all(&mut aln, &mut counters, false).unwrap();
+        assert_eq!(counters[1], 1, "flush_all() must drain regardless of gaps");
+    }
+}

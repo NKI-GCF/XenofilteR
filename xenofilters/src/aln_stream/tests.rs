@@ -1,7 +1,7 @@
 use super::*;
 use crate::bam::AlnFormat;
-use crate::tests::create_record;
 use crate::config::run_config::RunConfig;
+use crate::tests::create_record;
 
 // A dummy struct to test default trait methods
 struct DefaultStream;
@@ -53,6 +53,10 @@ impl MockStream {
             aln_stream,
             i,
         }
+    }
+
+    pub(crate) fn written(&self) -> &[(RecordBuf, Option<bool>)] {
+        &self.written
     }
 
     fn next_rec(&mut self) -> Result<Option<RecordBuf>, Error> {
