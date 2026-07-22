@@ -148,7 +148,6 @@ fn fetch<R: SimpleRec>(
         .fetch_by_virtual_offset(virtual_offset)
 }
 
-// xenofilters/src/filter_algorithm/hash_lookup/stage.rs
 #[cfg(test)]
 mod ordering_tests {
     use super::*;

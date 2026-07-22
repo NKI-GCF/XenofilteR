@@ -2,6 +2,8 @@ use super::*;
 use crate::bam::AlnFormat;
 use crate::config::run_config::RunConfig;
 use crate::tests::create_record;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 // A dummy struct to test default trait methods
 struct DefaultStream;
@@ -26,7 +28,7 @@ impl AlignmentStream<RecordBuf> for DefaultStream {
 pub(crate) struct MockStream {
     pub(crate) reads: Vec<RecordBuf>,
     pub(crate) original_reads: Vec<RecordBuf>,
-    written: Vec<(RecordBuf, Option<bool>)>,
+    written: Rc<RefCell<Vec<(RecordBuf, Option<bool>)>>>,
     aln_stream: AlnStream<RecordBuf>,
     i: usize,
 }
@@ -49,14 +51,14 @@ impl MockStream {
         Self {
             reads,
             original_reads,
-            written: Vec::new(),
+            written: Rc::new(RefCell::new(Vec::new())),
             aln_stream,
             i,
         }
     }
 
-    pub(crate) fn written(&self) -> &[(RecordBuf, Option<bool>)] {
-        &self.written
+    pub(crate) fn written(&self) -> Rc<RefCell<Vec<(RecordBuf, Option<bool>)>>> {
+        Rc::clone(&self.written)
     }
 
     fn next_rec(&mut self) -> Result<Option<RecordBuf>, Error> {
@@ -82,7 +84,7 @@ impl MockStream {
     }
 
     fn write_record(&mut self, rec: RecordBuf, state: Option<bool>) -> Result<(), Error> {
-        self.written.push((rec, state));
+        self.written.borrow_mut().push((rec, state));
         Ok(())
     }
 
