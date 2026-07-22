@@ -22,8 +22,7 @@ use crate::aln_stream::AlignmentStream;
 use crate::filter_algorithm::line_by_line::{Scratch, ordering::Decision};
 use crate::penalty::Penalty;
 use crate::region::tabix_query::{TabixBed, TabixVcf};
-use noodles::sam::alignment::record::data::field::Tag;
-use noodles::sam::alignment::record_buf::{RecordBuf, data::field::Value};
+use noodles::sam::alignment::record_buf::RecordBuf;
 use reader::CollatedReader;
 use smallvec::SmallVec;
 use std::collections::HashMap;
@@ -116,7 +115,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
 
     fn handle_fragment(&mut self, frag: FragmentState<R>) -> Result<(), Error> {
         let nr = frag.get_nr();
-        let key: &[u8] = frag.first_qname().as_ref();
+        let key: &[u8] = frag.first_qname();
         let key = String::from_utf8_lossy(key).to_string();
         if nr == 0 {
             if let Some(other) = self.waiting_b.remove(&key) {

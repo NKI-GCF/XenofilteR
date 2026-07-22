@@ -11,16 +11,14 @@ use xenofilters::{
 };
 
 fn bench_penalties() -> Penalty {
-    xenofilters::config::Config {
+    xenofilters::config::args::ScoringArgs {
         mismatch_penalty: 4.0,
         gap_open: 6.0,
         gap_extend: 1.0,
         chimeric_junction_bases: 20,
-        expand_indels: true,
-        indel_expand_padding: 5,
         ..Default::default()
     }
-    .to_penalties()
+    .to_penalty()
 }
 
 // ---------------------------------------------------------------------------

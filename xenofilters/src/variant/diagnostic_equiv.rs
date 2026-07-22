@@ -18,7 +18,6 @@ use std::{
 
 use crate::{
     region::diagnostic::{DiagnosticSite, SegregateVariants},
-    region::interval_store::{load_into_store, Interval, IntervalStore},
     variant::indel_equiv::{classify, enumerate_equivalents, IndelEquivalenceExpander, IndelKind},
     Error,
 };

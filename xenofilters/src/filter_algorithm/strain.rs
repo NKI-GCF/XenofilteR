@@ -4,7 +4,6 @@ use crate::{
     Error,
 };
 use clap::Args;
-use std::path::PathBuf;
 
 /// Within-species strain disambiguation: single alignment, two variant
 /// profiles (one per strain). No chimeric pairs, no multi-stream regions,

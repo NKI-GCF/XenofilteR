@@ -233,7 +233,7 @@ impl LineByLine<RecordBuf> {
     }
 
     fn write_scored(&mut self, sf: ScoredFragment) -> Result<(), Error> {
-        use super::ordering::Decision;
+        
         let ScoredFragment { mut best, decision } = sf;
         let best_state = (best.len() == 1).then_some(true);
         best.drain(..).try_for_each(|mut b| {

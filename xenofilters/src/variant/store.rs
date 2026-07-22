@@ -5,7 +5,6 @@ use crate::variant::{Eval, Variant};
 use noodles::bcf::io::reader::Builder;
 use noodles::vcf::Header;
 use smallvec::SmallVec;
-use std::collections::HashMap;
 use std::path::Path;
 use noodles::vcf::variant::record_buf::RecordBuf;
 use crate::region::interval_store::{Interval, IntervalStore};

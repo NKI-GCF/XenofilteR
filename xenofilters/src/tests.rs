@@ -19,10 +19,6 @@ use noodles::sam::alignment::{
     },
     record_buf::{Cigar, QualityScores, RecordBuf, Sequence},
 };
-use noodles::sam::Header;
-use std::iter::repeat;
-use crate::region::load::{load_ambiguous_regions_memory, load_distinct_variants_memory};
-use crate::variant::name_to_id::header_name_to_id;
 
 fn create_cigar(cigar: &str) -> Result<Cigar, Error> {
     let mut ops = Vec::new();
@@ -95,13 +91,13 @@ pub fn create_record(
         read_len_from_cigar(cig_str)
     };
     *record.sequence_mut() = if seq.is_empty() {
-        Sequence::from(repeat(b'A').take(read_len).collect::<Vec<u8>>())
+        Sequence::from(std::iter::repeat_n(b'A', read_len).collect::<Vec<u8>>())
     } else {
         Sequence::from(seq)
     };
 
     *record.quality_scores_mut() = if qual.is_empty() {
-        QualityScores::from_iter(repeat(30u8).take(read_len).collect::<Vec<u8>>())
+        QualityScores::from_iter(std::iter::repeat_n(30u8, read_len).collect::<Vec<u8>>())
     } else {
         QualityScores::from_iter(qual.iter().cloned())
     };

@@ -11,14 +11,13 @@ impl FromStr for FileSpec {
     type Err = String; // or a custom error type
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Some((idx_str, path_str)) = s.split_once(':') {
-            if let Ok(idx) = idx_str.trim().parse::<usize>() {
+        if let Some((idx_str, path_str)) = s.split_once(':')
+            && let Ok(idx) = idx_str.trim().parse::<usize>() {
                 return Ok(FileSpec {
                     idx: Some(idx),
                     path: PathBuf::from(path_str.trim()),
                 });
             }
-        }
         Ok(FileSpec {
             idx: None,
             path: PathBuf::from(s.trim()),

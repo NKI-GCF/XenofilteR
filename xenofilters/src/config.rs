@@ -1,14 +1,13 @@
-pub(crate) mod args;
+pub mod args;
 pub(crate) mod run_config;
 
 use crate::{
-    config::run_config::RunConfig,
     config::args::SegregateArgs,
+    config::run_config::RunConfig,
     file_spec::FileSpec,
     filter_algorithm::{
         line_by_line::MAX_STREAMS, strain::StrainArgs, viral_integration::ViralIntegrationArgs,
     },
-    region::ScoreFn,
     Error,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -172,7 +171,7 @@ pub(crate) struct CommonArgs {
 
 // -- Per-algorithm arg structs -------------------------------------------------
 
-#[derive(Args, Clone, Debug)]
+#[derive(Args, Clone, Debug, Default)]
 pub(crate) struct NamesortedArgs {
     #[command(flatten)]
     pub(crate) common: CommonArgs,
@@ -222,7 +221,9 @@ pub(crate) struct HashlookupArgs {
 
 impl HashlookupArgs {
     pub(crate) fn into_run_config(self) -> Result<RunConfig, Error> {
-        let segregate = if self.distinct_variants.is_empty() && self.common.variants.positive_regions.is_empty() {
+        let segregate = if self.distinct_variants.is_empty()
+            && self.common.variants.positive_regions.is_empty()
+        {
             None
         } else {
             Some(SegregateArgs {
@@ -230,7 +231,15 @@ impl HashlookupArgs {
                 distinct_variants: self.distinct_variants,
             })
         };
-        RunConfig::new(self.common, None, Some(self.name_encoder), 1, 2..=2, 0, segregate)
+        RunConfig::new(
+            self.common,
+            None,
+            Some(self.name_encoder),
+            1,
+            2..=2,
+            0,
+            segregate,
+        )
     }
 }
 
@@ -253,7 +262,9 @@ pub(crate) struct CollatedArgs {
 
 impl CollatedArgs {
     pub(crate) fn into_run_config(self) -> Result<RunConfig, Error> {
-        let segregate = if self.distinct_variants.is_empty() && self.common.variants.positive_regions.is_empty() {
+        let segregate = if self.distinct_variants.is_empty()
+            && self.common.variants.positive_regions.is_empty()
+        {
             None
         } else {
             Some(SegregateArgs {
@@ -290,16 +301,6 @@ impl ShellChoice {
             ShellChoice::Fish => Some(Shell::Fish),
             ShellChoice::Elvish => Some(Shell::Elvish),
             ShellChoice::PowerShell => Some(Shell::PowerShell),
-        }
-    }
-}
-
-impl Default for NamesortedArgs {
-    fn default() -> Self {
-        Self {
-            common: CommonArgs::default(),
-            parallel: crate::config::args::ParallelArgs::default(),
-            chimeric: crate::config::args::ChimericArgs::default(),
         }
     }
 }

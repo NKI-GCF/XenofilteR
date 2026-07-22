@@ -76,7 +76,7 @@ pub(crate) struct IoArgs {
 
 /// Scoring flags, shared everywhere.
 #[derive(Args, Debug, Clone, Default)]
-pub(crate) struct ScoringArgs {
+pub struct ScoringArgs {
     /// Error model for scoring. Default: illumina.
     #[arg(long, default_value = "illumina", help_heading = "Scoring")]
     pub(crate) error_model: ErrorModel,
@@ -259,7 +259,7 @@ impl IoArgs {
 }
 
 impl ScoringArgs {
-    pub(crate) fn validate(&mut self) -> Result<(), Error> {
+    pub fn validate(&mut self) -> Result<(), Error> {
         if self.mismatch_penalty <= 0.0 || self.gap_open <= 0.0 || self.gap_extend < 0.0 {
             return Err(Error::InvalidPenalties);
         }

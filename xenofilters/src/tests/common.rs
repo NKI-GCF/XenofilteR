@@ -22,7 +22,7 @@ pub(crate) fn r(name: &[u8], cigar: &str, md: &str) -> RecordBuf {
     create_record(name, cigar, &[], &[30u8; 20], md, false).unwrap()
 }
 pub(crate) fn u(name: &[u8]) -> RecordBuf {
-    create_record(name, "", &vec![b'A'; 10], &[30u8; 10], "", false).unwrap()
+    create_record(name, "", &[b'A'; 10], &[30u8; 10], "", false).unwrap()
 }
 
 /// A single row in a table-driven test.
