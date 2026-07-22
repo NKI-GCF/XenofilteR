@@ -625,4 +625,26 @@ mod tests {
             assert_eq!(subsumes(&c.a, &c.b), c.want, "[{}]", c.label);
         }
     }
+    #[test]
+    fn md_mismatches_table() {
+        let cases: &[(&[u8], usize)] = &[
+            (b"100", 0),
+            (b"", 0),
+            (b"5A4", 1),
+            (b"3A3C2", 2),
+            (b"0A0C0G0T", 4),
+            (b"5^ACGT5", 0),    // deletion block: no mismatches
+            (b"5^ACGTA5C4", 1), // deletion + one trailing mismatch
+            (b"AAAA", 4),       // pathological: mismatches with no digits between
+        ];
+        for (md, want) in cases {
+            assert_eq!(md_mismatches(md), *want, "md={:?}", std::str::from_utf8(md));
+        }
+    }
+
+    #[test]
+    fn md_mismatches_malformed_input_does_not_panic_and_stops_gracefully() {
+        // '!' is not a valid MD character; function must stop rather than panic.
+        assert_eq!(md_mismatches(b"5!5"), 0);
+    }
 }
