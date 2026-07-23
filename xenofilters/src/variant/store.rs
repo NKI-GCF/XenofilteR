@@ -7,7 +7,8 @@ use noodles::vcf::Header;
 use smallvec::SmallVec;
 use std::path::Path;
 use noodles::vcf::variant::record_buf::RecordBuf;
-use crate::region::interval_store::{Interval, IntervalStore};
+use rust_lapper::{Interval, Lapper};
+use std::collections::HashMap;
 
 pub(crate) const VNT_CT: usize = 4;
 
@@ -19,11 +20,6 @@ pub(crate) type EvalVec<'s> = SmallVec<[Eval<'s>; VNT_CT]>;
 /// shared across scoring worker threads.
 pub(crate) trait StoreTrait: Send + Sync {
     fn overlapping_multi<'s>(&'s self, rid: usize, start: usize, end: usize) -> EvalVec<'s>;
-}
-
-impl<V: Variant> Interval for V {
-    fn start(&self) -> usize { self.pos() }
-    fn end(&self) -> usize { Variant::end(self) }
 }
 
 impl<V: Variant> StoreTrait for Store<V> {
@@ -38,14 +34,55 @@ impl<V: Variant> StoreTrait for Store<V> {
     }
 }
 
+/// A generic helper to iterate over records, map their sequence names to IDs,
+/// extract intervals, and build a `Lapper` interval tree per chromosome.
+pub(crate) fn load_lappers<I, R, FName, FParse, T, Iter>(
+    records: I,
+    name_to_id: &HashMap<String, usize>,
+    mut get_name: FName,
+    mut parse_record: FParse,
+) -> Result<HashMap<usize, Lapper<usize, T>>, Error>
+where
+    I: IntoIterator<Item = Result<R, Error>>,
+    FName: FnMut(&R) -> String,
+    FParse: FnMut(&R, usize) -> Result<Iter, Error>,
+    Iter: IntoIterator<Item = Interval<usize, T>>,
+    T: Send + Sync + Clone + Eq,
+{
+    let mut raw_intervals: HashMap<usize, Vec<Interval<usize, T>>> = HashMap::new();
+
+    for record_res in records {
+        let record = record_res?;
+        let name = get_name(&record);
+
+        if let Some(&ref_id) = name_to_id.get(&name) {
+            // Because of IntoIterator, this handles both Some(iv) and vec![iv1, iv2]
+            for interval in parse_record(&record, ref_id)? {
+                raw_intervals.entry(ref_id).or_default().push(interval);
+            }
+        }
+    }
+    Ok(raw_intervals
+        .into_iter()
+        .map(|(rid, ivs)| (rid, Lapper::new(ivs)))
+        .collect())
+}
+
+
 /// `Vec<V>` per chrom, sorted by `pos`.
 #[derive(Debug)]
 pub(crate) struct Store<V: Variant> {
-    inner: IntervalStore<V>,
+    per_chr_lapper: HashMap<usize, Lapper<usize, usize>>,
+    per_chr_data: HashMap<usize, Vec<V>>,
 }
 
 impl<V: Variant> Store<V> {
-    pub(crate) fn new() -> Self { Self { inner: IntervalStore::new() } }
+    pub(crate) fn new() -> Self {
+        Self {
+            per_chr_lapper: HashMap::new(),
+            per_chr_data: HashMap::new(),
+        }
+    }
 
     /// Insert one variant into the per-chromosome sorted bucket.
     ///
@@ -53,14 +90,17 @@ impl<V: Variant> Store<V> {
     /// Uses `partition_point` (binary search) to find the insertion index;
     /// O(log n + n) per call -- acceptable at startup, never called on the
     /// hot path.
-    pub(crate) fn insert(&mut self, ref_id: usize, v: V) { self.inner.insert(ref_id, v); }
+    pub(crate) fn insert(&mut self, ref_id: usize, v: V) {
+        self.per_chr_data.entry(ref_id).or_default().push(v);
+    }
 
     /// Insert a batch of pre-expanded variants.  All share the same ref_id.
     /// Delegates to `insert` per element; no separate finalization required
     /// because each insert maintains the sorted invariant.
     pub(crate) fn insert_expanded(&mut self, ref_id: usize, variants: Vec<V>) {
-        for v in variants { self.insert(ref_id, v); }
+        self.per_chr_data.entry(ref_id).or_default().extend(variants);
     }
+
     /// Remove byte-exact duplicates introduced when two VCF records in a
     /// repeat region expand to the same (pos, ref_a, alt_a) tuple.
     ///
@@ -68,28 +108,53 @@ impl<V: Variant> Store<V> {
     /// ensures adjacent equal elements are the candidates; `dedup_by` is
     /// O(n) after sorting.
     pub(crate) fn dedup(&mut self) {
-        self.inner.sort();
-        self.inner.dedup_by(|a, b| a.pos() == b.pos() && a.ref_allele() == b.ref_allele() && a.alt_allele() == b.alt_allele());
-        // dedup_by needs direct access; add IntervalStore::dedup_per_ref if desired,
-        // or keep dedup here operating on inner.per_ref via a crate-visible accessor.
+        for (&ref_id, data) in &mut self.per_chr_data {
+            data.sort_by_key(|v| v.pos());
+            data.dedup_by(|a, b| {
+                a.pos() == b.pos()
+                    && a.ref_allele() == b.ref_allele()
+                    && a.alt_allele() == b.alt_allele()
+            });
+
+            let intervals = data
+                .iter()
+                .enumerate()
+                .map(|(idx, v)| Interval {
+                    start: v.pos(),
+                    stop: Variant::end(v),
+                    val: idx,
+                })
+                .collect();
+
+            self.per_chr_lapper.insert(ref_id, Lapper::new(intervals));
+        }
     }
-    pub(crate) fn overlapping(&self, id: usize, start: usize, end: usize) -> SmallVec<[&V; 0]> {
-        self.inner.overlapping(id, start, end).collect()
+
+    pub(crate) fn overlapping(&self, ref_id: usize, start: usize, end: usize) -> SmallVec<[&V; 0]> {
+        let mut hits = SmallVec::new();
+        if let (Some(lapper), Some(data)) = (
+            self.per_chr_lapper.get(&ref_id),
+            self.per_chr_data.get(&ref_id),
+        ) {
+            for interval in lapper.find(start, end) {
+                hits.push(&data[interval.val]);
+            }
+        }
+        hits
     }
+
     pub(crate) fn new_from_path(
         f: &Path,
         parser: impl Fn(&mut RecordBuf, &Header) -> Result<Vec<V>, Error>,
     ) -> Result<Store<V>, Error> {
-        let mut bcf_reader =
-            Builder::default()
-                .build_from_path(f)
-                .map_err(|e| Error::FailedToOpenVcfBcf {
-                    path: f.to_path_buf(),
-                    source: e,
-                })?;
+        let mut bcf_reader = Builder::default()
+            .build_from_path(f)
+            .map_err(|e| Error::FailedToOpenVcfBcf {
+                path: f.to_path_buf(),
+                source: e,
+            })?;
 
-        let mut inner = IntervalStore::new();
-        let mut is_sorted = true;
+        let mut store = Store::new();
         let header = bcf_reader.read_header()?;
 
         for record_result in bcf_reader.records() {
@@ -99,32 +164,12 @@ impl<V: Variant> Store<V> {
             let id = record.reference_sequence_id()?;
             let variants = parser(&mut record_buf, &header)?;
 
-            let mut last_pos = None;
-
-            for v in variants {
-                let pos = v.pos();
-                if is_sorted {
-                    if let Some(last) = last_pos
-                        && pos < last
-                    {
-                        tracing::warn!(
-                            path = %f.display(),
-                            "Variants are not sorted by position; sorting now."
-                        );
-                        is_sorted = false;
-                    }
-                    last_pos = Some(pos);
-                }
-                inner.insert(id, v);
-            }
-        }
-        if !is_sorted {
-            inner.sort();
+            store.insert_expanded(id, variants);
         }
 
-        Ok(Store { inner })
+        store.dedup();
+        Ok(store)
     }
-
 }
 
 #[cfg(test)]

@@ -11,7 +11,7 @@ fn make(s0: Vec<RecordBuf>, s1: Vec<RecordBuf>, config: &RunConfig) -> HashLooku
     let a0 = Box::new(MockStream::new(0, s0)) as Box<dyn AlignmentStream<RecordBuf>>;
     let a1 = Box::new(MockStream::new(1, s1)) as Box<dyn AlignmentStream<RecordBuf>>;
     HashLookup::<RecordBuf>::new(
-        &config,
+        config,
         smallvec![a0, a1],
         [None, None],
         [None, None],

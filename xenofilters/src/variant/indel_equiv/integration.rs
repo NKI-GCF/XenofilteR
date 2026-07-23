@@ -15,10 +15,7 @@
 #[cfg(test)]
 mod indel_expansion_integration {
     use crate::{
-        filter_algorithm::line_by_line::Scratch,
         region::diagnostic::{DiagnosticSite, SegregateVariants},
-        region::interval_store::IntervalStore,
-        tests::{create_record, MockStream},
         variant::{
             indel_equiv::{enumerate_equivalents, EquivalentAlleles, MAX_SHIFT},
             population::Population,
@@ -26,8 +23,7 @@ mod indel_expansion_integration {
             Variant,
         },
     };
-    use noodles::sam::{alignment::record_buf::RecordBuf, Header};
-    use std::{collections::HashMap, io::Cursor, sync::Arc};
+    use std::{collections::HashMap, sync::Arc};
 
     // -- In-memory reference helpers -------------------------------------------
 
@@ -108,22 +104,25 @@ mod indel_expansion_integration {
 
     #[test]
     fn diagnostic_expansion_blocks_tier2_at_all_positions() {
+        use rust_lapper::{Interval, Lapper};
         let reference = b"GAAAAGCCCCT";
         let equivalents = enumerate_equivalents(0, b"GA", b"G", reference, 0);
 
-        let mut store = IntervalStore::new();
-        for eq in &equivalents {
-            store.insert(
-                0,
-                DiagnosticSite {
+        let intervals: Vec<_> = equivalents
+            .iter()
+            .map(|eq| Interval {
+                start: eq.pos,
+                stop: eq.pos + eq.ref_a.len(),
+                val: DiagnosticSite {
                     pos: eq.pos,
                     ref_len: eq.ref_a.len(),
                 },
-            );
-        }
-        store.sort();
+            })
+            .collect();
 
-        let diag = SegregateVariants { store };
+        let mut per_chr = HashMap::new();
+        per_chr.insert(0, Lapper::new(intervals));
+        let diag = SegregateVariants { per_chr };
 
         for expected_pos in 0..4 {
             assert!(
@@ -257,7 +256,7 @@ mod indel_expansion_integration {
     #[test]
     fn long_homopolymer_does_not_overflow() {
         let mut reference = vec![b'G'];
-        reference.extend(std::iter::repeat(b'A').take(150));
+        reference.extend(std::iter::repeat_n(b'A', 150));
         reference.push(b'G');
 
         let equivalents = enumerate_equivalents(0, b"GA", b"G", &reference, 0);

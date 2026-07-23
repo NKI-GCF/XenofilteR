@@ -16,7 +16,7 @@ use smallvec::{smallvec, SmallVec};
 // ---------------------------------------------------------------------------
 
 fn lbl_chimeric(specs: &[(&str, Vec<RecordBuf>)], pairs: &[[usize; 2]]) -> LineByLine<RecordBuf> {
-    let mut cfg = RunConfig::default();
+    let cfg = RunConfig::default();
     let stream_labels: Vec<String> = specs.iter().map(|(label, _)| label.to_string()).collect();
     let chimeric_pairs = pairs.to_vec();
     let aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> = specs

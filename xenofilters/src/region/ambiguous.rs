@@ -4,35 +4,28 @@
 //! Regions are stored per reference sequence (keyed by ref-id), sorted by
 //! start position, and queried via binary search.
 
-use crate::region::interval_store::{load_into_store, Interval, IntervalStore};
 use crate::Error;
 use noodles::bed;
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
+use rust_lapper::{Interval, Lapper};
+use std::collections::HashMap;
+use crate::variant::store::load_lappers;
+
 
 /// A half-open interval `[start, end)` on a single reference sequence.
 /// Coordinates are 0-based, matching BED convention.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Region {
     pub(crate) start: usize,
     pub(crate) end: usize,
 }
 
-impl Interval for Region {
-    fn start(&self) -> usize {
-        self.start
-    }
-    fn end(&self) -> usize {
-        self.end
-    }
-}
-
 /// Per-chromosome sorted list of ambiguous regions.
 #[derive(Debug, Default)]
 pub(crate) struct AmbiguousRegions {
-    store: IntervalStore<Region>,
+    per_chr: HashMap<usize, Lapper<usize, Region>>,
 }
 
 impl AmbiguousRegions {
@@ -49,7 +42,6 @@ impl AmbiguousRegions {
         let mut reader = bed::io::Reader::<3, _>::new(BufReader::new(file));
         let mut record = bed::Record::<3>::default();
 
-        // bed::io::Reader has no Iterator impl in noodles; adapt with from_fn.
         let records = std::iter::from_fn(|| match reader.read_record(&mut record) {
             Ok(0) => None,
             Ok(_) => Some(Ok(record.clone())),
@@ -59,48 +51,62 @@ impl AmbiguousRegions {
             })),
         });
 
-        let store = load_into_store(
+        let per_chr = load_lappers(
             records,
             name_to_id,
             |rec: &bed::Record<3>| {
                 String::try_from(rec.reference_sequence_name()).unwrap_or_default()
             },
             |rec, _ref_id| {
-                let start = rec
-                    .feature_start()
-                    .map_err(|e| Error::BedStartError(e.to_string()))?;
-                let end = rec
-                    .feature_end()
-                    .ok_or(Error::BedRecordMissingEnd)?
-                    .map_err(|e| Error::BedEndError(e.to_string()))?;
-                Ok(Some(Region {
-                    start: usize::from(start),
-                    end: usize::from(end),
+                let start = usize::from(
+                    rec.feature_start()
+                        .map_err(|e| Error::BedStartError(e.to_string()))?,
+                );
+                let end = usize::from(
+                    rec.feature_end()
+                        .ok_or(Error::BedRecordMissingEnd)?
+                        .map_err(|e| Error::BedEndError(e.to_string()))?,
+                );
+                
+                Ok(Some(Interval {
+                    start,
+                    stop: end,
+                    val: Region { start, end },
                 }))
             },
         )?;
-        Ok(Self { store })
+
+        Ok(Self { per_chr })
     }
 
     /// Returns `true` if `[read_start, read_end)` overlaps any ambiguous region.
     pub(crate) fn overlaps(&self, ref_id: usize, start: usize, end: usize) -> bool {
-        self.store.overlaps(ref_id, start, end)
+        self.per_chr
+            .get(&ref_id)
+            .is_some_and(|lapper| lapper.find(start, end).next().is_some())
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.store.is_empty()
+        self.per_chr.values().all(|lapper| lapper.is_empty())
     }
 
     #[cfg(test)]
     pub(crate) fn from_test(per_ref: HashMap<usize, Vec<Region>>) -> Self {
-        let mut store = IntervalStore::new();
-        for (rid, regions) in per_ref {
-            for r in regions {
-                store.insert(rid, r);
-            }
-        }
-        store.sort();
-        Self { store }
+        let per_chr = per_ref
+            .into_iter()
+            .map(|(rid, regions)| {
+                let ivs = regions
+                    .into_iter()
+                    .map(|r| Interval {
+                        start: r.start,
+                        stop: r.end,
+                        val: r,
+                    })
+                    .collect();
+                (rid, Lapper::new(ivs))
+            })
+            .collect();
+        Self { per_chr }
     }
 }
 

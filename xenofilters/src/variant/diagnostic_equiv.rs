@@ -82,8 +82,9 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
     name_to_id: &HashMap<String, usize>,
     header: &vcf::Header,
 ) -> Result<SegregateVariants, Error> {
-    use crate::region::interval_store::load_into_store;
     use std::{fs::File, io::BufReader};
+    use rust_lapper::Interval;
+    use crate::variant::store::load_lappers;
 
     let is_bcf = vcf_path.extension().is_some_and(|e| e == "bcf");
     let mut bcf_reader;
@@ -111,11 +112,11 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
     let mut n_canonical = 0u64;
     let mut n_expanded = 0u64;
 
-    let store = load_into_store(
+    let per_chr = load_lappers(
         records,
         name_to_id,
         |rec: &vcf::variant::RecordBuf| rec.reference_sequence_name().to_string(),
-        |rec, _ref_id| -> Result<Vec<DiagnosticSite>, Error> {
+        |rec, _ref_id| -> Result<Vec<Interval<usize, DiagnosticSite>>, Error> {
             let chrom = rec.reference_sequence_name().to_string();
 
             let ref_bytes: Vec<u8> = rec
@@ -179,7 +180,18 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
             };
 
             n_expanded += sites.len() as u64;
-            Ok(sites)
+
+            // Map the DiagnosticSites to Lapper Intervals
+            let intervals = sites
+                .into_iter()
+                .map(|site| Interval {
+                    start: site.pos,
+                    stop: site.pos + site.ref_len,
+                    val: site,
+                })
+                .collect();
+
+            Ok(intervals)
         },
     )?;
 
@@ -190,5 +202,5 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
         "Diagnostic variant store built with indel equivalence expansion"
     );
 
-    Ok(SegregateVariants { store })
+    Ok(SegregateVariants { per_chr })
 }

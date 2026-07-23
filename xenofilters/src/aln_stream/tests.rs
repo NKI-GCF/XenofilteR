@@ -1,5 +1,4 @@
 use super::*;
-use crate::bam::AlnFormat;
 use crate::config::run_config::RunConfig;
 use crate::tests::create_record;
 use std::cell::RefCell;

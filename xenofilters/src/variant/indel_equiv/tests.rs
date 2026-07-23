@@ -247,11 +247,11 @@ mod tests {
     fn max_shift_limit_is_respected() {
         // Reference: 256 A's.  Deleting one A should produce exactly
         // MAX_SHIFT + 1 entries (the left-normalized form + MAX_SHIFT rights).
-        let reference = vec![b'A'; 256];
+        let _reference = vec![b'A'; 256];
         // Left-normalized: pos=0, ref=AA, alt=A (impossible to go further left).
         // Actually, need non-A anchor at start.
         let mut reference = vec![b'G'];
-        reference.extend(std::iter::repeat(b'A').take(200));
+        reference.extend(std::iter::repeat_n(b'A', 200));
         reference.push(b'G');
         // pos=0, ref=GA, alt=G: can slide 200 times but MAX_SHIFT caps it.
         let equivalents = enumerate_equivalents(0, b"GA", b"G", &reference, 0);
@@ -306,7 +306,7 @@ mod tests {
         // Deletion near end of context window; should stop before out-of-bounds.
         let reference: Vec<u8> = {
             let mut v = vec![b'G'];
-            v.extend(std::iter::repeat(b'A').take(10));
+            v.extend(std::iter::repeat_n(b'A', 10));
             v.push(b'G');
             v
         };

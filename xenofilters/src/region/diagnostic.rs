@@ -4,30 +4,22 @@
 //! reference overlapping this position carries evidence for species N.
 //! Reads overlapping any diagnostic position must go through full scoring.
 
-use crate::region::interval_store::{load_into_store, Interval, IntervalStore};
 use crate::Error;
 use noodles::bcf;
+use rust_lapper::{Interval, Lapper};
 use std::collections::HashMap;
 use std::path::Path;
+use crate::variant::store::load_lappers;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) struct DiagnosticSite {
     pub(crate) pos: usize,
     pub(crate) ref_len: usize,
 }
 
-impl Interval for DiagnosticSite {
-    fn start(&self) -> usize {
-        self.pos
-    }
-    fn end(&self) -> usize {
-        self.pos + self.ref_len
-    }
-}
-
 #[derive(Debug, Default)]
 pub(crate) struct SegregateVariants {
-    pub(crate) store: IntervalStore<DiagnosticSite>,
+    pub(crate) per_chr: HashMap<usize, Lapper<usize, DiagnosticSite>>,
 }
 
 impl SegregateVariants {
@@ -43,7 +35,7 @@ impl SegregateVariants {
             })?;
         let header = reader.read_header()?;
 
-        let store = load_into_store(
+        let per_chr = load_lappers(
             reader.records().map(|r| r.map_err(Error::from)),
             name_to_id,
             |record| {
@@ -60,17 +52,26 @@ impl SegregateVariants {
                     .map(|p| p.get())
                     .unwrap_or(0);
                 let ref_len = record.reference_bases().as_ref().len().max(1);
-                Ok(Some(DiagnosticSite { pos, ref_len }))
+                let site = DiagnosticSite { pos, ref_len };
+                Ok(Some(Interval {
+                    start: pos,
+                    stop: pos + ref_len,
+                    val: site,
+                }))
             },
         )?;
-        Ok(Self { store })
+
+        Ok(Self { per_chr })
     }
 
     pub(crate) fn overlaps(&self, ref_id: usize, start: usize, end: usize) -> bool {
-        self.store.overlaps(ref_id, start, end)
+        self.per_chr
+            .get(&ref_id)
+            .is_some_and(|lapper| lapper.find(start, end).next().is_some())
     }
+
     pub(crate) fn is_empty(&self) -> bool {
-        self.store.is_empty()
+        self.per_chr.values().all(|lapper| lapper.is_empty())
     }
 }
 
@@ -81,15 +82,22 @@ mod tests {
     fn site(pos: usize, ref_len: usize) -> DiagnosticSite {
         DiagnosticSite { pos, ref_len }
     }
-
     fn store(sites: &[(usize, usize, usize)]) -> SegregateVariants {
-        let mut store = IntervalStore::new();
+        let mut raw_intervals: HashMap<usize, Vec<Interval<usize, DiagnosticSite>>> = HashMap::new();
         for &(rid, pos, ref_len) in sites {
-            store.insert(rid, DiagnosticSite { pos, ref_len });
+            raw_intervals.entry(rid).or_default().push(Interval {
+                start: pos,
+                stop: pos + ref_len,
+                val: DiagnosticSite { pos, ref_len },
+            });
         }
-        store.sort();
-        SegregateVariants { store }
+        let per_chr = raw_intervals
+            .into_iter()
+            .map(|(rid, ivs)| (rid, Lapper::new(ivs)))
+            .collect();
+        SegregateVariants { per_chr }
     }
+
     #[test]
     fn test_snv_overlap_cases() {
         let s = store(&[(0, 100, 1)]);

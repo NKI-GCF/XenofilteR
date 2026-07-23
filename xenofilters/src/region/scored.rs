@@ -3,10 +3,11 @@
 //! BED format: chrom, start(0-based), end, name, score(0-1000), strand(+/-/.)
 //! Columns 4-6 are optional. Missing strand = any. Missing score = 1000.
 
-use crate::region::interval_store::{load_into_store, Interval, IntervalStore};
 use crate::Error;
 use std::collections::HashMap;
 use std::path::Path;
+use rust_lapper::{Interval, Lapper};
+use crate::variant::store::load_lappers;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Strand {
@@ -99,6 +100,17 @@ pub(crate) struct ScoredRegion {
     pub(crate) strand: Strand,
 }
 
+impl PartialEq for ScoredRegion {
+    fn eq(&self, other: &Self) -> bool {
+        self.ref_id == other.ref_id
+            && self.start == other.start
+            && self.end == other.end
+            && self.strand == other.strand
+    }
+}
+
+impl Eq for ScoredRegion {}
+
 impl ScoredRegion {
     pub(crate) fn len(&self) -> usize {
         self.end.saturating_sub(self.start)
@@ -111,19 +123,10 @@ impl ScoredRegion {
     }
 }
 
-impl Interval for ScoredRegion {
-    fn start(&self) -> usize {
-        self.start
-    }
-    fn end(&self) -> usize {
-        self.end
-    }
-}
-
 /// In-memory collection of strand-aware, scored BED regions.
 /// Sorted per ref_id by start for binary-search lookups.
 pub(crate) struct ScoredRegions {
-    store: IntervalStore<ScoredRegion>,
+    per_chr: HashMap<usize, Lapper<usize, ScoredRegion>>,
 }
 
 impl ScoredRegions {
@@ -140,7 +143,7 @@ impl ScoredRegions {
                 .then(|| Ok(line.to_string()))
         });
 
-        let store = load_into_store(
+        let per_chr = load_lappers(
             lines,
             name_to_id,
             |line: &String| line.split('\t').next().unwrap_or("").to_string(),
@@ -160,16 +163,22 @@ impl ScoredRegions {
                     .and_then(|s| s.as_bytes().first().copied())
                     .map(Strand::from_byte)
                     .unwrap_or(Strand::Any);
-                Ok(Some(ScoredRegion {
+                let region = ScoredRegion {
                     ref_id,
                     start,
                     end,
                     score,
                     strand,
+                };
+                Ok(Some(Interval {
+                    start,
+                    stop: end,
+                    val: region,
                 }))
             },
         )?;
-        Ok(Self { store })
+
+        Ok(Self { per_chr })
     }
 
     pub(crate) fn overlapping(
@@ -179,23 +188,31 @@ impl ScoredRegions {
         end: usize,
         read_is_reverse: bool,
     ) -> impl Iterator<Item = &ScoredRegion> {
-        self.store
-            .overlapping(ref_id, start, end)
+        self.per_chr
+            .get(&ref_id)
+            .into_iter()
+            .flat_map(move |lapper| lapper.find(start, end))
+            .map(|iv| &iv.val)
             .filter(move |r| r.strand.matches(read_is_reverse))
     }
 
     pub(crate) fn any_overlap(&self, ref_id: usize, s: usize, e: usize, rev: bool) -> bool {
         self.overlapping(ref_id, s, e, rev).next().is_some()
     }
+
     pub(crate) fn overlaps(&self, ref_id: usize, s: usize, e: usize) -> bool {
-        self.store.overlaps(ref_id, s, e)
+        self.per_chr
+            .get(&ref_id)
+            .is_some_and(|lapper| lapper.find(s, e).next().is_some())
     }
+
     pub(crate) fn is_empty(&self) -> bool {
-        self.store.is_empty()
+        self.per_chr.values().all(|lapper| lapper.is_empty())
     }
+
     pub(crate) fn empty() -> Self {
         Self {
-            store: IntervalStore::new(),
+            per_chr: HashMap::new(),
         }
     }
 }

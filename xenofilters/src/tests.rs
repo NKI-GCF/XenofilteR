@@ -7,9 +7,6 @@ pub(crate) mod property;
 #[cfg(test)]
 pub(crate) use aln_stream::tests::*;
 
-use crate::region::load::load_ambiguous_regions_memory;
-use crate::region::load::load_distinct_variants_memory;
-use crate::variant::name_to_id::header_name_to_id;
 use noodles::core::Position;
 use noodles::sam::alignment::{
     record::data::field::Tag,
@@ -22,7 +19,6 @@ use noodles::sam::alignment::{
     },
     record_buf::{Cigar, QualityScores, RecordBuf, Sequence},
 };
-use noodles::sam::Header;
 
 fn create_cigar(cigar: &str) -> Result<Cigar, Error> {
     let mut ops = Vec::new();
@@ -112,6 +108,8 @@ pub fn create_record(
 // Kills mutations in `header_name_to_id` (HashMap::new(), HashMap::from_iter, etc.)
 #[test]
 fn test_header_name_to_id() {
+    use noodles::sam::Header;
+    use crate::variant::name_to_id::header_name_to_id;
     // Construct a realistic SAM header to ensure iteration and indexing are correct
     let header_str = "@HD\tVN:1.6\n@SQ\tSN:chr1\tLN:100\n@SQ\tSN:chr2\tLN:200";
     let header: Header = header_str.parse().expect("Failed to parse SAM header");
@@ -125,6 +123,7 @@ fn test_header_name_to_id() {
 
 #[test]
 fn test_load_ambiguous_regions_ignores_empty_strings() {
+    use crate::region::load::load_ambiguous_regions_memory;
     let name_to_id = HashMap::new();
     let specs = vec!["".to_string(), "".to_string()];
     let result = load_ambiguous_regions_memory(&specs, &name_to_id).unwrap();
@@ -139,6 +138,7 @@ fn test_load_ambiguous_regions_ignores_empty_strings() {
 
 #[test]
 fn test_load_distinct_variants_ignores_empty_strings() {
+    use crate::region::load::load_distinct_variants_memory;
     let name_to_id = HashMap::new();
     let specs = vec!["".to_string(), "".to_string()];
     let result = load_distinct_variants_memory(&specs, &name_to_id).unwrap();

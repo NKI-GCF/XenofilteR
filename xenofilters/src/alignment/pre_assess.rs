@@ -363,7 +363,7 @@ mod tests {
     fn mcfs_from(cigar: &str, md: &str) -> SmallVec<[MdCigFlags<'static>; READ_CT]> {
         // Leak to get 'static lifetime for convenience in tests.
         let rec: &'static _ = Box::leak(Box::new(
-            create_record(b"r", cigar, &[], &vec![30u8; 150], md, false).unwrap(),
+            create_record(b"r", cigar, &[], &[30u8; 150], md, false).unwrap(),
         ));
         let flags: &'static _ = Box::leak(Box::new(rec.flags()));
         let mcf = MdCigFlags::try_from_record(rec, flags, false).unwrap();

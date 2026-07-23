@@ -1,7 +1,7 @@
 use crate::tests::common::{cfg, r, u};
 use crate::{
     aln_stream::tests::MockStream, aln_stream::AlignmentStream, config::run_config::RunConfig,
-    filter_algorithm::collated::CollatedMatcher, tests::create_record,
+    filter_algorithm::collated::CollatedMatcher,
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::smallvec;

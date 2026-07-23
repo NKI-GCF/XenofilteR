@@ -174,7 +174,7 @@ mod ordering_tests {
         smallvec![Box::new(s0) as Box<dyn AlignmentStream<RecordBuf>>]
     }
 
-    fn names(aln: &SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>) -> Vec<String> {
+    fn names(_aln: &SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>) -> Vec<String> {
         // Downcast not available; instead re-derive via a second accessor path.
         // Simplify by asserting count only if downcasting is impractical --
         // see note below on refactor to expose written() through the trait

@@ -79,7 +79,7 @@ fn scoring_table() {
         }
     }
 
-    let q30 = vec![30u8; 15]; // generous budget
+    let q30 = [30u8; 15]; // generous budget
     let flat = setup_penalties();
     let cases: &[Row] = &[
         Row::new("10M", "10", 0.0),

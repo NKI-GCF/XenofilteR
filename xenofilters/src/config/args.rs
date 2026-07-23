@@ -79,40 +79,40 @@ pub(crate) struct IoArgs {
 pub struct ScoringArgs {
     /// Error model for scoring. Default: illumina.
     #[arg(long, default_value = "illumina", help_heading = "Scoring")]
-    pub(crate) error_model: ErrorModel,
+    pub error_model: ErrorModel,
 
     /// Mismatch penalty (PHRED). Default: 4.0.
     #[arg(short = 'm', long, default_value = "4.0", help_heading = "Scoring")]
-    pub(crate) mismatch_penalty: f64,
+    pub mismatch_penalty: f64,
 
     /// Gap open penalty (PHRED). Default: 6.0.
     #[arg(short = 'g', long, default_value = "6.0", help_heading = "Scoring")]
-    pub(crate) gap_open: f64,
+    pub gap_open: f64,
 
     /// Gap extend penalty (PHRED). Default: 1.0.
     #[arg(short = 'e', long, default_value = "1.0", help_heading = "Scoring")]
-    pub(crate) gap_extend: f64,
+    pub gap_extend: f64,
 
     /// Clipping penalty (PHRED). Default: 5.0.
     #[arg(short = 'c', long, default_value_t = 5.0, help_heading = "Scoring")]
-    pub(crate) clipping_penalty: f64,
+    pub clipping_penalty: f64,
 
     /// A supplemnetary read counts as a gap with bases. Default: 20.
     #[arg(short = 'J', long, default_value_t = 20, help_heading = "Scoring")]
-    pub(crate) chimeric_junction_bases: u32,
+    pub chimeric_junction_bases: u32,
 
     /// Threshold for ambiguous reads (PHRED). Default: auto (10 for pass1, 0 for pass2).
     #[arg(long, default_value_t = u32::MAX, value_name = "PHRED|auto",
           help_heading = "Scoring", default_value = "auto")]
-    pub(crate) ambiguous_threshold: u32,
+    pub ambiguous_threshold: u32,
 
     /// Warn if ambiguous fraction exceeds this value (0.0-1.0). Default: 0.05.
     #[arg(long, default_value = "0.05", help_heading = "Scoring")]
-    pub(crate) warn_ambig_fraction: f64,
+    pub warn_ambig_fraction: f64,
 
     /// Bisulfite scoring mode. Default: false.
     #[arg(long, default_value = "false", help_heading = "Scoring")]
-    pub(crate) bisulfite: bool,
+    pub bisulfite: bool,
 }
 
 /// Variant-rescue flags. Arity varies (see AlignmentArgs*); the flags
@@ -271,7 +271,7 @@ impl ScoringArgs {
         Ok(())
     }
 
-    pub(crate) fn to_penalty(&self) -> crate::penalty::Penalty {
+    pub fn to_penalty(&self) -> crate::penalty::Penalty {
         crate::penalty::Penalty::build(
             self.gap_open,
             self.gap_extend,

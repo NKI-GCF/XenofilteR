@@ -27,12 +27,12 @@ fn fv(pos: usize, ref_len: usize) -> FakeVariant {
 }
 
 fn make_store(variants: Vec<(usize, FakeVariant)>) -> Store<FakeVariant> {
-    let mut inner = IntervalStore::new();
+    let mut store = Store::new();
     for (chr, v) in variants {
-        inner.insert(chr, v);
+        store.insert(chr, v);
     }
-    inner.sort();
-    Store { inner }
+    store.dedup();
+    store
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn insert_preserves_stable_order_for_equal_positions() {
     store.insert(1, fv(100, 1));
     store.insert(1, fv(100, 2)); // same pos, different ref_len -- must land after
     store.insert(1, fv(100, 3));
-    let bucket = &store.inner.per_ref()[1];
+    let bucket =  &store.per_chr_data[&1];
     let lens: Vec<usize> = bucket.iter().map(|v| v.ref_allele().len()).collect();
     assert_eq!(
         lens,
@@ -101,5 +101,5 @@ fn dedup_only_merges_byte_identical_adjacent_entries() {
     store.insert(1, fv(100, 1)); // exact duplicate
     store.insert(1, fv(100, 2)); // different ref_len -- must survive
     store.dedup();
-    assert_eq!(store.inner.per_ref()[1].len(), 2);
+    assert_eq!(store.per_chr_data[&1].len(), 2);
 }

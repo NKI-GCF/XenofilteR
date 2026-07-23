@@ -7,7 +7,6 @@
 
 pub(crate) mod ambiguous;
 pub(crate) mod diagnostic;
-pub(crate) mod interval_store;
 pub(crate) mod load;
 pub(crate) mod scored;
 pub(crate) mod tabix_load;
