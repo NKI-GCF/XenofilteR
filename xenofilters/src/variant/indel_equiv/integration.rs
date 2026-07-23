@@ -17,10 +17,10 @@ mod indel_expansion_integration {
     use crate::{
         region::diagnostic::{DiagnosticSite, SegregateVariants},
         variant::{
-            indel_equiv::{enumerate_equivalents, EquivalentAlleles, MAX_SHIFT},
+            Variant,
+            indel_equiv::{EquivalentAlleles, MAX_SHIFT, enumerate_equivalents},
             population::Population,
             store::{Store, StoreTrait},
-            Variant,
         },
     };
     use std::{collections::HashMap, sync::Arc};

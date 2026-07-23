@@ -4,10 +4,10 @@
 //! Columns 4-6 are optional. Missing strand = any. Missing score = 1000.
 
 use crate::Error;
+use crate::variant::store::load_lappers;
+use rust_lapper::{Interval, Lapper};
 use std::collections::HashMap;
 use std::path::Path;
-use rust_lapper::{Interval, Lapper};
-use crate::variant::store::load_lappers;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Strand {

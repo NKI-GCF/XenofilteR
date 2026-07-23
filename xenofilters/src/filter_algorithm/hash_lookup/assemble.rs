@@ -24,7 +24,7 @@
 pub mod pending;
 pub(crate) mod stream;
 
-pub(crate) use pending::{insert, PendingFragment};
+pub(crate) use pending::{PendingFragment, insert};
 pub(crate) use stream::{EarlyKind, MappedRecord, RecordKind, StreamKind};
 
 use ahash::RandomState;

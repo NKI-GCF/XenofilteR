@@ -10,12 +10,12 @@ pub(crate) use aln_stream::tests::*;
 use noodles::core::Position;
 use noodles::sam::alignment::{
     record::data::field::Tag,
-    record_buf::{data::field::Value, Data},
+    record_buf::{Data, data::field::Value},
 };
 use noodles::sam::alignment::{
     record::{
-        cigar::{op::Kind, Op},
         Flags,
+        cigar::{Op, op::Kind},
     },
     record_buf::{Cigar, QualityScores, RecordBuf, Sequence},
 };
@@ -108,8 +108,8 @@ pub fn create_record(
 // Kills mutations in `header_name_to_id` (HashMap::new(), HashMap::from_iter, etc.)
 #[test]
 fn test_header_name_to_id() {
-    use noodles::sam::Header;
     use crate::variant::name_to_id::header_name_to_id;
+    use noodles::sam::Header;
     // Construct a realistic SAM header to ensure iteration and indexing are correct
     let header_str = "@HD\tVN:1.6\n@SQ\tSN:chr1\tLN:100\n@SQ\tSN:chr2\tLN:200";
     let header: Header = header_str.parse().expect("Failed to parse SAM header");

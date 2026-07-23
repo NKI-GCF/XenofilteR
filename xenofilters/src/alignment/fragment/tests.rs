@@ -1,16 +1,16 @@
 use super::*;
 use crate::{
-    alignment::{fragment::SimpleRec, MdCigFlags},
+    Error,
+    alignment::{MdCigFlags, fragment::SimpleRec},
     config::args::ScoringArgs,
     filter_algorithm::line_by_line::Scratch,
     penalty::Penalty,
     tests::create_record,
     variant::{Eval, Variant},
-    Error,
 };
 use noodles::sam::alignment::record::Flags;
 use noodles::sam::alignment::record_buf::RecordBuf;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 
 // ---------------------------------------------------------------------------
 // Test penalty helpers

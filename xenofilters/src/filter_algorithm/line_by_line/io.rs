@@ -1,9 +1,9 @@
-use super::core::{LineByLine, COUNTER_STRIDE};
-use crate::alignment::SimpleRec;
+use super::core::{COUNTER_STRIDE, LineByLine};
 use crate::Error;
+use crate::alignment::SimpleRec;
 use noodles::sam::alignment::record::data::field::Tag;
-use noodles::sam::alignment::record_buf::data::field::Value;
 use noodles::sam::alignment::record_buf::RecordBuf;
+use noodles::sam::alignment::record_buf::data::field::Value;
 
 impl<R: SimpleRec> LineByLine<R> {
     /// Insert a single-byte aux tag into `rec`.

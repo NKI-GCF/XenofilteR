@@ -2,13 +2,13 @@
 //! BAM stream -- consuming all records that share a canonical read name
 //! before returning.
 
+use crate::Error;
 use crate::alignment::{FragmentState, SimpleRec};
 use crate::aln_stream::AlignmentStream;
 use crate::region::{PositiveRegions, ScoreFn};
 use crate::variant::StoreTrait;
-use crate::Error;
-use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::Header;
+use noodles::sam::alignment::record_buf::RecordBuf;
 use std::sync::Arc;
 
 pub(crate) struct CollatedReader<R> {
@@ -50,7 +50,7 @@ impl<R: SimpleRec> CollatedReader<R> {
             Some(n) => {
                 let b: &[u8] = n.as_ref();
                 b.to_vec()
-            },
+            }
             None => {
                 return Ok(Some(FragmentState::from_record(
                     first,

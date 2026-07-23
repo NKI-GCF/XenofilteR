@@ -2,11 +2,11 @@
 //! sequence number. Pass-2 seeks are performed here by calling
 //! `fetch_by_virtual_offset` on the appropriate `AlignmentStream`.
 
+use crate::Error;
 use crate::alignment::SimpleRec;
 use crate::aln_stream::AlignmentStream;
 use crate::filter_algorithm::hash_lookup::ScoredFragment;
 use crate::filter_algorithm::line_by_line::apply_decision_tag;
-use crate::Error;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::SmallVec;
 use std::collections::BTreeMap;
@@ -148,7 +148,7 @@ fn fetch<R: SimpleRec>(
 #[cfg(test)]
 mod ordering_tests {
     use super::*;
-    use crate::aln_stream::{tests::MockStream, AlignmentStream};
+    use crate::aln_stream::{AlignmentStream, tests::MockStream};
     use crate::tests::create_record;
     use smallvec::smallvec;
 

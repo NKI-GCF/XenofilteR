@@ -1,13 +1,13 @@
 mod context;
 mod record;
 
-use crate::alignment::{
-    align_alt_to_read, weighted_ref_score, BaseOp, MdCigFlags, ScoreOpIter, VariantWindow,
-};
-use crate::filter_algorithm::line_by_line::{Scratch, READ_CT};
-use crate::penalty::{Penalty, MAX_Q};
-use crate::variant::{Eval, FragEvalVec, VNT_CT};
 use crate::Error;
+use crate::alignment::{
+    BaseOp, MdCigFlags, ScoreOpIter, VariantWindow, align_alt_to_read, weighted_ref_score,
+};
+use crate::filter_algorithm::line_by_line::{READ_CT, Scratch};
+use crate::penalty::{MAX_Q, Penalty};
+use crate::variant::{Eval, FragEvalVec, VNT_CT};
 use noodles::sam::alignment::Record;
 use smallvec::SmallVec;
 

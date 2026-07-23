@@ -16,8 +16,8 @@ mod tests {
 
     use crate::alignment::MdCigFlags;
 
-    use crate::alignment::{align_alt_to_read, weighted_ref_score, Fragment, VariantWindow};
-    use crate::filter_algorithm::line_by_line::{Scratch, READ_CT};
+    use crate::alignment::{Fragment, VariantWindow, align_alt_to_read, weighted_ref_score};
+    use crate::filter_algorithm::line_by_line::{READ_CT, Scratch};
     use crate::penalty::Penalty;
     use crate::tests::create_record; // existing test helper used across the codebase
     use crate::variant::Eval;
@@ -25,8 +25,8 @@ mod tests {
     use crate::variant::Variant;
     use noodles::sam::alignment::record::data::field::Tag;
 
-    use noodles::sam::alignment::record_buf::{data::field::Value as RBValue, RecordBuf};
-    use smallvec::{smallvec, SmallVec};
+    use noodles::sam::alignment::record_buf::{RecordBuf, data::field::Value as RBValue};
+    use smallvec::{SmallVec, smallvec};
     use std::f64;
 
     // Helper: a simple Penalty with deterministic numbers for tests.
@@ -312,8 +312,8 @@ mod tests {
         let mut scratch = Scratch::new();
         // Variant alt "G" at pos that corresponds to read index 1 when revcomped.
         let w = VariantWindow::compute(0, 3, 1, 2).unwrap(); // single-base window
-                                                             // read_base_and_quality supplied by revcomp wrapper in score_variant_against_segment;
-                                                             // we call align_alt_to_read directly with a closure that simulates revcomp handling:
+        // read_base_and_quality supplied by revcomp wrapper in score_variant_against_segment;
+        // we call align_alt_to_read directly with a closure that simulates revcomp handling:
         let alt = b"G";
         // We need to supply a closure that returns the revcomped base for fwd_nt_i:
         let seq = rec.sequence().as_ref();

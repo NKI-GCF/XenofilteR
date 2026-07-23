@@ -1,11 +1,11 @@
 // src/config/args.rs
 
 use crate::bam::AlnFormat;
-use crate::file_spec::{path_for_stream, FileSpec};
+use crate::file_spec::{FileSpec, path_for_stream};
 use crate::filter_algorithm::line_by_line::MAX_STREAMS;
 use crate::penalty::ErrorModel;
 use crate::region::ScoreFn;
-use crate::{ensure, Error};
+use crate::{Error, ensure};
 use clap::Args;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;

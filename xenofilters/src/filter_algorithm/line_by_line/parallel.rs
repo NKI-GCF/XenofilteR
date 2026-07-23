@@ -6,16 +6,16 @@
 //! which owns all writers (no Mutex required).
 
 use super::chimeric::{
-    detect_chimeric_event, detect_chimeric_mate_complement, ChimericDecision, ChimericKind,
+    ChimericDecision, ChimericKind, detect_chimeric_event, detect_chimeric_mate_complement,
 };
 use super::core::{FragmentBuffer, LineByLine, Scratch};
-use super::ordering::{score_bundle, ScoringContext};
+use super::ordering::{ScoringContext, score_bundle};
 use crate::config::run_config::RunConfig;
 use crate::filter_algorithm::line_by_line::apply_decision_tag;
-use crate::{variant::StoreTrait, Error};
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crate::{Error, variant::StoreTrait};
+use crossbeam_channel::{Receiver, Sender, bounded};
 use noodles::sam::alignment::record_buf::RecordBuf;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use std::sync::Arc;
 use std::thread;
 
@@ -233,7 +233,6 @@ impl LineByLine<RecordBuf> {
     }
 
     fn write_scored(&mut self, sf: ScoredFragment) -> Result<(), Error> {
-        
         let ScoredFragment { mut best, decision } = sf;
         let best_state = (best.len() == 1).then_some(true);
         best.drain(..).try_for_each(|mut b| {

@@ -4,11 +4,11 @@ use crate::Error;
 use crate::variant::{Eval, Variant};
 use noodles::bcf::io::reader::Builder;
 use noodles::vcf::Header;
-use smallvec::SmallVec;
-use std::path::Path;
 use noodles::vcf::variant::record_buf::RecordBuf;
 use rust_lapper::{Interval, Lapper};
+use smallvec::SmallVec;
 use std::collections::HashMap;
+use std::path::Path;
 
 pub(crate) const VNT_CT: usize = 4;
 
@@ -68,7 +68,6 @@ where
         .collect())
 }
 
-
 /// `Vec<V>` per chrom, sorted by `pos`.
 #[derive(Debug)]
 pub(crate) struct Store<V: Variant> {
@@ -98,7 +97,10 @@ impl<V: Variant> Store<V> {
     /// Delegates to `insert` per element; no separate finalization required
     /// because each insert maintains the sorted invariant.
     pub(crate) fn insert_expanded(&mut self, ref_id: usize, variants: Vec<V>) {
-        self.per_chr_data.entry(ref_id).or_default().extend(variants);
+        self.per_chr_data
+            .entry(ref_id)
+            .or_default()
+            .extend(variants);
     }
 
     /// Remove byte-exact duplicates introduced when two VCF records in a
@@ -147,12 +149,13 @@ impl<V: Variant> Store<V> {
         f: &Path,
         parser: impl Fn(&mut RecordBuf, &Header) -> Result<Vec<V>, Error>,
     ) -> Result<Store<V>, Error> {
-        let mut bcf_reader = Builder::default()
-            .build_from_path(f)
-            .map_err(|e| Error::FailedToOpenVcfBcf {
-                path: f.to_path_buf(),
-                source: e,
-            })?;
+        let mut bcf_reader =
+            Builder::default()
+                .build_from_path(f)
+                .map_err(|e| Error::FailedToOpenVcfBcf {
+                    path: f.to_path_buf(),
+                    source: e,
+                })?;
 
         let mut store = Store::new();
         let header = bcf_reader.read_header()?;

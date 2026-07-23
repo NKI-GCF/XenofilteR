@@ -53,14 +53,14 @@
 //!   mouse output  : all records    -> discarded output (normal tournament)
 //! ```
 
-use super::core::{LineByLine, COUNTER_STRIDE};
+use super::core::{COUNTER_STRIDE, LineByLine};
+use crate::Error;
 use crate::alignment::{FragmentState, SimpleRec};
 use crate::filter_algorithm::line_by_line::core::FragmentBuffer;
-use crate::Error;
 use noodles::sam::alignment::record::{
+    Flags,
     cigar::op::Kind,
     data::field::{Tag, Value},
-    Flags,
 };
 use noodles::sam::alignment::record_buf::data::field::Value as RecordBufValue;
 use smallvec::SmallVec;

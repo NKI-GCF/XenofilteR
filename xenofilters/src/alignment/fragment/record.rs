@@ -6,9 +6,7 @@
 
 use noodles::sam::{Header, alignment::record_buf::RecordBuf};
 
-pub trait SimpleRec:
-    noodles::sam::alignment::Record + PartialEq
-{
+pub trait SimpleRec: noodles::sam::alignment::Record + PartialEq {
     fn quality_at(&self, i: usize) -> Option<u8>;
     fn ref_seq_id(&self) -> Option<Result<usize, std::io::Error>>;
     fn as_record_buf(&self, header: &Header) -> Result<RecordBuf, std::io::Error>;

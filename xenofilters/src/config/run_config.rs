@@ -1,19 +1,16 @@
 use crate::{
+    Error,
     aln_stream::{AlignmentStream, AlnStream},
     config::{
-        CommonArgs,
-        args::{
-            IoArgs, SegregateArgs, ScoringArgs, RelatedArgs, ChimericArgs
-        },
-        MatchingAlgorithm, NameEncoderKind,
+        CommonArgs, MatchingAlgorithm, NameEncoderKind,
+        args::{ChimericArgs, IoArgs, RelatedArgs, ScoringArgs, SegregateArgs},
     },
     file_spec::path_for_stream,
-    Error,
-    variant::name_to_id::header_name_to_id,
     region::ScoredRegions,
+    variant::name_to_id::header_name_to_id,
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use std::num::NonZeroUsize;
 use std::ops::RangeInclusive;
 
@@ -43,7 +40,7 @@ impl RunConfig {
         threads: usize,
         streams: RangeInclusive<usize>,
         max_stdin: usize,
-        segregate: Option<SegregateArgs>
+        segregate: Option<SegregateArgs>,
     ) -> Result<Self, Error> {
         let io = common.io;
 
@@ -91,20 +88,22 @@ impl RunConfig {
             tracing::debug!(stream = i, path_str, "Opening stream");
             let positive_regions = &self.variants.positive_regions;
             let name_to_id = header_name_to_id(aln[i].header());
-            let positive_regions = path_for_stream(positive_regions, 0).map(|p| ScoredRegions::from_bed(p.as_path(), &name_to_id).map(|s| (s, score_fn))).transpose()?;
+            let positive_regions = path_for_stream(positive_regions, 0)
+                .map(|p| ScoredRegions::from_bed(p.as_path(), &name_to_id).map(|s| (s, score_fn)))
+                .transpose()?;
 
-            let stream = AlnStream::<RecordBuf>::new(self, &algorithm, i, threads, positive_regions)?;
+            let stream =
+                AlnStream::<RecordBuf>::new(self, &algorithm, i, threads, positive_regions)?;
             aln.push(Box::new(stream));
-            if i > 0
-                && aln[i].next_qname() != aln[0].next_qname() {
-                    return Err(Error::InvalidInput(format!(
-                        "HashLookup requires all input streams to be namesorted/collated. \
+            if i > 0 && aln[i].next_qname() != aln[0].next_qname() {
+                return Err(Error::InvalidInput(format!(
+                    "HashLookup requires all input streams to be namesorted/collated. \
                          Stream 0 next_qname: {:?}, stream {} next_qname: {:?}",
-                        aln[0].next_qname(),
-                        i,
-                        aln[i].next_qname()
-                    )));
-                }
+                    aln[0].next_qname(),
+                    i,
+                    aln[i].next_qname()
+                )));
+            }
         }
         Ok(aln)
     }

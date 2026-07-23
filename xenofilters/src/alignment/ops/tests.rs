@@ -1,6 +1,6 @@
+use crate::Error;
 use crate::alignment::{BaseOp, MdCigFlags, ScoreOpIter};
 use crate::tests::create_record;
-use crate::Error;
 
 fn op_repr(op: &BaseOp) -> String {
     match op {

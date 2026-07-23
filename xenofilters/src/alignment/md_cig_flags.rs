@@ -1,6 +1,6 @@
-use crate::alignment::tie_break_bool;
 use crate::Error;
-use noodles::sam::alignment::record::{data::field::Tag, data::field::Value, Cigar, Flags, Record};
+use crate::alignment::tie_break_bool;
+use noodles::sam::alignment::record::{Cigar, Flags, Record, data::field::Tag, data::field::Value};
 use std::cmp::Ordering;
 
 pub struct MdCigFlags<'r> {

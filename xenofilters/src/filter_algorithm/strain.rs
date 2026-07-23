@@ -1,7 +1,7 @@
 use crate::{
-    config::args::{IoArgs, ScoringArgs, RelatedArgs},
-    config::run_config::RunConfig,
     Error,
+    config::args::{IoArgs, RelatedArgs, ScoringArgs},
+    config::run_config::RunConfig,
 };
 use clap::Args;
 

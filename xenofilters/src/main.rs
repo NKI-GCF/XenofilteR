@@ -1,5 +1,5 @@
 use clap::Parser;
-use xenofilters::{config::Cli, run, Error};
+use xenofilters::{Error, config::Cli, run};
 
 fn main() -> Result<(), Error> {
     let cli = Cli::parse();

@@ -19,28 +19,28 @@ pub(crate) mod stage;
 #[cfg(test)]
 pub(crate) mod tests;
 
-use crate::alignment::{mate_slot, segment_id, Fragment, MateKind, MdCigFlags, SimpleRec};
-use crate::alignment::{pre_assess_scoring_records, PreAssessResult};
+use crate::Error;
+use crate::alignment::{Fragment, MateKind, MdCigFlags, SimpleRec, mate_slot, segment_id};
+use crate::alignment::{PreAssessResult, pre_assess_scoring_records};
 use crate::aln_stream::AlignmentStream;
 use crate::config::args::resolve_threshold;
 use crate::config::run_config::RunConfig;
 use crate::filter_algorithm::line_by_line::COUNTER_STRIDE;
-use crate::filter_algorithm::line_by_line::{ordering::Decision, Scratch, READ_CT};
+use crate::filter_algorithm::line_by_line::{READ_CT, Scratch, ordering::Decision};
 use crate::penalty::Penalty;
 use crate::region::tabix_query::{TabixBed, TabixVcf};
 use crate::region::{ScoreFn, ScoredRegions};
 use crate::variant::FragEvalVec;
-use crate::Error;
 use assemble::{
-    insert, new_fragment_table, EarlyKind, FragmentTable, MappedRecord, PendingFragment,
-    RecordKind, StreamKind,
+    EarlyKind, FragmentTable, MappedRecord, PendingFragment, RecordKind, StreamKind, insert,
+    new_fragment_table,
 };
 use noodles::core::Position;
+use noodles::sam::alignment::record::Cigar as CigarTrait;
 use noodles::sam::alignment::record::cigar::op::{Kind, Op};
 use noodles::sam::alignment::record::data::field::{Tag, Value};
-use noodles::sam::alignment::record::Cigar as CigarTrait;
 use noodles::sam::alignment::record_buf::{
-    data::field::Value as BufValue, Cigar, Data, QualityScores, RecordBuf, Sequence,
+    Cigar, Data, QualityScores, RecordBuf, Sequence, data::field::Value as BufValue,
 };
 use smallvec::SmallVec;
 use stage::StagedOutput;
@@ -95,8 +95,7 @@ impl<R: SimpleRec> HashLookup<R> {
         vcf: [Option<TabixVcf>; 2],
         pos: [Option<(ScoredRegions, ScoreFn)>; 2],
     ) -> Result<HashLookup<RecordBuf>, Error> {
-        let ambiguous_log_threshold =
-            resolve_threshold(args.scoring.ambiguous_threshold, false);
+        let ambiguous_log_threshold = resolve_threshold(args.scoring.ambiguous_threshold, false);
         Ok(HashLookup {
             aln,
             table: new_fragment_table(),
@@ -151,8 +150,7 @@ impl<R: SimpleRec> HashLookup<R> {
             &mut self.routing_counters,
             self.add_decision_tag,
         )?;
-        config
-            .print_routing_counters(&self.routing_counters, "Hash-lookup");
+        config.print_routing_counters(&self.routing_counters, "Hash-lookup");
         Ok(())
     }
 
@@ -162,7 +160,10 @@ impl<R: SimpleRec> HashLookup<R> {
             None => return Ok(None),
         };
 
-        let raw_name: &[u8] = rec.name().map(|n| n.as_ref()).ok_or(Error::RecordHasNoReadName)?;
+        let raw_name: &[u8] = rec
+            .name()
+            .map(|n| n.as_ref())
+            .ok_or(Error::RecordHasNoReadName)?;
         let key = String::from_utf8_lossy(raw_name).to_string();
 
         let flags = rec.flags()?;

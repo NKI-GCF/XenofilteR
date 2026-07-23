@@ -4,7 +4,7 @@
 //! bgzf BAM readers behind a uniform interface.
 
 use noodles::bam::{io::Reader as BamReader, record::Record};
-use noodles::bgzf::{self, io::MultithreadedReader, VirtualPosition};
+use noodles::bgzf::{self, VirtualPosition, io::MultithreadedReader};
 use noodles::sam::Header;
 use std::fs::File;
 use std::io::Read as ioRead;
@@ -22,7 +22,7 @@ impl BgzfBamReader {
     pub(crate) fn read_header(&mut self) -> std::io::Result<Header> {
         match self {
             Self::Single(r) => r.read_header(),
-            Self::Multi(r)  => r.read_header(),
+            Self::Multi(r) => r.read_header(),
         }
     }
 
@@ -31,7 +31,7 @@ impl BgzfBamReader {
     pub(crate) fn seek_vpos(&mut self, pos: VirtualPosition) -> std::io::Result<VirtualPosition> {
         match self {
             Self::Single(r) => r.get_mut().seek(pos),
-            Self::Multi(_)  => Err(std::io::Error::new(
+            Self::Multi(_) => Err(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 "seek_vpos unavailable on MultithreadedReader; \
                  use --matching-algorithm namesorted or collated with --threads",
@@ -42,7 +42,7 @@ impl BgzfBamReader {
     pub(crate) fn next_record(&mut self) -> Option<std::io::Result<Record>> {
         match self {
             Self::Single(r) => r.records().next(),
-            Self::Multi(r)  => r.records().next(),
+            Self::Multi(r) => r.records().next(),
         }
     }
 
@@ -50,7 +50,7 @@ impl BgzfBamReader {
     /// Called during `AlnStream::new()` before any records are consumed.
     pub(crate) fn read_raw_header_bytes(&mut self) -> std::io::Result<Vec<u8>> {
         fn read_raw<R: ioRead>(r: &mut BamReader<R>) -> std::io::Result<Vec<u8>> {
-            let mut hr  = r.header_reader();
+            let mut hr = r.header_reader();
             hr.read_magic_number()?;
             let mut rhr = hr.raw_sam_header_reader()?;
             let mut buf = Vec::new();
@@ -59,7 +59,7 @@ impl BgzfBamReader {
         }
         match self {
             Self::Single(r) => read_raw(r),
-            Self::Multi(r)  => read_raw(r),
+            Self::Multi(r) => read_raw(r),
         }
     }
 }

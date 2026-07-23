@@ -239,7 +239,8 @@ fn partial_ord_and_eq_reproduced_collect_misses() {
         Case {
             name: "md_i1.partial_cmp(md_i2) == None",
             check: |_, _, i1, i2| {
-                i1.partial_cmp(i2).is_none()
+                i1.partial_cmp(i2)
+                    .is_none()
                     .then_some(())
                     .ok_or_else(|| "md_i1.partial_cmp(md_i2) != None".to_string())
             },

@@ -22,7 +22,7 @@
 //! second CIGAR+MD walk is ever required.
 
 use super::read_profile::{
-    build_read_profile, compare_fragment_profiles, FragmentProfile, ReadOp, ReadSpaceDecision,
+    FragmentProfile, ReadOp, ReadSpaceDecision, build_read_profile, compare_fragment_profiles,
 };
 use crate::alignment::MdCigFlags;
 use crate::filter_algorithm::line_by_line::READ_CT;
@@ -357,7 +357,7 @@ pub(crate) fn md_mismatches(md: &[u8]) -> usize {
 mod tests {
     use super::*;
     use crate::{alignment::MdCigFlags, tests::create_record};
-    use smallvec::{smallvec, SmallVec};
+    use smallvec::{SmallVec, smallvec};
     use std::cmp::Ordering::{Equal, Greater, Less};
 
     fn mcfs_from(cigar: &str, md: &str) -> SmallVec<[MdCigFlags<'static>; READ_CT]> {

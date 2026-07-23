@@ -17,9 +17,9 @@ use std::{
 };
 
 use crate::{
-    region::diagnostic::{DiagnosticSite, SegregateVariants},
-    variant::indel_equiv::{classify, enumerate_equivalents, IndelEquivalenceExpander, IndelKind},
     Error,
+    region::diagnostic::{DiagnosticSite, SegregateVariants},
+    variant::indel_equiv::{IndelEquivalenceExpander, IndelKind, classify, enumerate_equivalents},
 };
 use noodles::vcf::variant::record::AlternateBases;
 use noodles::{bcf, bgzf, vcf};
@@ -82,9 +82,9 @@ pub(crate) fn build_diagnostic_store_expanded<R: BufRead + Seek>(
     name_to_id: &HashMap<String, usize>,
     header: &vcf::Header,
 ) -> Result<SegregateVariants, Error> {
-    use std::{fs::File, io::BufReader};
-    use rust_lapper::Interval;
     use crate::variant::store::load_lappers;
+    use rust_lapper::Interval;
+    use std::{fs::File, io::BufReader};
 
     let is_bcf = vcf_path.extension().is_some_and(|e| e == "bcf");
     let mut bcf_reader;

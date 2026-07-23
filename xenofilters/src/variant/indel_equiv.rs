@@ -14,20 +14,20 @@ pub(crate) mod corrected;
 pub(crate) mod impls;
 
 use crate::{
-    variant::{
-        population::{parse_population_record, Population},
-        sample::{parse_sample_record, Sample as SampleVariant},
-        store::Store,
-        Variant,
-    },
     Error,
+    variant::{
+        Variant,
+        population::{Population, parse_population_record},
+        sample::{Sample as SampleVariant, parse_sample_record},
+        store::Store,
+    },
 };
 use fasta::io::IndexedReader;
 use noodles::{
     core::Region,
     fasta, vcf,
-    vcf::variant::record::{AlternateBases, ReferenceBases},
     vcf::variant::RecordBuf,
+    vcf::variant::record::{AlternateBases, ReferenceBases},
 };
 use smallvec::SmallVec;
 use std::collections::HashMap;

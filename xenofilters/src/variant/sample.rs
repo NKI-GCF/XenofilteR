@@ -1,9 +1,9 @@
-use crate::variant::Variant;
 use crate::Error;
-use noodles::vcf::variant::record::AlternateBases;
-use noodles::vcf::variant::record_buf::samples::sample::Value;
-use noodles::vcf::variant::record_buf::RecordBuf;
+use crate::variant::Variant;
 use noodles::vcf::Header;
+use noodles::vcf::variant::record::AlternateBases;
+use noodles::vcf::variant::record_buf::RecordBuf;
+use noodles::vcf::variant::record_buf::samples::sample::Value;
 
 // FIXME, a variant could have multiple ALT alleles, and the GT could be 0/2, so we should ideally
 // have one Sample per ALT allele, and check if each ALT allele is present in the GT. For

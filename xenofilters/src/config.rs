@@ -2,13 +2,13 @@ pub mod args;
 pub(crate) mod run_config;
 
 use crate::{
+    Error,
     config::args::SegregateArgs,
     config::run_config::RunConfig,
     file_spec::FileSpec,
     filter_algorithm::{
         line_by_line::MAX_STREAMS, strain::StrainArgs, viral_integration::ViralIntegrationArgs,
     },
-    Error,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;

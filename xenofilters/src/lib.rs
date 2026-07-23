@@ -18,8 +18,8 @@ pub mod variant;
 use clap::CommandFactory;
 use clap_complete::generate;
 use config::{
-    run_config::RunConfig, AlgorithmCommand, Cli, CollatedArgs, HashlookupArgs, MatchingAlgorithm,
-    NamesortedArgs,
+    AlgorithmCommand, Cli, CollatedArgs, HashlookupArgs, MatchingAlgorithm, NamesortedArgs,
+    run_config::RunConfig,
 };
 pub use error::Error;
 use file_spec::path_for_stream;
@@ -31,7 +31,7 @@ use noodles::sam::alignment::record_buf::RecordBuf;
 use region::tabix_query::{TabixBed, TabixVcf};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt};
 
 // Test helpers exposed only under cfg(test) or cfg(bench).
 #[cfg(any(test, feature = "bench-internals"))]

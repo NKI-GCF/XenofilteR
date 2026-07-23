@@ -1,8 +1,8 @@
 // src/region/tabix_load.rs
-use std::path::Path;
 use crate::Error;
 use crate::region::tabix_query::{TabixBed, TabixScored, TabixVcf};
 use crate::region::{ScoreFn, load::load_pair};
+use std::path::Path;
 
 pub(crate) fn open_tabix_bed(specs: &[String]) -> Result<[Option<TabixBed>; 2], Error> {
     load_pair(specs, |p| TabixBed::open(Path::new(p)))

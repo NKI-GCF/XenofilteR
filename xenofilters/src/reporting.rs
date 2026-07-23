@@ -1,6 +1,6 @@
 // src/reporting.rs -- new shared module, no longer on Config
-use crate::filter_algorithm::line_by_line::COUNTER_STRIDE;
 use crate::Error;
+use crate::filter_algorithm::line_by_line::COUNTER_STRIDE;
 use std::path::Path;
 
 pub(crate) struct RunReport<'a> {

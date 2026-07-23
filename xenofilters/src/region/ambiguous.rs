@@ -5,14 +5,13 @@
 //! start position, and queried via binary search.
 
 use crate::Error;
+use crate::variant::store::load_lappers;
 use noodles::bed;
+use rust_lapper::{Interval, Lapper};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
-use rust_lapper::{Interval, Lapper};
-use std::collections::HashMap;
-use crate::variant::store::load_lappers;
-
 
 /// A half-open interval `[start, end)` on a single reference sequence.
 /// Coordinates are 0-based, matching BED convention.
@@ -67,7 +66,7 @@ impl AmbiguousRegions {
                         .ok_or(Error::BedRecordMissingEnd)?
                         .map_err(|e| Error::BedEndError(e.to_string()))?,
                 );
-                
+
                 Ok(Some(Interval {
                     start,
                     stop: end,

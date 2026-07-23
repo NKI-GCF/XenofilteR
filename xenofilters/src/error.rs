@@ -221,7 +221,8 @@ pub enum Error {
     ViralIntegrationStreamCount { got: usize },
 
     #[error(
-        "viral-integration labels count ({labels}) does not match alignment streams count ({alignments})")]
+        "viral-integration labels count ({labels}) does not match alignment streams count ({alignments})"
+    )]
     ViralIntegrationLabelCount { alignments: usize, labels: usize },
 
     #[error("{algorithm} does not support --score-threads > 1")]
@@ -432,7 +433,9 @@ pub enum Error {
     )]
     SingleStreamMissingFlag,
 
-    #[error("Stdin not allowed for Hashlookup algorithm; others allow at most one stream from stdin.")]
+    #[error(
+        "Stdin not allowed for Hashlookup algorithm; others allow at most one stream from stdin."
+    )]
     TooManyStdinStreams,
 
     #[error("Number of alignment streams ({n}) should be between {min} and {max} for algorithm.")]

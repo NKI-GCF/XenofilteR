@@ -2,9 +2,9 @@
 //! window of aligned read. Split out of `fragment.rs` so each piece can be
 //! unit-tested without a full Fragment/Scratch/BAM-record harness.
 
+use crate::Error;
 use crate::filter_algorithm::line_by_line::Scratch;
 use crate::penalty::Penalty;
-use crate::Error;
 
 /// Geometry of how a `[ref_start, ref_end)` scoring window overlaps a
 /// candidate variant's reference span `[vnt_start, vnt_ref_end)`.

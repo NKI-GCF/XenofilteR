@@ -1,9 +1,9 @@
 // src/region/load.rs
-use std::collections::HashMap;
-use crate::region::{AmbiguousRegions, SegregateVariants, ScoredRegions};
-use crate::region::ScoreFn;
-use std::path::Path;
 use crate::error::Error;
+use crate::region::ScoreFn;
+use crate::region::{AmbiguousRegions, ScoredRegions, SegregateVariants};
+use std::collections::HashMap;
+use std::path::Path;
 
 pub(crate) fn load_ambiguous_regions_memory(
     specs: &[String],

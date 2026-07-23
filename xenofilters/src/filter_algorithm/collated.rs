@@ -17,19 +17,22 @@ pub(crate) mod reader;
 pub(crate) mod tests;
 
 use crate::Error;
-use crate::alignment::{FragmentState, SimpleRec, PreAssessResult, pre_assess_alignments, MateKind, mate_kind::MateClassifiable };
+use crate::alignment::{
+    FragmentState, MateKind, PreAssessResult, SimpleRec, mate_kind::MateClassifiable,
+    pre_assess_alignments,
+};
 use crate::aln_stream::AlignmentStream;
+use crate::config::args::resolve_threshold;
+use crate::config::run_config::RunConfig;
+use crate::filter_algorithm::line_by_line::apply_decision_tag;
 use crate::filter_algorithm::line_by_line::{Scratch, ordering::Decision};
 use crate::penalty::Penalty;
 use crate::region::tabix_query::{TabixBed, TabixVcf};
+use ahash::RandomState;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use reader::CollatedReader;
 use smallvec::SmallVec;
 use std::collections::HashMap;
-use ahash::RandomState;
-use crate::config::run_config::RunConfig;
-use crate::config::args::resolve_threshold;
-use crate::filter_algorithm::line_by_line::apply_decision_tag;
 
 pub(crate) struct CollatedMatcher<R: SimpleRec> {
     a: CollatedReader<R>,
@@ -48,17 +51,15 @@ pub(crate) struct CollatedMatcher<R: SimpleRec> {
 impl<R: SimpleRec> CollatedMatcher<R> {
     pub(crate) fn new(
         args: &RunConfig,
-        aln:  SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>,
-        bed:  [Option<TabixBed>; 2],
-        vcf:  [Option<TabixVcf>; 2],
+        aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>,
+        bed: [Option<TabixBed>; 2],
+        vcf: [Option<TabixVcf>; 2],
     ) -> Result<CollatedMatcher<RecordBuf>, Error> {
-        let ambiguous_log_threshold = resolve_threshold(
-            args.scoring.ambiguous_threshold, false,
-        );
+        let ambiguous_log_threshold = resolve_threshold(args.scoring.ambiguous_threshold, false);
         let mut it = aln.into_iter();
         let a0 = it.next().unwrap();
         let a1 = it.next().unwrap();
-        let bisulfite = args.scoring.bisulfite; 
+        let bisulfite = args.scoring.bisulfite;
         Ok(CollatedMatcher {
             a: CollatedReader::new(a0, bisulfite, 0),
             b: CollatedReader::new(a1, bisulfite, 1),
@@ -138,16 +139,27 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         frag: &FragmentState<R>,
         aln_idx: usize,
     ) -> Result<bool, Error> {
-        let bed = match &self.bed[aln_idx] { Some(b) => b, None => return Ok(false) };
+        let bed = match &self.bed[aln_idx] {
+            Some(b) => b,
+            None => return Ok(false),
+        };
         for (rec, flags) in frag.get_records().iter().zip(frag.flags.iter()) {
-            if flags.is_secondary() || flags.is_unmapped() { continue; }
-            let is_rev  = flags.is_reverse_complemented();
-            let ref_id  = rec.ref_seq_id().transpose()?.ok_or(Error::NoRefSeqId)?;
-            let start   = rec.alignment_start().transpose()?.ok_or(Error::NoAlignmentStart)?
-                             .get().saturating_sub(1);
-            let end     = start + rec.cigar().as_ref().len();
+            if flags.is_secondary() || flags.is_unmapped() {
+                continue;
+            }
+            let is_rev = flags.is_reverse_complemented();
+            let ref_id = rec.ref_seq_id().transpose()?.ok_or(Error::NoRefSeqId)?;
+            let start = rec
+                .alignment_start()
+                .transpose()?
+                .ok_or(Error::NoAlignmentStart)?
+                .get()
+                .saturating_sub(1);
+            let end = start + rec.cigar().as_ref().len();
             // `any_overlap` now strand-aware via BED column 6.
-            if bed.any_overlap(ref_id, start, end, is_rev)? { return Ok(true); }
+            if bed.any_overlap(ref_id, start, end, is_rev)? {
+                return Ok(true);
+            }
         }
         Ok(false)
     }
@@ -201,8 +213,22 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         };
 
         // Tier 3: full NW scoring.
-        let s1 = a.score_state_nw(mcfs1, self.a.variant_store().as_deref(), &self.penalties, &mut self.scratch, cancel_slot, self.a.positive_regions())?;
-        let s2 = b.score_state_nw(mcfs2, self.b.variant_store().as_deref(), &self.penalties, &mut self.scratch, cancel_slot, self.b.positive_regions())?;
+        let s1 = a.score_state_nw(
+            mcfs1,
+            self.a.variant_store().as_deref(),
+            &self.penalties,
+            &mut self.scratch,
+            cancel_slot,
+            self.a.positive_regions(),
+        )?;
+        let s2 = b.score_state_nw(
+            mcfs2,
+            self.b.variant_store().as_deref(),
+            &self.penalties,
+            &mut self.scratch,
+            cancel_slot,
+            self.b.positive_regions(),
+        )?;
         let delta = s1 - s2;
 
         if delta > self.ambiguous_log_threshold {

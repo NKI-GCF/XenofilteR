@@ -35,15 +35,15 @@ pub(crate) mod reader;
 
 use crate::Error;
 pub(crate) use format::AlnFormat;
-pub(crate) use io::{out_from_file, path_unicode_ok, BamOutput};
+pub(crate) use io::{BamOutput, out_from_file, path_unicode_ok};
 use noodles::sam::{
     alignment::{
         record::data::field::Tag,
-        record_buf::{data::field::Value, RecordBuf},
+        record_buf::{RecordBuf, data::field::Value},
     },
     header::{
-        record::value::{map::ReadGroup, Map},
         Header,
+        record::value::{Map, map::ReadGroup},
     },
 };
 
@@ -71,8 +71,8 @@ pub(crate) fn expand_header(mut header: Header, write_discarded: bool) -> Header
         .flat_map(|(id, rg)| {
             let id_str = id.to_string();
             let ambiguous = (format!("{id_str}{SUFFIX_AMBIGUOUS}"), rg.clone());
-            let filtered = write_discarded
-                .then(|| (format!("{id_str}{SUFFIX_FILTERED}"), rg.clone()));
+            let filtered =
+                write_discarded.then(|| (format!("{id_str}{SUFFIX_FILTERED}"), rg.clone()));
             std::iter::once(ambiguous).chain(filtered)
         })
         .collect();

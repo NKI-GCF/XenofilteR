@@ -33,11 +33,7 @@ pub(crate) fn segment_id(flags: &Flags) -> u8 {
 
 /// Map a segment id to a fixed mate slot: 0 = forward/single-end, 1 = reverse.
 pub(crate) fn mate_slot(seg_id: u8) -> usize {
-    if seg_id == 0x80 {
-        1
-    } else {
-        0
-    }
+    if seg_id == 0x80 { 1 } else { 0 }
 }
 
 /// Implementors can classify their own per-mate alignment quality without

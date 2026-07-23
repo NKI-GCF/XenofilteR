@@ -1,6 +1,6 @@
-use crate::alignment::{mate_slot, segment_id, MateKind};
-use crate::region::tabix_query::{TabixBed, TabixVcf};
 use crate::Error;
+use crate::alignment::{MateKind, mate_slot, segment_id};
+use crate::region::tabix_query::{TabixBed, TabixVcf};
 use noodles::sam::alignment::record::Flags;
 use smallvec::SmallVec;
 

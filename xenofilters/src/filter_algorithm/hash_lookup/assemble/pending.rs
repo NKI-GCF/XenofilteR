@@ -1,8 +1,8 @@
+use super::FragmentTable;
+use super::stream::{RecordKind, StreamAccumulator, StreamKind};
+use crate::Error;
 use crate::region::tabix_query::{TabixBed, TabixVcf};
 use smallvec::SmallVec;
-use super::FragmentTable;
-use super::stream::{StreamAccumulator, StreamKind, RecordKind};
-use crate::Error;
 
 // ---------------------------------------------------------------------------
 // PendingFragment -- unchanged structurally; type updated to RecordKind

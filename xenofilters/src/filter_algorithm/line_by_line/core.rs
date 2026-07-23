@@ -5,6 +5,7 @@
 //   - process() dispatcher added (sequential vs parallel)
 
 use crate::{
+    Error,
     alignment::{FragmentState, SimpleRec},
     aln_stream::AlignmentStream,
     config::run_config::RunConfig,
@@ -12,7 +13,6 @@ use crate::{
     progress::ProgressReporter,
     region::{ScoreFn, ScoredRegions},
     variant::name_to_id::header_name_to_id,
-    Error,
 };
 use noodles::sam::alignment::Record;
 use smallvec::SmallVec;
@@ -208,12 +208,13 @@ impl<R: SimpleRec> LineByLine<R> {
 fn debug_new_qname_fn<R: SimpleRec>() -> fn(&FragmentBuffer<R>, &[u8]) -> Option<bool> {
     |best: &FragmentBuffer<R>, qname2: &[u8]| {
         if let Some(q1) = best.first().map(|b| b.first_qname())
-            && (q1.ends_with(b"/1") || q1.ends_with(b"/2")) {
-                return best
-                    .first()
-                    .map(|b| b.first_qname())
-                    .map(|q1| q1[..q1.len() - 2] != qname2[..qname2.len() - 2]);
-            }
+            && (q1.ends_with(b"/1") || q1.ends_with(b"/2"))
+        {
+            return best
+                .first()
+                .map(|b| b.first_qname())
+                .map(|q1| q1[..q1.len() - 2] != qname2[..qname2.len() - 2]);
+        }
         best.first().map(|b| b.first_qname()).map(|q1| q1 != qname2)
     }
 }

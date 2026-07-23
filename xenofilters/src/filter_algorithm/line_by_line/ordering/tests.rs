@@ -1,15 +1,18 @@
 use crate::tests::common::{r, u};
 use crate::{
+    Error, LineByLine,
     alignment::FragmentState,
     aln_stream::AlignmentStream,
-    config::{run_config::RunConfig, args::{IoArgs, ScoringArgs}},
+    config::{
+        args::{IoArgs, ScoringArgs},
+        run_config::RunConfig,
+    },
     filter_algorithm::line_by_line::core::FragmentBuffer,
-    tests::{create_record, MockStream},
-    Error, LineByLine,
+    tests::{MockStream, create_record},
 };
 use noodles::sam::alignment::record::Flags;
 use noodles::sam::alignment::record_buf::RecordBuf;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 
 // ---------------------------------------------------------------------------
 // Builder helpers
@@ -22,7 +25,9 @@ fn lbl_chimeric(specs: &[(&str, Vec<RecordBuf>)], pairs: &[[usize; 2]]) -> LineB
     let aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> = specs
         .iter()
         .enumerate()
-        .map(|(i, (_, recs))| Box::new(MockStream::new(i, recs.clone())) as Box<dyn AlignmentStream<RecordBuf>>)
+        .map(|(i, (_, recs))| {
+            Box::new(MockStream::new(i, recs.clone())) as Box<dyn AlignmentStream<RecordBuf>>
+        })
         .collect();
     LineByLine::new(&cfg, aln, stream_labels, chimeric_pairs).unwrap()
 }
@@ -83,31 +88,59 @@ fn two_stream_tournament() {
         // -- Tier 1: unmapped ---------------------------------------------
         TwoStreamCase {
             label: "both unmapped -> both ambiguous",
-            s0: vec![u(b"R1")], s1: vec![u(b"R1")],
-            out0:0, out1:0, disc0:0, disc1:0, ambig0:1, ambig1:1,
+            s0: vec![u(b"R1")],
+            s1: vec![u(b"R1")],
+            out0: 0,
+            out1: 0,
+            disc0: 0,
+            disc1: 0,
+            ambig0: 1,
+            ambig1: 1,
         },
         TwoStreamCase {
             label: "s0 unmapped s1 mapped -> s1 wins",
-            s0: vec![u(b"R1")], s1: vec![r(b"R1", "10M", "10")],
-            out0:0, out1:1, disc0:1, disc1:0, ambig0:0, ambig1:0,
+            s0: vec![u(b"R1")],
+            s1: vec![r(b"R1", "10M", "10")],
+            out0: 0,
+            out1: 1,
+            disc0: 1,
+            disc1: 0,
+            ambig0: 0,
+            ambig1: 0,
         },
         // -- Tier 2: perfect-match -----------------------------------------
         TwoStreamCase {
             label: "s0 perfect s1 imperfect -> s0 wins",
             s0: vec![r(b"R1", "10M", "10")],
             s1: vec![r(b"R1", "10M", "5A4")],
-            out0:1, out1:0, disc0:0, disc1:1, ambig0:0, ambig1:0,
+            out0: 1,
+            out1: 0,
+            disc0: 0,
+            disc1: 1,
+            ambig0: 0,
+            ambig1: 0,
         },
         TwoStreamCase {
             label: "both perfect -> ambiguous",
-            s0: vec![r(b"R1", "10M", "10")], s1: vec![r(b"R1", "10M", "10")],
-            out0:0, out1:0, disc0:0, disc1:0, ambig0:1, ambig1:1,
+            s0: vec![r(b"R1", "10M", "10")],
+            s1: vec![r(b"R1", "10M", "10")],
+            out0: 0,
+            out1: 0,
+            disc0: 0,
+            disc1: 0,
+            ambig0: 1,
+            ambig1: 1,
         },
         TwoStreamCase {
             label: "s1 perfect s0 softclip -> s1 wins",
             s0: vec![r(b"R1", "5S5M", "5")],
-            s1: vec![r(b"R1", "10M",  "10")],
-            out0:0, out1:1, disc0:1, disc1:0, ambig0:0, ambig1:0,
+            s1: vec![r(b"R1", "10M", "10")],
+            out0: 0,
+            out1: 1,
+            disc0: 1,
+            disc1: 0,
+            ambig0: 0,
+            ambig1: 0,
         },
         // -- Tier 2.5: match-count domination -----------------------------
         TwoStreamCase {
@@ -115,7 +148,12 @@ fn two_stream_tournament() {
             // s0: 8 matches, s1: 6 matches (both imperfect so Tier2 doesn't resolve)
             s0: vec![r(b"R1", "10M", "8AA")],
             s1: vec![r(b"R1", "10M", "6AAAA")],
-            out0:1, out1:0, disc0:0, disc1:1, ambig0:0, ambig1:0,
+            out0: 1,
+            out1: 0,
+            disc0: 0,
+            disc1: 1,
+            ambig0: 0,
+            ambig1: 0,
         },
         // -- Tier 3: NW scoring breaks tie --------------------------------
         TwoStreamCase {
@@ -123,14 +161,32 @@ fn two_stream_tournament() {
             // With all q=30 and flat MD, both identical CIGARs -> ambiguous
             s0: vec![r(b"R1", "8M2S", "8")],
             s1: vec![r(b"R1", "8M2S", "8")],
-            out0:0, out1:0, disc0:0, disc1:0, ambig0:1, ambig1:1,
+            out0: 0,
+            out1: 0,
+            disc0: 0,
+            disc1: 0,
+            ambig0: 1,
+            ambig1: 1,
         },
         // -- Multiple fragments --------------------------------------------
         TwoStreamCase {
             label: "multiple fragments independent outcomes",
-            s0: vec![r(b"R1","10M","10"), r(b"R2","5S5M","5"),  r(b"R3","10M","10")],
-            s1: vec![r(b"R1","5S5M","5"), r(b"R2","10M","10"),  r(b"R3","10M","10")],
-            out0:1, out1:1, disc0:1, disc1:1, ambig0:1, ambig1:1,
+            s0: vec![
+                r(b"R1", "10M", "10"),
+                r(b"R2", "5S5M", "5"),
+                r(b"R3", "10M", "10"),
+            ],
+            s1: vec![
+                r(b"R1", "5S5M", "5"),
+                r(b"R2", "10M", "10"),
+                r(b"R3", "10M", "10"),
+            ],
+            out0: 1,
+            out1: 1,
+            disc0: 1,
+            disc1: 1,
+            ambig0: 1,
+            ambig1: 1,
         },
     ]);
 }
@@ -435,11 +491,16 @@ fn setup_mock_streams_observed_examples() -> SmallVec<[Box<dyn AlignmentStream<R
 #[test]
 fn test_branch_counters_and_skipping() -> Result<(), Error> {
     let mut config = RunConfig {
-        io: IoArgs { discard_unmapped: true, skip_secondary: true, ..Default::default() },
+        io: IoArgs {
+            discard_unmapped: true,
+            skip_secondary: true,
+            ..Default::default()
+        },
         ..Default::default()
     };
 
-    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&config, setup_mock_streams(), vec![], vec![])?;
+    let mut lbl: LineByLine<RecordBuf> =
+        LineByLine::new(&config, setup_mock_streams(), vec![], vec![])?;
 
     let mut unmapped_fwd = create_record(b"u", "*", &[], &[], "10", false)?;
     *unmapped_fwd.flags_mut() = Flags::from_bits(0x45).unwrap(); // unmapped, paired, first in
@@ -459,14 +520,15 @@ fn test_branch_counters_and_skipping() -> Result<(), Error> {
     assert!(lbl.write_record(0, unmapped_single, Some(false)).is_ok());
     assert_eq!(lbl.routing_counters[2], 2); // ambiguous:0: 2
     assert_eq!(lbl.routing_counters[0], 1); // discard:0:
-                                            // ingest_record should skip secondary
+    // ingest_record should skip secondary
     let mut best: FragmentBuffer<RecordBuf> = smallvec![];
     let finished = lbl.ingest_record(0, secondary, &mut best).unwrap();
     assert!(!finished);
     assert!(best.is_empty());
 
     config.io.discard_unmapped = false;
-    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&config, setup_mock_streams(), vec![], vec![])?;
+    let mut lbl: LineByLine<RecordBuf> =
+        LineByLine::new(&config, setup_mock_streams(), vec![], vec![])?;
     assert!(lbl.write_record(0, unmapped_fwd, None).is_ok());
     assert!(lbl.write_record(0, unmapped_rev, None).is_ok());
     assert_eq!(lbl.routing_counters[2], 2); // ambiguous:0: 2
@@ -477,7 +539,8 @@ fn test_branch_counters_and_skipping() -> Result<(), Error> {
 #[test]
 fn test_handle_ordering_logic() -> Result<(), Error> {
     let config = RunConfig::default();
-    let lbl_setup: LineByLine<RecordBuf> = LineByLine::new(&config, setup_mock_streams(), vec![], vec![])?;
+    let lbl_setup: LineByLine<RecordBuf> =
+        LineByLine::new(&config, setup_mock_streams(), vec![], vec![])?;
     // Direct testing of routing_counters incrementation via write_record:
     let mut lbl: LineByLine<RecordBuf> = lbl_setup;
     let rec = create_record(b"r1", "M10", &[], &[], "10", false)?;
@@ -497,7 +560,8 @@ fn test_handle_ordering_logic() -> Result<(), Error> {
 #[test]
 fn test_fragment_finished_transitions() -> Result<(), Error> {
     let config = RunConfig::default();
-    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&config, setup_mock_streams(), vec![], vec![])?;
+    let mut lbl: LineByLine<RecordBuf> =
+        LineByLine::new(&config, setup_mock_streams(), vec![], vec![])?;
     let rec = create_record(b"R1", "M10", &[], &[], "10", false)?;
     let mut best: FragmentBuffer<RecordBuf> =
         smallvec![FragmentState::from_record(rec.clone(), 0, false)?];
@@ -515,7 +579,8 @@ fn test_fragment_finished_transitions() -> Result<(), Error> {
 #[test]
 fn test_complex_fragment_grouping() -> Result<(), Error> {
     let config = RunConfig::default();
-    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&config, setup_mock_streams(), vec![], vec![])?;
+    let mut lbl: LineByLine<RecordBuf> =
+        LineByLine::new(&config, setup_mock_streams(), vec![], vec![])?;
     let mut best: FragmentBuffer<RecordBuf> = smallvec![];
 
     // paired-end style: same QNAME twice
@@ -561,13 +626,25 @@ fn test_line_by_line_full_flow() -> Result<(), Error> {
 #[test]
 fn test_observed_pe_scoring1() -> Result<(), Error> {
     let config = RunConfig {
-        io: IoArgs { discard_unmapped: true, ..Default::default() },
-        scoring: ScoringArgs { gap_open: 6.0, gap_extend: 1.0, mismatch_penalty: 4.0, ..Default::default() },
+        io: IoArgs {
+            discard_unmapped: true,
+            ..Default::default()
+        },
+        scoring: ScoringArgs {
+            gap_open: 6.0,
+            gap_extend: 1.0,
+            mismatch_penalty: 4.0,
+            ..Default::default()
+        },
         ..Default::default()
     };
 
-    let mut lbl: LineByLine<RecordBuf> =
-        LineByLine::new(&config, setup_mock_streams_observed_examples(), vec![], vec![])?;
+    let mut lbl: LineByLine<RecordBuf> = LineByLine::new(
+        &config,
+        setup_mock_streams_observed_examples(),
+        vec![],
+        vec![],
+    )?;
 
     lbl.process_sequential(&config)?;
     assert_eq!(lbl.routing_counters[4], 2); // discard:1: both reads
@@ -592,7 +669,10 @@ impl LineByLine<RecordBuf> {
 #[test]
 fn test_ambiguous_log_threshold_conversion() -> Result<(), Error> {
     let mut config = RunConfig {
-        scoring: ScoringArgs { ambiguous_threshold: 0, ..Default::default() },
+        scoring: ScoringArgs {
+            ambiguous_threshold: 0,
+            ..Default::default()
+        },
         ..RunConfig::default()
     };
     let aln = setup_mock_streams(); // any valid stream works for new()

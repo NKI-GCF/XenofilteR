@@ -1,31 +1,30 @@
+use crate::Error;
 use crate::alignment::SimpleRec;
 use crate::bam::reader::BgzfBamReader;
 use crate::bam::{
-    expand_header, out_from_file, path_unicode_ok, rewrite_rg, BamOutput, SUFFIX_AMBIGUOUS,
-    SUFFIX_FILTERED,
+    BamOutput, SUFFIX_AMBIGUOUS, SUFFIX_FILTERED, expand_header, out_from_file, path_unicode_ok,
+    rewrite_rg,
 };
-use crate::config::run_config::RunConfig;
 use crate::config::MatchingAlgorithm;
+use crate::config::run_config::RunConfig;
 use crate::file_spec::path_for_stream;
-use crate::region::{diagnostic::SegregateVariants, PositiveRegions, ScoreFn};
+use crate::region::{PositiveRegions, ScoreFn, diagnostic::SegregateVariants};
 use crate::variant::{
-    build_diagnostic_store_expanded,
+    StoreTrait, build_diagnostic_store_expanded,
     indel_equiv::corrected::read_vcf_or_bcf_header,
     indel_equiv::{
-        build_population_store_expanded, build_sample_store_expanded, IndelEquivalenceExpander,
+        IndelEquivalenceExpander, build_population_store_expanded, build_sample_store_expanded,
     },
     name_to_id::header_name_to_id,
-    population::{parse_population_record, Population},
-    sample::{parse_sample_record, Sample},
+    population::{Population, parse_population_record},
+    sample::{Sample, parse_sample_record},
     store::Store,
-    StoreTrait,
 };
-use crate::Error;
 use noodles::bam::{io::Reader as BamReader, record::Record};
-use noodles::bgzf::{io::MultithreadedReader, VirtualPosition};
+use noodles::bgzf::{VirtualPosition, io::MultithreadedReader};
 use noodles::fasta::io::indexed_reader::Builder;
-use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::Header;
+use noodles::sam::alignment::record_buf::RecordBuf;
 use std::fs::File;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -336,8 +335,7 @@ fn build_variant_stores(
 
     // -- Expanded path: requires --reference ----------------------------------
     let fasta_path = path_for_stream(&config.io.reference, stream_idx);
-    let fasta_path = fasta_path
-        .ok_or(crate::Error::ExpandIndelsRequiresReference)?;
+    let fasta_path = fasta_path.ok_or(crate::Error::ExpandIndelsRequiresReference)?;
 
     // Validate that the .fai sidecar exists before opening the expander.
     let fai_path = fasta_path.with_extension(
@@ -376,7 +374,7 @@ pub(crate) fn build_diagnostic_store_for_stream(
     header: &Header,
     stream_idx: usize,
 ) -> Result<Option<crate::region::diagnostic::SegregateVariants>, Error> {
-    if let Some (segregate) = &config.segregate {
+    if let Some(segregate) = &config.segregate {
         let diag_vcf_path = path_for_stream(&segregate.distinct_variants, stream_idx);
         let Some(path) = diag_vcf_path else {
             return Ok(None);
@@ -386,8 +384,7 @@ pub(crate) fn build_diagnostic_store_for_stream(
             return SegregateVariants::from_vcf(path, &header_name_to_id(header)).map(Some);
         }
         let fasta_path = path_for_stream(&config.io.reference, stream_idx);
-        let fasta_path = fasta_path
-            .ok_or(crate::Error::ExpandIndelsRequiresReference)?;
+        let fasta_path = fasta_path.ok_or(crate::Error::ExpandIndelsRequiresReference)?;
 
         let fasta_reader = Builder::default().build_from_path(fasta_path)?;
 
@@ -401,8 +398,6 @@ pub(crate) fn build_diagnostic_store_for_stream(
     } else {
         Ok(None)
     }
-
-
 }
 
 #[cfg(test)]

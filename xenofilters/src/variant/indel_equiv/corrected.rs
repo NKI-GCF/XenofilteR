@@ -17,12 +17,12 @@ use std::{
 use noodles::{bcf, bgzf, fasta, vcf};
 use tracing::{debug, warn};
 
-use crate::variant::{population::Population, sample::Sample, store::Store, Variant};
+use crate::variant::{Variant, population::Population, sample::Sample, store::Store};
 
-use crate::variant::indel_equiv::{
-    classify, enumerate_equivalents, IndelEquivalenceExpander, IndelKind,
-};
 use crate::Error;
+use crate::variant::indel_equiv::{
+    IndelEquivalenceExpander, IndelKind, classify, enumerate_equivalents,
+};
 
 // ---------------------------------------------------------------------------
 // Corrected IndelEquivalenceExpander expand methods

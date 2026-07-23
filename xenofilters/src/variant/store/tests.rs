@@ -85,7 +85,7 @@ fn insert_preserves_stable_order_for_equal_positions() {
     store.insert(1, fv(100, 1));
     store.insert(1, fv(100, 2)); // same pos, different ref_len -- must land after
     store.insert(1, fv(100, 3));
-    let bucket =  &store.per_chr_data[&1];
+    let bucket = &store.per_chr_data[&1];
     let lens: Vec<usize> = bucket.iter().map(|v| v.ref_allele().len()).collect();
     assert_eq!(
         lens,

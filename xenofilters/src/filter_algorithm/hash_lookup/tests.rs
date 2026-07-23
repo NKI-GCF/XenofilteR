@@ -1,6 +1,6 @@
 use crate::tests::common::{r, u};
 use crate::{
-    aln_stream::tests::MockStream, aln_stream::AlignmentStream, config::run_config::RunConfig,
+    aln_stream::AlignmentStream, aln_stream::tests::MockStream, config::run_config::RunConfig,
     filter_algorithm::hash_lookup::HashLookup, tests::create_record,
 };
 use noodles::sam::alignment::record::Flags;

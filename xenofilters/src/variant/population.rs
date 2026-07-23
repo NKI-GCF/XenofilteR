@@ -1,9 +1,9 @@
-use crate::variant::Variant;
 use crate::Error;
-use noodles::vcf::variant::record::AlternateBases;
-use noodles::vcf::variant::record_buf::info::field::{value::Array::Float, Value};
-use noodles::vcf::variant::record_buf::RecordBuf;
+use crate::variant::Variant;
 use noodles::vcf::Header;
+use noodles::vcf::variant::record::AlternateBases;
+use noodles::vcf::variant::record_buf::RecordBuf;
+use noodles::vcf::variant::record_buf::info::field::{Value, value::Array::Float};
 
 #[derive(Debug, Clone)]
 pub(crate) struct Population {

@@ -1,5 +1,5 @@
-use crate::alignment::MdCigFlags;
 use crate::Error;
+use crate::alignment::MdCigFlags;
 use noodles::sam::alignment::record::cigar::op::{Kind, Op};
 
 #[derive(Debug, PartialEq, Eq)]

@@ -1,15 +1,17 @@
 //! Benchmark ahash vs SipHash for FragmentTable insert+lookup.
 //! Validates the ahash adoption decision empirically.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use ahash::RandomState;
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use std::collections::HashMap;
 
 fn make_keys(n: usize) -> Vec<Box<[u8]>> {
     // Realistic Illumina read names: ~50 bytes.
     (0..n)
         .map(|i| {
-            format!("A00123:45:HXXXXYYYY:1:1101:{i}:{i}").into_bytes().into_boxed_slice()
+            format!("A00123:45:HXXXXYYYY:1:1101:{i}:{i}")
+                .into_bytes()
+                .into_boxed_slice()
         })
         .collect()
 }

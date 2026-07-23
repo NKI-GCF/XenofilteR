@@ -5,11 +5,11 @@
 //! Reads overlapping any diagnostic position must go through full scoring.
 
 use crate::Error;
+use crate::variant::store::load_lappers;
 use noodles::bcf;
 use rust_lapper::{Interval, Lapper};
 use std::collections::HashMap;
 use std::path::Path;
-use crate::variant::store::load_lappers;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) struct DiagnosticSite {
@@ -83,7 +83,8 @@ mod tests {
         DiagnosticSite { pos, ref_len }
     }
     fn store(sites: &[(usize, usize, usize)]) -> SegregateVariants {
-        let mut raw_intervals: HashMap<usize, Vec<Interval<usize, DiagnosticSite>>> = HashMap::new();
+        let mut raw_intervals: HashMap<usize, Vec<Interval<usize, DiagnosticSite>>> =
+            HashMap::new();
         for &(rid, pos, ref_len) in sites {
             raw_intervals.entry(rid).or_default().push(Interval {
                 start: pos,
