@@ -87,15 +87,6 @@ impl RunConfig {
             tracing::debug!(stream = i, path_str, "Opening stream");
             let stream = AlnStream::<RecordBuf>::new(self, &algorithm, i, threads)?;
             aln.push(Box::new(stream));
-            if i > 0 && aln[i].next_qname() != aln[0].next_qname() {
-                return Err(Error::InvalidInput(format!(
-                    "HashLookup requires all input streams to be namesorted/collated. \
-                         Stream 0 next_qname: {:?}, stream {} next_qname: {:?}",
-                    aln[0].next_qname(),
-                    i,
-                    aln[i].next_qname()
-                )));
-            }
         }
         Ok(aln)
     }

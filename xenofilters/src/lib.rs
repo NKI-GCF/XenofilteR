@@ -153,10 +153,21 @@ fn run_line_by_line(
     mut run: RunConfig,
 ) -> Result<(), Error> {
     let aln = run.open_streams_unified(MatchingAlgorithm::Namesorted, run.threads)?;
+    let n = aln.len();
+    for i in 1..n {
+        if i > 0 && aln[i].next_qname() != aln[0].next_qname() {
+            return Err(Error::InvalidInput(format!(
+                "HashLookup requires all input streams to be namesorted/collated. \
+                         Stream 0 next_qname: {:?}, stream {} next_qname: {:?}",
+                aln[0].next_qname(),
+                i,
+                aln[i].next_qname()
+            )));
+        }
+    }
 
     // Clamp score_threads to aln.len() * 2 as a sanity bound; beyond that
     // the IO thread becomes the bottleneck and extra workers are idle
-    let n = aln.len();
     score_threads = score_threads.max(n * 2);
 
     let mut lbl = LineByLine::new(&run, aln, stream_labels.clone(), chimeric_pairs)?;
