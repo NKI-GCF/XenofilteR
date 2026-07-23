@@ -21,6 +21,7 @@ pub(crate) struct MappedRecord {
     pub(crate) cigar_bytes: Vec<u8>,
     pub(crate) md: Vec<u8>,
     pub(crate) qualities: Vec<u8>,
+    pub(crate) sequence: Vec<u8>,
     pub(crate) virtual_offset: u64,
     /// Supplementary alignment count from the SA:Z tag (semicolons counted).
     pub(crate) supp_count: usize,
@@ -272,6 +273,7 @@ mod is_perfect_tests {
             cigar_bytes,
             md: md.to_vec(),
             qualities: vec![30; 10],
+            sequence: vec![b'A'; 10],
             virtual_offset: 0,
             supp_count,
         }

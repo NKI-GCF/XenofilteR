@@ -242,9 +242,9 @@ impl<R: SimpleRec> HashLookup<R> {
         };
         let qualities: Vec<u8> = rec
             .quality_scores()
-            .as_ref()
             .iter()
             .collect::<Result<Vec<u8>, std::io::Error>>()?;
+        let sequence: Vec<u8> = rec.sequence().iter().collect::<Vec<u8>>();
         let supp_count = match rec.data().get(&Tag::OTHER_ALIGNMENTS).transpose()? {
             Some(Value::String(s)) => {
                 let bytes: &[u8] = s.as_ref();
@@ -263,6 +263,7 @@ impl<R: SimpleRec> HashLookup<R> {
                 cigar_bytes,
                 md,
                 qualities,
+                sequence,
                 virtual_offset,
                 supp_count,
             })),
@@ -509,7 +510,7 @@ impl<R: SimpleRec> HashLookup<R> {
             }
             *buf.cigar_mut() = Cigar::from(cigar_ops);
             *buf.quality_scores_mut() = QualityScores::from_iter(m.qualities.iter().cloned());
-            *buf.sequence_mut() = Sequence::from(vec![b'N'; m.qualities.len()]);
+            *buf.sequence_mut() = Sequence::from_iter(m.sequence.iter().cloned());
             let md_str = String::from_utf8(m.md.clone())?;
             let data: Data = [(Tag::MISMATCHED_POSITIONS, BufValue::from(md_str))]
                 .into_iter()
