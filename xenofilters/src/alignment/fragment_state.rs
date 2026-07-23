@@ -75,18 +75,18 @@ impl<R: SimpleRec> FragmentState<R> {
             .collect()
     }
 
-    pub(crate) fn order_mates(&self) -> SmallVec<[usize; READ_CT]> {
+    pub(crate) fn order_mates(&self) -> Result<SmallVec<[usize; READ_CT]>, Error> {
         let len = self.records.len();
         let mut indices: SmallVec<[(u8, usize, usize, usize); 2]> = SmallVec::with_capacity(len);
         for i in 0..len {
             let r = &self.records[i];
             let start = match r.alignment_start() {
                 Some(Ok(pos)) => pos.get(),
-                _ => panic!("Mapped record has no alignment start"),
+                _ => return Err(Error::MappedRecordNoAlignmentStart),
             };
             let tid = match r.ref_seq_id() {
                 Some(Ok(tid)) => tid,
-                _ => panic!("Mapped record has no reference sequence ID"),
+                _ => return Err(Error::MappedRecordNoReferenceSequenceId),
             };
             let flags = &self.flags[i];
             let pos = if flags.is_reverse_complemented() {
@@ -98,7 +98,7 @@ impl<R: SimpleRec> FragmentState<R> {
             indices.push((ord, tid, pos, i));
         }
         indices.sort();
-        indices.iter().map(|t| t.3).collect()
+        Ok(indices.iter().map(|t| t.3).collect())
     }
     pub(crate) fn cmp_perfect<'f>(
         &'f self,
@@ -194,7 +194,7 @@ impl<R: SimpleRec> FragmentState<R> {
         let mut mcfs_opt: SmallVec<[Option<MdCigFlags<'_>>; READ_CT]> =
             mcfs.into_iter().map(Some).collect();
 
-        for idx in self.order_mates() {
+        for idx in self.order_mates()? {
             let flags = self.flags(idx).ok_or(Error::NoFlagsForRecord { idx })?;
             if flags.is_secondary() {
                 mcfs_opt[idx] = None;

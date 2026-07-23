@@ -433,7 +433,7 @@ fn score_candidate_owned(
     let mut mcfs_opt: SmallVec<[Option<MdCigFlags>; READ_CT]> =
         mcfs.into_iter().map(Some).collect();
 
-    for idx in state.order_mates() {
+    for idx in state.order_mates()? {
         let flags = state
             .flags(idx)
             .ok_or(Error::NoFlagsForRecordIndex { idx })?;

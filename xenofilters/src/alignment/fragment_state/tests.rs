@@ -64,7 +64,7 @@ fn test_fragment_state_order_mates_multiple_records() -> Result<(), Error> {
     let rec2 = create_record(b"read1", "100M", &[], &qual, "100", true)?;
     let mut state = FragmentState::from_record(rec1, 0, false)?;
     state.add_record(rec2)?;
-    let order = state.order_mates();
+    let order = state.order_mates()?;
     let expected: SmallVec<[usize; 2]> = smallvec![0, 1];
     assert_eq!(order, expected); // Forward read should come before reverse read
     Ok(())
@@ -132,7 +132,7 @@ fn test_order_mates_sorts_by_segment_then_secondary_then_tid_then_pos() -> Resul
     state.add_record(secondary_first)?; // idx 2
     state.add_record(primary_first)?; // idx 3
 
-    let order = state.order_mates();
+    let order = state.order_mates()?;
     let expected: SmallVec<[usize; 2]> = smallvec![3, 2, 1, 0];
     assert_eq!(order, expected);
     Ok(())
@@ -166,7 +166,7 @@ fn test_order_mates_ord_math_isolation() -> Result<(), Error> {
     let mut state = FragmentState::from_record(rec_b, 0, false)?;
     state.add_record(rec_a)?;
 
-    let order = state.order_mates();
+    let order = state.order_mates()?;
     // Expected: Record A (idx 1, ord 1) MUST sort before Record B (idx 0, ord 2)
     // If operators switch (+ <-> *), ord values tie, and tid forces [0, 1] instead.
     let expected: SmallVec<[usize; 2]> = smallvec![1, 0];
@@ -193,7 +193,7 @@ fn test_order_mates_reverse_complement_pos_math() -> Result<(), Error> {
     let mut state = FragmentState::from_record(rec2, 0, false)?;
     state.add_record(rec1)?;
 
-    let order = state.order_mates();
+    let order = state.order_mates()?;
     // Expected: rec1 (idx 1, true pos 10) comes before rec2 (idx 0, true pos 11)
     let expected: SmallVec<[usize; 2]> = smallvec![1, 0];
     assert_eq!(order, expected);
