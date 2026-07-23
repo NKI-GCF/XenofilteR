@@ -15,6 +15,7 @@
 //! Single-threaded only. Output order follows driving-stream (stream 0) order.
 
 pub mod assemble;
+pub(crate) mod name_codec;
 pub(crate) mod stage;
 #[cfg(test)]
 pub(crate) mod tests;
