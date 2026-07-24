@@ -149,7 +149,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             let start = rec
                 .alignment_start()
                 .transpose()?
-                .ok_or(Error::NoAlignmentStart)?
+                .ok_or(Error::NoAlnStart)?
                 .get()
                 .saturating_sub(1);
             let end = start + rec.cigar().as_ref().len();
