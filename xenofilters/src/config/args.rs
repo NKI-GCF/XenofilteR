@@ -322,7 +322,7 @@ pub(crate) fn parse_chimeric_pairs(
             .parse::<usize>()
             .map_err(|_| Error::InvalidChimericPairFormat { raw: raw.clone() })?;
         if a == b {
-            return Err(Error::ChimericPairSameIndex { raw: raw.clone() });
+            return Err(Error::ChimericPairsIdenticalIndices { raw: raw.clone() });
         }
         if a >= n_streams || b >= n_streams {
             return Err(Error::ChimericPairIndexOutOfRange {
@@ -383,7 +383,7 @@ mod chimeric_pair_tests {
     fn identical_indices_rejected() {
         assert!(matches!(
             parse_chimeric_pairs(&["1:1".into()], 2),
-            Err(Error::ChimericPairSameIndex { .. })
+            Err(Error::ChimericPairsIdenticalIndices { .. })
         ));
     }
 

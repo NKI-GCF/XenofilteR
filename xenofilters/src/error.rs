@@ -187,7 +187,7 @@ pub enum Error {
     InvalidChimericPairFormat { raw: String },
 
     #[error("--chimeric-pairs: '{raw}' -- stream index must differ")]
-    ChimericPairSameIndex { raw: String },
+    ChimericPairsIdenticalIndices { raw: String },
 
     #[error("--chimeric-pairs: index out of range for {streams} streams, got '{raw}'")]
     ChimericPairIndexOutOfRange { raw: String, streams: usize },
@@ -337,14 +337,8 @@ pub enum Error {
     #[error("No flags for record index {idx} in alignment {aln_idx}")]
     NoFlagsForRecordInAlignment { idx: usize, aln_idx: usize },
 
-    #[error("MdCigFlags missing for {idx}")]
-    MdCigFlagsMissing { idx: usize },
-
-    #[error("MdCigFlags missing for record index {idx}")]
-    MdCigFlagsMissingForIndex { idx: usize },
-
     #[error("MdCigFlags missing for index {idx}")]
-    MdCigFlagsMissingIndex { idx: usize },
+    NoMdCigFlagsForIdx { idx: usize },
 
     #[error("MdCigFlags consumed for {idx}")]
     MdCigFlagsConsumed { idx: usize },
@@ -398,14 +392,8 @@ pub enum Error {
     #[error("BUG: unmapped record should already have been excluded")]
     UnmappedRecordInMdCigFlags,
 
-    #[error("--chimeric-pairs: expected format 'A:B' (e.g. '0:1'), got '{raw}'")]
-    ChimericPairsInvalidFormat { raw: String },
-
     #[error("--chimeric-pairs: '{index_str}' is not a valid stream index")]
     ChimericPairsInvalidIndex { index_str: String },
-
-    #[error("--chimeric-pairs: stream index must differ (got '{raw}')")]
-    ChimericPairsIdenticalIndices { raw: String },
 
     #[error("--chimeric-pairs is only supported with --matching-algorithm namesorted")]
     ChimericPairsRequiresNamesorted,

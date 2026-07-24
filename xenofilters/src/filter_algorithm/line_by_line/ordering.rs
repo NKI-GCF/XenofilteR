@@ -474,7 +474,7 @@ fn score_candidate_owned(
                 .get();
             let cig_len = mcfs_opt[idx]
                 .as_ref()
-                .ok_or(Error::MdCigFlagsMissing { idx })?
+                .ok_or(Error::NoMdCigFlagsForIdx { idx })?
                 .get_cigar()
                 .len();
             // store is Some here (has_variants == true).
