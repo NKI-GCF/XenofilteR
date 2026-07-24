@@ -207,6 +207,7 @@ impl WithAllelesRefId for Sample {
             alt_a: alt_a.to_vec(),
             genotype_quality: self.genotype_quality,
             is_called: self.is_called,
+            phase_set: self.phase_set,
         }
     }
 }

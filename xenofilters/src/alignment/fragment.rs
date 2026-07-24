@@ -454,6 +454,7 @@ pub(crate) mod tests;
 mod phasing_merge_tests {
     use super::*;
     use crate::variant::Variant;
+    use smallvec::smallvec;
 
     struct PhasedVariant {
         pos: usize,

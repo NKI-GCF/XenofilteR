@@ -74,6 +74,7 @@ fn bench_pre_assess(c: &mut Criterion) {
     ];
     let qual = vec![30u8; 150];
     let mut g = c.benchmark_group("pre_assess_alignments");
+    let pen = bench_penalties();
     for (i, &(ac, am, bc, bm)) in cases.iter().enumerate() {
         let ra = create_record(b"r", ac, &[], &qual, am, false).unwrap();
         let rb = create_record(b"r", bc, &[], &qual, bm, false).unwrap();
@@ -83,7 +84,7 @@ fn bench_pre_assess(c: &mut Criterion) {
             b.iter(|| {
                 let ma = smallvec![MdCigFlags::try_from_record(&ra, &fa, false).unwrap()];
                 let mb = smallvec![MdCigFlags::try_from_record(&rb, &fb, false).unwrap()];
-                black_box(pre_assess_alignments(&ma, &mb))
+                black_box(pre_assess_alignments(&ma, &mb, &pen, 0.5))
             })
         });
     }

@@ -15,6 +15,7 @@
 #[cfg(test)]
 mod indel_expansion_integration {
     use crate::{
+        config::args::{IoArgs, ScoringArgs},
         region::diagnostic::{DiagnosticSite, SegregateVariants},
         variant::{
             indel_equiv::{enumerate_equivalents, EquivalentAlleles, MAX_SHIFT},
@@ -22,6 +23,7 @@ mod indel_expansion_integration {
             store::{Store, StoreTrait},
             Variant,
         },
+        Error, MatchingAlgorithm, RunConfig,
     };
     use std::{collections::HashMap, sync::Arc};
 

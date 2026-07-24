@@ -202,7 +202,7 @@ impl<R: SimpleRec> LineByLine<R> {
             bisulfite: config.scoring.bisulfite,
             positive_regions,
             region_score_fn: config.variants.region_score_fn,
-            chimeric_thresholds: config.chimeric_thresholds.clone(),
+            chimeric_thresholds: config.chimeric_thresholds,
         })
     }
 }

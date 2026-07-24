@@ -80,8 +80,8 @@ pub(crate) fn parse_population_record(
 
 #[cfg(test)]
 mod min_af_cutoff_tests {
-    use super::*;
-    use crate::tests::common::r;
+    
+    
     // (test harness constructing a minimal RecordBuf with an AF INFO field
     //  is domain-specific to this crate's VCF test helpers -- follow the
     //  pattern used by existing `parse_population_record` callers, e.g.

@@ -49,7 +49,6 @@ use crate::filter_algorithm::line_by_line::{
     chimeric::{ChimericKind, detect_chimeric_mate_complement},
     detect_chimeric_event,
 };
-use crate::penalty::Penalty;
 use crate::region::{ScoreFn, ScoredRegions};
 use crate::variant::StoreTrait;
 use crate::Error;

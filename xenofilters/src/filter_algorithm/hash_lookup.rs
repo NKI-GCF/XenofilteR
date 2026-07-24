@@ -20,7 +20,6 @@ pub(crate) mod stage;
 #[cfg(test)]
 pub(crate) mod tests;
 
-use crate::alignment::pre_assess::min_delta_for_early_decision;
 use crate::alignment::{mate_slot, segment_id, Fragment, MateKind, MdCigFlags, SimpleRec};
 use crate::alignment::{pre_assess_scoring_records, PreAssessResult};
 use crate::aln_stream::AlignmentStream;

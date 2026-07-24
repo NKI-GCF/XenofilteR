@@ -28,6 +28,7 @@ impl WithAlleles for Sample {
             // -- Scoring parameters propagated unchanged ------------------
             genotype_quality: self.genotype_quality,
             is_called: self.is_called,
+            phase_set: self.phase_set,
         }
     }
 }
