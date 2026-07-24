@@ -22,7 +22,7 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::{MAX_SHIFT, enumerate_equivalents, left_normalize};
+    use super::super::{enumerate_equivalents, left_normalize, MAX_SHIFT};
 
     // -- Helpers ---------------------------------------------------------------
 
@@ -247,7 +247,6 @@ mod tests {
     fn max_shift_limit_is_respected() {
         // Reference: 256 A's.  Deleting one A should produce exactly
         // MAX_SHIFT + 1 entries (the left-normalized form + MAX_SHIFT rights).
-        let _reference = vec![b'A'; 256];
         // Left-normalized: pos=0, ref=AA, alt=A (impossible to go further left).
         // Actually, need non-A anchor at start.
         let mut reference = vec![b'G'];

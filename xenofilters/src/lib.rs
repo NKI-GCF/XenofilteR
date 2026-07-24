@@ -11,7 +11,6 @@ pub mod filter_algorithm;
 pub mod penalty;
 pub mod progress;
 pub mod region;
-pub mod reporting;
 pub mod stats;
 pub mod variant;
 

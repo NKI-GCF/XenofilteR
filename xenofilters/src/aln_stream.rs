@@ -6,7 +6,7 @@ use crate::bam::{
 };
 use crate::config::run_config::RunConfig;
 use crate::config::MatchingAlgorithm;
-use crate::file_spec::{path_for_stream, FileSpec};
+use crate::file_spec::path_for_stream;
 use crate::region::{diagnostic::SegregateVariants, PositiveRegions, ScoreFn, ScoredRegions};
 use crate::variant::{
     build_diagnostic_store_expanded,

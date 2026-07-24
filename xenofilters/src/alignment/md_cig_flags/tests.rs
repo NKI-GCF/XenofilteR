@@ -15,8 +15,6 @@ use std::cmp::Ordering;
 // ---------------------------------------------------------------------
 #[test]
 fn table_is_perfect_variants_collect_misses() {
-    let _misses: Vec<String> = Vec::new();
-
     struct Case {
         name: &'static str,
         cigar: &'static str,

@@ -4,9 +4,6 @@ use crate::{
         args::{ChimericArgs, IoArgs, RelatedArgs, ScoringArgs, SegregateArgs},
         CommonArgs, MatchingAlgorithm, NameEncoderKind,
     },
-    file_spec::path_for_stream,
-    region::ScoredRegions,
-    variant::name_to_id::header_name_to_id,
     Error,
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
