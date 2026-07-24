@@ -157,10 +157,8 @@ fn run_line_by_line(
     for i in 1..n {
         if i > 0 && aln[i].next_qname() != aln[0].next_qname() {
             return Err(Error::InvalidInput(format!(
-                "HashLookup requires all input streams to be namesorted/collated. \
-                         Stream 0 next_qname: {:?}, stream {} next_qname: {:?}",
+                "Namesorted input streams required. 0:{:?}, {i}:{:?}",
                 aln[0].next_qname(),
-                i,
                 aln[i].next_qname()
             )));
         }
@@ -168,7 +166,7 @@ fn run_line_by_line(
 
     // Clamp score_threads to aln.len() * 2 as a sanity bound; beyond that
     // the IO thread becomes the bottleneck and extra workers are idle
-    score_threads = score_threads.max(n * 2);
+    score_threads = score_threads.min(n * 2);
 
     let mut lbl = LineByLine::new(&run, aln, stream_labels.clone(), chimeric_pairs)?;
     if score_threads > 1 {

@@ -41,10 +41,7 @@ impl<'r> MdCigFlags<'r> {
             .ok_or(Error::MissingMdTag)?
         {
             Value::String(bstr) => {
-                // SAFETY: 'r is the lifetime of `record`, and `bstr` is derived from that borrow.
-                let slice: &[u8] = bstr.as_ref();
-                let md: &'r [u8] =
-                    unsafe { std::slice::from_raw_parts(slice.as_ptr(), slice.len()) };
+                let md: &[u8] = bstr.as_ref();
                 md
             }
             _ => return Err(Error::UnexpectedMdTagValueType),

@@ -19,8 +19,8 @@ ahash              = "0.8"
 indicatif          = "0.18"
 clap               = { version = "^4.6", features = ["derive", "env", "wrap_help"] }
 smallvec           = { version = "1.15", features = ["const_generics", "union"] }
-thiserror          = "2.0.19"
-noodles            = { version = "0.111", features = ["async", "bam", "bed", "bcf", "bgzf", "core", "cram", "csi", "sam", "tabix", "vcf", "cram", "fasta"] }
+thiserror          = "2.0.18"
+noodles            = { version = "0.112", features = ["async", "bam", "bed", "bcf", "bgzf", "core", "cram", "csi", "sam", "tabix", "vcf", "cram", "fasta"] }
 serde              = { version = "1", features = ["derive", "rc"] }
 serde_json         = "1"
 tracing            = "0.1"

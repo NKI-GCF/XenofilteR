@@ -298,6 +298,7 @@ impl<R: SimpleRec> HashLookup<R> {
         let dk = pending.driving.early_kind();
         let lk = pending.lookup.early_kind();
 
+        // Both streams are Scoring -> run NW scoring on the retained MappedRecords.
         if dk.is_none() && lk.is_none() {
             let (
                 StreamKind::Scoring {
@@ -328,7 +329,9 @@ impl<R: SimpleRec> HashLookup<R> {
             (Some(d1), Some(d2)) if d1 == d2 => (0, Decision::Ambiguous, true),
             (Some(AllPerfect), _) | (None, Some(AllUnmapped)) => (0, Decision::First, false),
             (Some(AllUnmapped), _) | (None, Some(AllPerfect)) => (1, Decision::Last, false),
-            (None, None) => unreachable!(),
+            (None, None) => {
+                unreachable!("Both streams are Scoring, should have been handled above")
+            }
         };
 
         let drv = || driving_offsets.iter().map(|&o| (0, o));
