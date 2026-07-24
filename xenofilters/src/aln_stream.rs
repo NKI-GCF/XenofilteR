@@ -1,30 +1,31 @@
-use crate::Error;
 use crate::alignment::SimpleRec;
 use crate::bam::reader::BgzfBamReader;
 use crate::bam::{
-    BamOutput, SUFFIX_AMBIGUOUS, SUFFIX_FILTERED, expand_header, out_from_file, path_unicode_ok,
-    rewrite_rg,
+    expand_header, out_from_file, path_unicode_ok, rewrite_rg, BamOutput, SUFFIX_AMBIGUOUS,
+    SUFFIX_FILTERED,
 };
-use crate::config::MatchingAlgorithm;
 use crate::config::run_config::RunConfig;
-use crate::file_spec::path_for_stream;
-use crate::region::{PositiveRegions, ScoreFn, diagnostic::SegregateVariants};
+use crate::config::MatchingAlgorithm;
+use crate::file_spec::{path_for_stream, FileSpec};
+use crate::region::{diagnostic::SegregateVariants, PositiveRegions, ScoreFn, ScoredRegions};
 use crate::variant::{
-    StoreTrait, build_diagnostic_store_expanded,
+    build_diagnostic_store_expanded,
     indel_equiv::corrected::read_vcf_or_bcf_header,
     indel_equiv::{
-        IndelEquivalenceExpander, build_population_store_expanded, build_sample_store_expanded,
+        build_population_store_expanded, build_sample_store_expanded, IndelEquivalenceExpander,
     },
     name_to_id::header_name_to_id,
-    population::{Population, parse_population_record},
-    sample::{Sample, parse_sample_record},
+    population::{parse_population_record, Population},
+    sample::{parse_sample_record, Sample},
     store::Store,
+    StoreTrait,
 };
+use crate::Error;
 use noodles::bam::{io::Reader as BamReader, record::Record};
-use noodles::bgzf::{VirtualPosition, io::MultithreadedReader};
+use noodles::bgzf::{io::MultithreadedReader, VirtualPosition};
 use noodles::fasta::io::indexed_reader::Builder;
-use noodles::sam::Header;
 use noodles::sam::alignment::record_buf::RecordBuf;
+use noodles::sam::Header;
 use std::fs::File;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -73,7 +74,6 @@ where
         algorithm: &MatchingAlgorithm,
         i: usize,
         threads: NonZeroUsize,
-        positive_regions: Option<(PositiveRegions, ScoreFn)>,
     ) -> Result<Self, Error> {
         let path = opt.io.alignment[i].to_string_lossy();
         let seekable_required = MatchingAlgorithm::Hashlookup == *algorithm;
@@ -94,6 +94,12 @@ where
         };
 
         let header = bam.read_header()?;
+        let name_to_id = header_name_to_id(&header);
+        let positive = &opt.variants.positive_regions;
+        let score_fn = opt.variants.region_score_fn;
+        let positive_regions = path_for_stream(positive, i)
+            .map(|p| ScoredRegions::from_bed(p.as_path(), &name_to_id).map(|s| (s, score_fn)))
+            .transpose()?;
 
         let is_pass2 = header
             .read_groups()

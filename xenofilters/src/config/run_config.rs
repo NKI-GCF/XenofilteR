@@ -1,16 +1,16 @@
 use crate::{
-    Error,
     aln_stream::{AlignmentStream, AlnStream},
     config::{
-        CommonArgs, MatchingAlgorithm, NameEncoderKind,
         args::{ChimericArgs, IoArgs, RelatedArgs, ScoringArgs, SegregateArgs},
+        CommonArgs, MatchingAlgorithm, NameEncoderKind,
     },
     file_spec::path_for_stream,
     region::ScoredRegions,
     variant::name_to_id::header_name_to_id,
+    Error,
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
-use smallvec::{SmallVec, smallvec};
+use smallvec::{smallvec, SmallVec};
 use std::num::NonZeroUsize;
 use std::ops::RangeInclusive;
 
@@ -79,21 +79,13 @@ impl RunConfig {
         // Requires threads > 1 AND a non-seeking backend (namesorted / collated).
         // HashLookup pass-2 uses seek_vpos -> must use Single.
         let threads = NonZeroUsize::new(bgzf_threads).unwrap_or(NonZeroUsize::MIN);
-        let score_fn = self.variants.region_score_fn;
 
         let n = self.io.alignment.len();
         for i in 0..n {
             let path = &self.io.alignment[i];
             let path_str = path.to_string_lossy().to_string();
             tracing::debug!(stream = i, path_str, "Opening stream");
-            let positive_regions = &self.variants.positive_regions;
-            let name_to_id = header_name_to_id(aln[i].header());
-            let positive_regions = path_for_stream(positive_regions, 0)
-                .map(|p| ScoredRegions::from_bed(p.as_path(), &name_to_id).map(|s| (s, score_fn)))
-                .transpose()?;
-
-            let stream =
-                AlnStream::<RecordBuf>::new(self, &algorithm, i, threads, positive_regions)?;
+            let stream = AlnStream::<RecordBuf>::new(self, &algorithm, i, threads)?;
             aln.push(Box::new(stream));
             if i > 0 && aln[i].next_qname() != aln[0].next_qname() {
                 return Err(Error::InvalidInput(format!(
