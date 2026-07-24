@@ -9,16 +9,16 @@
 //! - VCF indexed reader: `vcf::io::IndexedReader` provides `.query(&header, &region)`.
 
 use crate::Error;
-use crate::region::ScoreFn;
 use noodles::bgzf;
-use noodles::core::{Position, Region, region::Interval};
+use noodles::core::{region::Interval, Position, Region};
 use noodles::csi::BinningIndex;
 use noodles::{tabix, vcf};
-use std::cell::RefCell;
 use std::fs::File;
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
+use crate::region::ScoreFn;
 use vcf::io::IndexedReader;
+use std::cell::RefCell;
 
 pub(crate) struct TabixScored {
     inner: TabixBed,
@@ -162,10 +162,7 @@ impl TabixVcf {
         let header = reader
             .read_header()
             .map_err(|e| Error::VcfHeaderReadError(e.to_string()))?;
-        Ok(Self {
-            reader: RefCell::new(reader),
-            header,
-        })
+        Ok(Self { reader: RefCell::new(reader), header })
     }
 
     /// Returns `true` if any diagnostic variant overlaps `[start, end)` (1-based, BAM coords).
@@ -191,9 +188,7 @@ impl TabixVcf {
             .header
             .contigs()
             .get_index(ref_id)
-            .ok_or(Error::NoReferenceSequenceId)?
-            .0
-            .to_owned();
+            .ok_or(Error::NoRefSeqId)?.0.to_owned();
         self.chrom_overlaps(&chrom, start, end)
     }
 

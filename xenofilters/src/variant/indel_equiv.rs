@@ -534,7 +534,7 @@ where
         let ref_id = name_to_id
             .get(&chrom)
             .copied()
-            .ok_or(Error::NoReferenceSequenceId)?;
+            .ok_or(Error::NoRefSeqId)?;
         let variants = expand(rec, &hdr, &chrom)?;
         n_expanded += variants.len() as u64;
         store.insert_expanded(ref_id, variants);

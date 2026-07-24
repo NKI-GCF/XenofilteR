@@ -467,7 +467,7 @@ fn score_candidate_owned(
             let tid = rec
                 .ref_seq_id()
                 .transpose()?
-                .ok_or(Error::MappedRecordNoReferenceSequenceId)?;
+                .ok_or(Error::MappedRecordNoRefSeqId)?;
             let start = rec
                 .alignment_start()
                 .ok_or(Error::MappedRecordNoAlignmentStart)?

@@ -86,7 +86,7 @@ impl<R: SimpleRec> FragmentState<R> {
             };
             let tid = match r.ref_seq_id() {
                 Some(Ok(tid)) => tid,
-                _ => return Err(Error::MappedRecordNoReferenceSequenceId),
+                _ => return Err(Error::MappedRecordNoRefSeqId),
             };
             let flags = &self.flags[i];
             let pos = if flags.is_reverse_complemented() {
@@ -219,7 +219,7 @@ impl<R: SimpleRec> FragmentState<R> {
                 let tid = rec
                     .ref_seq_id()
                     .transpose()?
-                    .ok_or(Error::MappedRecordNoReferenceSequenceId)?;
+                    .ok_or(Error::MappedRecordNoRefSeqId)?;
                 let start = rec
                     .alignment_start()
                     .transpose()?

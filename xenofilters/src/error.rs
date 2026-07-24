@@ -316,11 +316,8 @@ pub enum Error {
     UnexpectedRgTagType(String),
 
     // --- Structural Alignment Checks & Flags ---
-    #[error("No ref seq id")]
-    NoRefSeqId,
-
     #[error("No reference sequence ID")]
-    NoReferenceSequenceId,
+    NoRefSeqId,
 
     #[error("No alignment start")]
     NoAlignmentStart,
@@ -341,7 +338,7 @@ pub enum Error {
     NoFlagsForRecordInAlignment { idx: usize, aln_idx: usize },
 
     #[error("Mapped record has no reference sequence ID")]
-    MappedRecordNoReferenceSequenceId,
+    MappedRecordNoRefSeqId,
 
     #[error("Mapped record has no alignment start")]
     MappedRecordNoAlignmentStart,
@@ -529,9 +526,6 @@ pub enum Error {
 
     #[error("missing flags at index {idx}")]
     MissingFlags { idx: usize },
-
-    #[error("mapped record missing reference sequence ID")]
-    MissingRefSeqId,
 
     #[error("mapped record missing alignment start")]
     MissingAlignStart,
