@@ -1,16 +1,16 @@
 use super::*;
 use crate::{
-    Error,
-    alignment::{MdCigFlags, fragment::SimpleRec},
+    alignment::{fragment::SimpleRec, MdCigFlags},
     config::args::ScoringArgs,
     filter_algorithm::line_by_line::Scratch,
     penalty::Penalty,
     tests::create_record,
     variant::{Eval, Variant},
+    Error,
 };
 use noodles::sam::alignment::record::Flags;
 use noodles::sam::alignment::record_buf::RecordBuf;
-use smallvec::{SmallVec, smallvec};
+use smallvec::{smallvec, SmallVec};
 
 // ---------------------------------------------------------------------------
 // Test penalty helpers
@@ -316,7 +316,7 @@ fn wis_table() {
         let mut dvnt: FragEvalVec<'_> =
             smallvec![c.variants.iter().copied().map(mk_eval).collect()];
         let mut dp = smallvec![];
-        let got = wis_max_rescue_delta(&mut dvnt, &mut dp, 0.5);
+        let got = wis_max_rescue_delta(&mut dvnt, &mut dp, 0.0);
         assert!(
             (got - c.want).abs() < 1e-9,
             "[{}] want {} got {}",
@@ -582,7 +582,7 @@ fn maximize_delta_exact_zero_mutant() {
     let mut dp = SmallVec::new();
 
     // If it were >=, the variant with delta 0.0 would be included and processed.
-    assert_eq!(wis_max_rescue_delta(&mut dvnt, &mut dp, 0.5), 0.0);
+    assert_eq!(wis_max_rescue_delta(&mut dvnt, &mut dp, 0.0), 0.0);
     assert!(
         dp.is_empty(),
         "dp should be empty because variants with <= 0 delta should be filtered out"

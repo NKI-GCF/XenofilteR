@@ -138,7 +138,7 @@ proptest! {
             .collect();
         let mut dvnt = smallvec::smallvec![evals];
         let mut dp   = smallvec::smallvec![];
-        let result = wis_max_rescue_delta(&mut dvnt, &mut dp, 0.5);
+        let result = wis_max_rescue_delta(&mut dvnt, &mut dp, 0.0);
         prop_assert!(result >= 0.0, "WIS must return non-negative: got {result}");
         prop_assert!(!result.is_nan(), "WIS must not return NaN");
     }

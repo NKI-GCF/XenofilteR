@@ -22,13 +22,32 @@
 //! second CIGAR+MD walk is ever required.
 
 use super::read_profile::{
-    FragmentProfile, ReadOp, ReadSpaceDecision, build_read_profile, compare_fragment_profiles,
+    build_read_profile, compare_fragment_profiles, FragmentProfile, ReadOp, ReadSpaceDecision,
 };
 use crate::alignment::MdCigFlags;
 use crate::filter_algorithm::hash_lookup::assemble::RecordKind;
 use crate::filter_algorithm::line_by_line::READ_CT;
 use smallvec::SmallVec;
 use std::cmp::Ordering;
+
+/// Realistic lower bound on base quality for the "worst-case" per-base
+/// advantage scan. Below Q4 (`p_err >= ~0.4`), a "matched" base is not even
+/// guaranteed to be more likely correct than a mismatch under this model
+/// (`ll_match[q] <= ll_mismatch[q]` for q <= 3, and `ll_match[0] = -infinity`
+/// exactly, since Q0 means certain error by definition) -- so the
+/// match-count-favors-this-side assumption underlying Tier 2.5 is not even
+/// meaningful in that range, let alone boundable.
+///
+/// Including q=0..3 in the scan made `min_delta_for_early_decision` return
+/// `usize::MAX` unconditionally for every Penalty configuration -- a
+/// silent, total loss of the Tier 2.5 optimization, not a merely-slow
+/// fallback. Real aligners essentially never report a matched CIGAR
+/// M-position at Q0-Q1; Q2-Q3 floor values do exist on some platforms but
+/// are rare. This is a documented, deliberate tradeoff, not a proof: if a
+/// matched base below this floor is ever genuinely present in scored
+/// reads, Tier 2.5's guarantee (that it never contradicts Tier 3) can in
+/// principle be violated for that specific comparison.
+const MIN_PLAUSIBLE_MATCH_QUALITY: usize = 4;
 
 // ---------------------------------------------------------------------------
 // AlignSig -- match-count-based quality signature (private to this module)
@@ -76,10 +95,11 @@ fn sig_from_fragment_profile(fp: &FragmentProfile) -> AlignSig {
 /// here cannot produce a decision that full NW scoring would have called
 /// ambiguous.
 fn min_per_base_advantage(pen: &crate::penalty::Penalty) -> f64 {
-    (0..pen.log_likelihood_match.len())
+    (MIN_PLAUSIBLE_MATCH_QUALITY..pen.log_likelihood_match.len())
         .map(|q| pen.log_likelihood_match[q] - pen.log_likelihood_mismatch[q])
+        .filter(|d| d.is_finite())
         .fold(f64::INFINITY, f64::min)
-        .max(0.0) // defensive: should never be negative given match >= mismatch by construction
+        .max(0.0)
 }
 
 /// Minimum match-count delta required before Tier 2.5a is permitted to
@@ -376,7 +396,7 @@ pub(crate) fn md_mismatches(md: &[u8]) -> usize {
 mod tests {
     use super::*;
     use crate::{alignment::MdCigFlags, tests::create_record};
-    use smallvec::{SmallVec, smallvec};
+    use smallvec::{smallvec, SmallVec};
     use std::cmp::Ordering::{Equal, Greater, Less};
 
     fn mcfs_from(cigar: &str, md: &str) -> SmallVec<[MdCigFlags<'static>; READ_CT]> {
@@ -755,6 +775,25 @@ mod hashlookup_threshold_floor_tests {
             supp_count,
         }))
     }
+    #[test]
+    fn hashlookup_large_delta_above_threshold_still_early_decides() {
+        let pen = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina, 0.5);
+        let threshold_nats = 10.0 * LN_10 / 10.0;
+        let recs_a = vec![mapped(60, b"60", 0)]; // 60 matches
+        let recs_b = vec![mapped(60, build_md(40, 20).as_bytes(), 0)]; // 40 matches, 20 mismatches
+        let result = pre_assess_scoring_records(&recs_a, &recs_b, &pen, threshold_nats);
+        assert!(matches!(
+            result,
+            PreAssessResult::EarlyDecision(std::cmp::Ordering::Greater)
+        ));
+    }
+
+    /// Build an MD string: `matches` leading matched bases followed by
+    /// `mismatches` contiguous mismatched bases, summing to
+    /// `matches + mismatches` -- must equal the paired CIGAR M-op length.
+    fn build_md(matches: usize, mismatches: usize) -> String {
+        format!("{matches}{}", "A".repeat(mismatches))
+    }
 
     #[test]
     fn hashlookup_small_delta_below_threshold_floor_falls_through() {
@@ -770,24 +809,88 @@ mod hashlookup_threshold_floor_tests {
     }
 
     #[test]
-    fn hashlookup_large_delta_above_threshold_still_early_decides() {
-        let pen = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina, 0.5);
-        let threshold_nats = 10.0 * LN_10 / 10.0;
-        let recs_a = vec![mapped(50, b"50", 0)]; // 50 matches
-        let recs_b = vec![mapped(50, b"0A49", 0)]; // 49 matches -- large-enough delta
-        let result = pre_assess_scoring_records(&recs_a, &recs_b, &pen, threshold_nats);
-        assert!(matches!(
-            result,
-            PreAssessResult::EarlyDecision(std::cmp::Ordering::Greater)
-        ));
-    }
-
-    #[test]
     fn hashlookup_zero_threshold_matches_pre_fix_behavior() {
         let pen = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina, 0.5);
         let recs_a = vec![mapped(10, b"9A0", 0)];
         let recs_b = vec![mapped(10, b"10", 0)];
         let result = pre_assess_scoring_records(&recs_a, &recs_b, &pen, 0.0);
         assert!(matches!(result, PreAssessResult::EarlyDecision(_)));
+    }
+    #[test]
+    fn min_per_base_advantage_is_finite_and_positive_at_default_settings() {
+        // Regression guard: previously collapsed to 0.0 via -infinity at Q0,
+        // which made min_delta_for_early_decision return usize::MAX for EVERY
+        // penalty configuration and permanently disabled Tier 2.5.
+        let pen = crate::penalty::Penalty::build(
+            6.0,
+            1.0,
+            4.0,
+            20,
+            crate::penalty::ErrorModel::Illumina,
+            0.5,
+        );
+        let advantage = min_per_base_advantage(&pen);
+        assert!(
+            advantage.is_finite() && advantage > 0.0,
+            "expected a finite positive worst-case per-base advantage, got {advantage}"
+        );
+    }
+
+    #[test]
+    fn min_delta_for_early_decision_is_not_permanently_disabled() {
+        let pen = crate::penalty::Penalty::build(
+            6.0,
+            1.0,
+            4.0,
+            20,
+            crate::penalty::ErrorModel::Illumina,
+            0.5,
+        );
+        let threshold_nats = 10.0 * std::f64::consts::LN_10 / 10.0; // Phred 10
+        let min_delta = min_delta_for_early_decision(&pen, threshold_nats);
+        assert_ne!(
+            min_delta,
+            usize::MAX,
+            "Tier 2.5 must be able to fire for a realistic Phred-10 threshold at default settings"
+        );
+        assert!(min_delta < 100, "min_delta unexpectedly large: {min_delta}");
+    }
+
+    #[test]
+    fn min_delta_scales_with_threshold() {
+        let pen = crate::penalty::Penalty::build(
+            6.0,
+            1.0,
+            4.0,
+            20,
+            crate::penalty::ErrorModel::Illumina,
+            0.5,
+        );
+        let low = min_delta_for_early_decision(&pen, 1.0 * std::f64::consts::LN_10 / 10.0);
+        let high = min_delta_for_early_decision(&pen, 30.0 * std::f64::consts::LN_10 / 10.0);
+        assert!(
+            high > low,
+            "a stricter threshold must require a larger match-count delta"
+        );
+    }
+    #[test]
+    fn hashlookup_table_row_regression_2base_delta_survives_phred10_default() {
+        let pen = crate::penalty::Penalty::build(
+            6.0,
+            1.0,
+            4.0,
+            20,
+            crate::penalty::ErrorModel::Illumina,
+            0.5,
+        );
+        let threshold_nats = crate::config::args::resolve_threshold(u32::MAX, false); // pass1 default = Phred 10
+        let recs_a = vec![mapped(10, b"9A0", 0)]; // 9 matches (2-base delta vs 7)
+        let recs_b = vec![mapped(10, b"6AAA", 0)]; // 7 matches
+        let result =
+            crate::alignment::pre_assess_scoring_records(&recs_a, &recs_b, &pen, threshold_nats);
+        assert!(
+            matches!(result, crate::alignment::PreAssessResult::EarlyDecision(_)),
+            "existing hash_lookup_table fixture must not silently start requiring full scoring"
+        );
     }
 }

@@ -1,9 +1,9 @@
-use crate::Error;
 use crate::variant::Variant;
-use noodles::vcf::Header;
+use crate::Error;
 use noodles::vcf::variant::record::AlternateBases;
-use noodles::vcf::variant::record_buf::RecordBuf;
 use noodles::vcf::variant::record_buf::samples::sample::Value;
+use noodles::vcf::variant::record_buf::RecordBuf;
+use noodles::vcf::Header;
 
 // FIXME, a variant could have multiple ALT alleles, and the GT could be 0/2, so we should ideally
 // have one Sample per ALT allele, and check if each ALT allele is present in the GT. For
@@ -69,8 +69,6 @@ pub(crate) fn parse_sample_record(
         Some(Value::Integer(gt)) => *gt,
         _ => return Err(Error::MissingOrInvalidGtTag),
     };
-    // PS is optional -- absent for unphased VCFs, which is the common case
-    // and must not error.
     let phase_set = match sample.get("PS").flatten() {
         Some(Value::Integer(ps)) => Some(*ps as u32),
         _ => None,
@@ -95,4 +93,79 @@ pub(crate) fn parse_sample_record(
             }))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod sample_ps_tests {
+    use super::*;
+    use noodles::core::Position;
+    use noodles::vcf::header::record::value::{map::Contig, Map};
+    use noodles::vcf::variant::record_buf::samples::{sample::Value as SampleValue, Keys};
+    use noodles::vcf::variant::record_buf::{RecordBuf, Samples};
+    use noodles::vcf::Header;
+
+    fn test_header() -> Header {
+        Header::builder()
+            .add_contig("chr1", Map::<Contig>::builder().build().unwrap())
+            .build()
+    }
+
+    /// Build a minimal record with exactly two sample columns (index 0: an
+    /// unread placeholder; index 1: the sample under test), matching
+    /// `parse_sample_record`'s `samples.get_index(1)` convention. GT/GQ/PS
+    /// are stored as `Value::Integer` -- matching the exact match arms in
+    /// `parse_sample_record`, which do NOT accept a genotype string like
+    /// "0/1" for GT.
+    ///
+    /// NEEDS VERIFICATION against noodles 0.111/0.112's exact
+    /// `Samples`/`Keys` constructors -- isolated here so a mismatch is a
+    /// one-function patch.
+    fn sample_record(gt: i32, gq: i32, ps: Option<i32>) -> RecordBuf {
+        let mut record = RecordBuf::builder()
+            .set_reference_sequence_name("chr1")
+            .set_variant_start(Position::try_from(100).unwrap())
+            .set_reference_bases("A")
+            .set_alternate_bases(vec!["G".to_string()].into())
+            .build();
+
+        let mut keys = vec![String::from("GT"), String::from("GQ")];
+        let mut under_test: Vec<Option<SampleValue>> = vec![
+            Some(SampleValue::Integer(gt)),
+            Some(SampleValue::Integer(gq)),
+        ];
+        let mut placeholder: Vec<Option<SampleValue>> = vec![
+            Some(SampleValue::Integer(0)),
+            Some(SampleValue::Integer(99)),
+        ];
+
+        if let Some(ps_val) = ps {
+            keys.push(String::from("PS"));
+            under_test.push(Some(SampleValue::Integer(ps_val)));
+            placeholder.push(None); // sample 0 unphased -- must not leak into sample 1's parse
+        }
+
+        *record.samples_mut() = Samples::new(Keys::from_iter(keys), vec![placeholder, under_test]);
+        record
+    }
+
+    #[test]
+    fn ps_tag_is_parsed_when_present() {
+        let header = test_header();
+        let mut record = sample_record(1, 40, Some(7));
+        let result = parse_sample_record(&mut record, &header, 0.0).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].phase_set, Some(7));
+    }
+
+    #[test]
+    fn ps_tag_is_none_when_absent() {
+        let header = test_header();
+        let mut record = sample_record(1, 40, None);
+        let result = parse_sample_record(&mut record, &header, 0.0).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].phase_set, None,
+            "unphased VCFs (no PS tag) must not error or fabricate a phase set"
+        );
+    }
 }

@@ -1,10 +1,10 @@
 //! Microbenchmarks for the per-fragment scoring hot path.
 //! Run: cargo bench --bench scoring
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use smallvec::smallvec;
 use xenofilters::{
-    alignment::{MdCigFlags, fragment::Fragment, pre_assess::pre_assess_alignments},
+    alignment::{fragment::Fragment, pre_assess::pre_assess_alignments, MdCigFlags},
     filter_algorithm::line_by_line::core::Scratch,
     penalty::Penalty,
     tests::create_record,
@@ -98,7 +98,7 @@ fn bench_pre_assess(c: &mut Criterion) {
 fn bench_wis(c: &mut Criterion) {
     use xenofilters::{
         alignment::fragment::wis_max_rescue_delta,
-        variant::{Variant, eval::Eval},
+        variant::{eval::Eval, Variant},
     };
 
     struct V {
@@ -151,7 +151,7 @@ fn bench_wis(c: &mut Criterion) {
             b.iter(|| {
                 let mut dvnt = make_dvnt(n);
                 let mut dp = smallvec![];
-                black_box(wis_max_rescue_delta(&mut dvnt, &mut dp, 0.5))
+                black_box(wis_max_rescue_delta(&mut dvnt, &mut dp, 0.0))
             })
         });
     }

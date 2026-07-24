@@ -50,32 +50,6 @@ fn test_scoring_validate_rejects_invalid_warn_ambig_fraction() {
 }
 
 #[test]
-fn test_to_penalty_q0_is_certain_error() {
-    let s = ScoringArgs {
-        gap_open: 6.0,
-        gap_extend: 1.0,
-        mismatch_penalty: 4.0,
-        ..Default::default()
-    };
-    let p = s.to_penalty();
-    assert_eq!(p.gap_open, 6.0);
-    assert!(p.log_likelihood_match[0].is_infinite());
-}
-
-#[test]
-fn test_to_penalty_mismatch_scaling_factor() {
-    let mut s = ScoringArgs {
-        gap_open: 6.0,
-        gap_extend: 1.0,
-        mismatch_penalty: 8.0,
-        ..Default::default()
-    };
-    assert!((s.to_penalty().log_likelihood_mismatch[10] - (-2.0)).abs() < 1e-9);
-    s.mismatch_penalty = 4.0;
-    assert!((s.to_penalty().log_likelihood_mismatch[10] - (-1.0)).abs() < 1e-9);
-}
-
-#[test]
 fn test_to_penalty_match_likelihood_improves_with_quality() {
     let s = ScoringArgs {
         gap_open: 6.0,

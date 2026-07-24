@@ -1,6 +1,6 @@
 use crate::tests::common::{r, u};
 use crate::{
-    aln_stream::AlignmentStream, aln_stream::tests::MockStream, config::run_config::RunConfig,
+    aln_stream::tests::MockStream, aln_stream::AlignmentStream, config::run_config::RunConfig,
     filter_algorithm::hash_lookup::HashLookup, tests::create_record,
 };
 use noodles::sam::alignment::record::Flags;
@@ -49,6 +49,37 @@ struct Row {
     disc1: u64,
     ambg0: u64,
     ambg1: u64,
+}
+#[test]
+fn match_count_raw_fixture_md_strings_are_internally_consistent() {
+    fn md_implied_length(md: &[u8]) -> usize {
+        let mut len = 0usize;
+        let mut i = 0;
+        while i < md.len() {
+            if md[i].is_ascii_digit() {
+                let mut n = 0usize;
+                while i < md.len() && md[i].is_ascii_digit() {
+                    n = n * 10 + (md[i] - b'0') as usize;
+                    i += 1;
+                }
+                len += n;
+            } else {
+                len += 1;
+                i += 1;
+            }
+        }
+        len
+    }
+    let cases: &[(&str, &[u8])] = &[("10M", b"9A0"), ("10M", b"7AAA")];
+    for (cigar, md) in cases {
+        let cigar_len: usize = cigar.trim_end_matches('M').parse().unwrap();
+        assert_eq!(
+            md_implied_length(md),
+            cigar_len,
+            "MD {:?} does not sum to CIGAR {cigar}'s length",
+            std::str::from_utf8(md)
+        );
+    }
 }
 
 #[test]
@@ -125,7 +156,7 @@ fn hash_lookup_table() {
         Row {
             label: "s0 more matches (9 vs 7) -> s0 wins via pre-assess",
             s0: vec![r(b"R1", "10M", "9A0")],
-            s1: vec![r(b"R1", "10M", "6AAA")],
+            s1: vec![r(b"R1", "10M", "7AAA")],
             out0: 1,
             out1: 0,
             disc0: 0,
@@ -216,32 +247,4 @@ fn hash_lookup_table() {
             Ok(())
         },
     );
-    /* broken agent suggestion
-    #[test]
-    fn hashlookup_table_row_regression_2base_delta_survives_phred10_default() {
-        let pen = crate::penalty::Penalty::build(
-            6.0,
-            1.0,
-            4.0,
-            20,
-            crate::penalty::ErrorModel::Illumina, /*, 0.5 */
-        );
-        let threshold_nats = crate::config::args::resolve_threshold(u32::MAX, false); // pass1 default = Phred 10
-        let recs_a = vec![mapped(10, b"9A0", 0)]; // 9 matches (2-base delta vs 7)
-        let recs_b = vec![mapped(10, b"6AAA", 0)]; // 7 matches
-        let result = crate::filter_algorithm::hash_lookup::pre_assess_scoring_records(
-            &recs_a,
-            &recs_b,
-            &pen,
-            threshold_nats,
-        );
-        assert!(
-            matches!(
-                result,
-                crate::filter_algorithm::hash_lookup::PreAssessResult::EarlyDecision(_)
-            ),
-            "existing hash_lookup_table fixture must not silently start requiring full scoring"
-        );
-    }
-    */
 }

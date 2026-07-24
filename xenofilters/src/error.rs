@@ -240,10 +240,13 @@ pub enum Error {
     #[error("{algorithm} does not support --score-threads > 1")]
     AlgorithmNotParallel { algorithm: &'static str },
 
+    #[error("--min-rescue-p-sample-gq must be in [0.0, 1.0], got {value}")]
+    InvalidMinSampleGq { value: f64 },
+
     #[error("--min-rescue-p-population must be in [0.0, 1.0], got {value}")]
     InvalidMinPopulationAf { value: f64 },
 
-    #[error("--min-rescue-p-variant must be in [0.0, 1.0], got {value}")]
+    #[error("--min-rescue-p-variant must be posiitive or zero, got {value}")]
     InvalidMinRescuePVariant { value: f64 },
 
     // ---------------------------------------------------------------------------

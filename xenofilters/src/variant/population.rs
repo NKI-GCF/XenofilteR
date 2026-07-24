@@ -1,9 +1,9 @@
-use crate::Error;
 use crate::variant::Variant;
-use noodles::vcf::Header;
+use crate::Error;
 use noodles::vcf::variant::record::AlternateBases;
+use noodles::vcf::variant::record_buf::info::field::{value::Array::Float, Value};
 use noodles::vcf::variant::record_buf::RecordBuf;
-use noodles::vcf::variant::record_buf::info::field::{Value, value::Array::Float};
+use noodles::vcf::Header;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Population {
@@ -78,34 +78,103 @@ pub(crate) fn parse_population_record(
         .collect()
 }
 
+// src/variant/population.rs
 #[cfg(test)]
 mod min_af_cutoff_tests {
-    
-    
-    // (test harness constructing a minimal RecordBuf with an AF INFO field
-    //  is domain-specific to this crate's VCF test helpers -- follow the
-    //  pattern used by existing `parse_population_record` callers, e.g.
-    //  build via `noodles::vcf::variant::record_buf::Builder` with an
-    //  AF=0.3 / AF=0.95 INFO field.)
+    use super::*;
+    use noodles::core::Position;
+    use noodles::vcf::header::record::value::{map::Contig, Map};
+    use noodles::vcf::variant::record_buf::info::field::{
+        value::Array as InfoArray, Value as InfoValue,
+    };
+    use noodles::vcf::variant::record_buf::RecordBuf;
+    use noodles::vcf::Header;
+
+    /// Minimal single-contig header sufficient for `parse_variant_core`'s
+    /// `header.contigs().get_index_of(&chrom)` lookup. Not used for real
+    /// file I/O, so contig length and other write-required fields are
+    /// deliberately omitted.
+    fn test_header() -> Header {
+        Header::builder()
+            .add_contig("chr1", Map::<Contig>::builder().build().unwrap())
+            .build()
+    }
+
+    fn population_record(ref_a: &str, alt_a: &str, af: f32) -> RecordBuf {
+        let mut record = RecordBuf::builder()
+            .set_reference_sequence_name("chr1")
+            .set_variant_start(Position::try_from(100).unwrap())
+            .set_reference_bases(ref_a)
+            .set_alternate_bases(vec![alt_a.to_string()].into())
+            .build();
+        record
+            .info_mut()
+            .insert(String::from("AF"), Some(InfoValue::Float(af)));
+        record
+    }
+
+    fn population_record_multi_alt(ref_a: &str, alts: &[&str], afs: &[f32]) -> RecordBuf {
+        let mut record = RecordBuf::builder()
+            .set_reference_sequence_name("chr1")
+            .set_variant_start(Position::try_from(100).unwrap())
+            .set_reference_bases(ref_a)
+            .set_alternate_bases(
+                alts.iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+                    .into(),
+            )
+            .build();
+        let af_values: Vec<Option<f32>> = afs.iter().map(|&f| Some(f)).collect();
+        record.info_mut().insert(
+            String::from("AF"),
+            Some(InfoValue::Array(InfoArray::Float(af_values))),
+        );
+        record
+    }
 
     #[test]
     fn variant_below_cutoff_is_filtered_out() {
-        // AF=0.3 with min_af=0.9 -> Vec must be empty, not an error.
-        // (construct record, call parse_population_record(&mut record, &header, 0.9))
+        let header = test_header();
+        let mut record = population_record("A", "G", 0.3);
+        let result = parse_population_record(&mut record, &header, 0.9).unwrap();
+        assert!(
+            result.is_empty(),
+            "AF=0.3 must be filtered out at min_af=0.9"
+        );
     }
 
     #[test]
     fn variant_at_or_above_cutoff_is_retained() {
-        // AF=0.95 with min_af=0.9 -> Vec must contain exactly one Population.
+        let header = test_header();
+        let mut record = population_record("A", "G", 0.95);
+        let result = parse_population_record(&mut record, &header, 0.9).unwrap();
+        assert_eq!(result.len(), 1, "AF=0.95 must be retained at min_af=0.9");
+        assert!((result[0].p_variant() - 0.95).abs() < 1e-6);
     }
 
     #[test]
     fn multi_alt_record_filters_each_allele_independently() {
-        // AF=[0.2, 0.95] with min_af=0.9 -> only the second ALT survives.
+        let header = test_header();
+        let mut record = population_record_multi_alt("A", &["G", "T"], &[0.2, 0.95]);
+        let result = parse_population_record(&mut record, &header, 0.9).unwrap();
+        assert_eq!(
+            result.len(),
+            1,
+            "only the AF=0.95 allele should survive min_af=0.9"
+        );
+        assert_eq!(result[0].alt_a, b"T");
     }
 
     #[test]
     fn min_af_zero_preserves_old_unfiltered_behavior() {
-        // AF=0.01 with min_af=0.0 -> retained (backward-compat escape hatch).
+        let header = test_header();
+        let mut record = population_record("A", "G", 0.01);
+        let result = parse_population_record(&mut record, &header, 0.0).unwrap();
+        assert_eq!(
+            result.len(),
+            1,
+            "min_af=0.0 must retain even very rare variants"
+        );
     }
 }

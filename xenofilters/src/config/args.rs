@@ -1,12 +1,12 @@
 // src/config/args.rs
 
 use crate::bam::AlnFormat;
-use crate::file_spec::{FileSpec, path_for_stream};
+use crate::file_spec::{path_for_stream, FileSpec};
 use crate::filter_algorithm::line_by_line::MAX_STREAMS;
 use crate::penalty::ErrorModel;
 use crate::penalty::Penalty;
 use crate::region::ScoreFn;
-use crate::{Error, ensure};
+use crate::{ensure, Error};
 use clap::Args;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
@@ -365,6 +365,11 @@ impl RelatedArgs {
                 value: self.min_population_af,
             });
         }
+        if self.min_sample_gq < 0.0 {
+            return Err(Error::InvalidMinSampleGq {
+                value: self.min_sample_gq,
+            });
+        }
         Ok(())
     }
     pub(crate) fn has_index(&self, idx: usize) -> bool {
@@ -529,6 +534,18 @@ mod chimeric_pair_tests {
         assert!(matches!(
             s.validate(),
             Err(Error::InvalidMinRescuePVariant { .. })
+        ));
+    }
+
+    #[test]
+    fn min_sample_gq_negative_is_rejected() {
+        let args = RelatedArgs {
+            min_sample_gq: -5.0,
+            ..Default::default()
+        };
+        assert!(matches!(
+            args.validate(),
+            Err(Error::InvalidMinSampleGq { .. })
         ));
     }
 }
