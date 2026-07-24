@@ -47,6 +47,7 @@ impl Variant for Sample {
 pub(crate) fn parse_sample_record(
     record: &mut RecordBuf,
     header: &Header,
+    min_gq: f64,
 ) -> Result<Vec<Sample>, Error> {
     let core = crate::variant::parse_core::parse_variant_core(record, header)?;
 
@@ -56,7 +57,7 @@ pub(crate) fn parse_sample_record(
     }
     let sample = samples.get_index(1).ok_or(Error::NoSampleData)?;
     let gq = match sample.get("GQ").flatten() {
-        Some(Value::Integer(gq)) => *gq,
+        Some(Value::Integer(gq)) => *gq as f64,
         _ => return Err(Error::MissingOrInvalidGqTag),
     };
     let gt = match sample.get("GT").flatten() {
@@ -67,16 +68,19 @@ pub(crate) fn parse_sample_record(
     core.alts
         .iter()
         .enumerate()
-        .map(|(i, alt_a)| {
+        .filter_map(|(i, alt_a)| {
+            if gq < min_gq {
+                return None;
+            }
             let is_called = gt == (i + 1) as i32;
-            Ok(Sample {
+            Some(Ok(Sample {
                 ref_id: core.ref_id,
                 pos: core.pos,
                 ref_a: core.ref_a.clone(),
                 alt_a: alt_a.to_vec(),
-                genotype_quality: gq as f64,
+                genotype_quality: gq,
                 is_called,
-            })
+            }))
         })
         .collect()
 }

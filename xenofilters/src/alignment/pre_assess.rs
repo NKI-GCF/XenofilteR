@@ -671,8 +671,14 @@ mod tests {
     // alignment/pre_assess.rs — add to existing #[cfg(test)] mod tests
     #[test]
     fn small_match_delta_below_threshold_floor_falls_through_to_full_scoring() {
-        let pen =
-            crate::penalty::Penalty::build(6.0, 1.0, 4.0, 20, crate::penalty::ErrorModel::Illumina);
+        let pen = crate::penalty::Penalty::build(
+            6.0,
+            1.0,
+            4.0,
+            20,
+            crate::penalty::ErrorModel::Illumina,
+            0.5,
+        );
         // ambiguous_threshold = Phred 30 -> a large nats threshold; a 1-base
         // match-count delta cannot possibly guarantee this margin even in the
         // best case, so it must NOT early-decide.
@@ -688,8 +694,14 @@ mod tests {
 
     #[test]
     fn large_match_delta_above_threshold_floor_still_early_decides() {
-        let pen =
-            crate::penalty::Penalty::build(6.0, 1.0, 4.0, 20, crate::penalty::ErrorModel::Illumina);
+        let pen = crate::penalty::Penalty::build(
+            6.0,
+            1.0,
+            4.0,
+            20,
+            crate::penalty::ErrorModel::Illumina,
+            0.5,
+        );
         let threshold_nats = 10.0 * std::f64::consts::LN_10 / 10.0; // modest threshold
         let mcfs_a = mcfs_from("50M", "50"); // 50 matches
         let mcfs_b = mcfs_from("50M", "0A49"); // 49 matches — large-enough delta
@@ -702,8 +714,14 @@ mod tests {
 
     #[test]
     fn zero_threshold_permits_any_nonzero_delta() {
-        let pen =
-            crate::penalty::Penalty::build(6.0, 1.0, 4.0, 20, crate::penalty::ErrorModel::Illumina);
+        let pen = crate::penalty::Penalty::build(
+            6.0,
+            1.0,
+            4.0,
+            20,
+            crate::penalty::ErrorModel::Illumina,
+            0.5,
+        );
         let mcfs_a = mcfs_from("10M", "9A0");
         let mcfs_b = mcfs_from("10M", "10");
         let result = pre_assess_alignments(&mcfs_a, &mcfs_b, &pen, 0.0);
@@ -740,7 +758,7 @@ mod hashlookup_threshold_floor_tests {
 
     #[test]
     fn hashlookup_small_delta_below_threshold_floor_falls_through() {
-        let pen = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina /*, 0.5*/);
+        let pen = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina, 0.5);
         let threshold_nats = 30.0 * LN_10 / 10.0; // Phred 30 -- a demanding bar
         let recs_a = vec![mapped(10, b"9A0", 0)]; // 9 matches
         let recs_b = vec![mapped(10, b"10", 0)]; // 10 matches -- 1-base delta only
@@ -753,7 +771,7 @@ mod hashlookup_threshold_floor_tests {
 
     #[test]
     fn hashlookup_large_delta_above_threshold_still_early_decides() {
-        let pen = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina /*, 0.5*/);
+        let pen = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina, 0.5);
         let threshold_nats = 10.0 * LN_10 / 10.0;
         let recs_a = vec![mapped(50, b"50", 0)]; // 50 matches
         let recs_b = vec![mapped(50, b"0A49", 0)]; // 49 matches -- large-enough delta
@@ -766,7 +784,7 @@ mod hashlookup_threshold_floor_tests {
 
     #[test]
     fn hashlookup_zero_threshold_matches_pre_fix_behavior() {
-        let pen = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina /*, 0.5*/);
+        let pen = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina, 0.5);
         let recs_a = vec![mapped(10, b"9A0", 0)];
         let recs_b = vec![mapped(10, b"10", 0)];
         let result = pre_assess_scoring_records(&recs_a, &recs_b, &pen, 0.0);

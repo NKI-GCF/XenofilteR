@@ -150,6 +150,7 @@ mod tests {
             log_likelihood_mismatch: [-1.0; MAX_Q],
             chimeric_junction_penalty: -3.0,
             log_likelihood_bisulfite_base: [0.0; MAX_Q],
+            min_rescue_p_variant: 0.5,
         }
     }
 

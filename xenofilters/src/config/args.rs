@@ -4,6 +4,7 @@ use crate::bam::AlnFormat;
 use crate::file_spec::{FileSpec, path_for_stream};
 use crate::filter_algorithm::line_by_line::MAX_STREAMS;
 use crate::penalty::ErrorModel;
+use crate::penalty::Penalty;
 use crate::region::ScoreFn;
 use crate::{Error, ensure};
 use clap::Args;
@@ -113,6 +114,16 @@ pub struct ScoringArgs {
     /// Bisulfite scoring mode. Default: false.
     #[arg(long, default_value = "false", help_heading = "Scoring")]
     pub bisulfite: bool,
+
+    // TODO: if variants are below this, skip them at load time.
+    /// Minimum p_variant required for a variant to contribute rescue
+    /// evidence, in addition to the structural requirement p_variant > 0.5.
+    /// Default 0.5 (no additional gate beyond the structural minimum).
+    /// Raise this (e.g. 0.9) to require materially stronger evidence before
+    /// a variant is allowed to influence a fragment's score -- analogous to
+    /// a significance cutoff on top of the sign requirement.
+    #[arg(long, default_value_t = 0.5, help_heading = "Variants")]
+    pub min_rescue_p_variant: f64,
 }
 
 /// Variant-rescue flags. Arity varies (see AlignmentArgs*); the flags
@@ -153,6 +164,23 @@ pub(crate) struct RelatedArgs {
         help_heading = "Variants"
     )]
     pub(crate) indel_expand_padding: usize,
+
+    /// Minimum population allele frequency required for a variant to be
+    /// loaded from --population-variants. Default 0.9. Any variant below
+    /// this AF cannot structurally produce a positive rescue delta anyway
+    /// (p_variant = AF must exceed 0.5), so a low default wastes memory and
+    /// overlap-query time loading variants that can never fire. 0.9 aligns
+    /// the default with this tool's actual supported use case -- near-fixed,
+    /// diagnostic AF differences between species/strains -- rather than
+    /// general population-frequency-weighted rescue, which the underlying
+    /// scoring model does not support for AF < 0.5 regardless of this flag.
+    #[arg(long, default_value_t = 0.9, help_heading = "Variants")]
+    pub(crate) min_population_af: f64,
+
+    /// Minimum GQ required for a variant to be loaded from --sample-variants.
+    /// Default 20.
+    #[arg(long, default_value_t = 20.0, help_heading = "Variants")]
+    pub(crate) min_sample_gq: f64,
 }
 
 /// Parallelism -- only meaningful for namesorted (hashlookup/collated force 1).
@@ -276,21 +304,35 @@ impl ScoringArgs {
                 gap_extend: self.gap_extend,
             });
         }
+        if !(0.0..=1.0).contains(&self.min_rescue_p_variant) {
+            return Err(Error::InvalidMinRescuePVariant {
+                value: self.min_rescue_p_variant,
+            });
+        }
         Ok(())
     }
 
-    pub fn to_penalty(&self) -> crate::penalty::Penalty {
-        crate::penalty::Penalty::build(
+    pub fn to_penalty(&self) -> Penalty {
+        Penalty::build(
             self.gap_open,
             self.gap_extend,
             self.mismatch_penalty,
-            20,
+            self.chimeric_junction_bases,
             self.error_model,
+            self.min_rescue_p_variant,
         )
     }
 }
 
 impl RelatedArgs {
+    pub(crate) fn validate(&self) -> Result<(), Error> {
+        if !(0.0..=1.0).contains(&self.min_population_af) {
+            return Err(Error::InvalidMinPopulationAf {
+                value: self.min_population_af,
+            });
+        }
+        Ok(())
+    }
     pub(crate) fn has_index(&self, idx: usize) -> bool {
         path_for_stream(&self.sample_variants, idx).is_some()
             || path_for_stream(&self.population_variants, idx).is_some()

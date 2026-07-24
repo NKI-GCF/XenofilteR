@@ -147,7 +147,8 @@ impl<V: Variant> Store<V> {
 
     pub(crate) fn new_from_path(
         f: &Path,
-        parser: impl Fn(&mut RecordBuf, &Header) -> Result<Vec<V>, Error>,
+        parser: impl Fn(&mut RecordBuf, &Header, f64) -> Result<Vec<V>, Error>,
+        min_af: f64,
     ) -> Result<Store<V>, Error> {
         let mut bcf_reader =
             Builder::default()
@@ -165,7 +166,7 @@ impl<V: Variant> Store<V> {
             let mut record_buf = RecordBuf::try_from_variant_record(&header, &record)?;
 
             let id = record.reference_sequence_id()?;
-            let variants = parser(&mut record_buf, &header)?;
+            let variants = parser(&mut record_buf, &header, min_af)?;
 
             store.insert_expanded(id, variants);
         }

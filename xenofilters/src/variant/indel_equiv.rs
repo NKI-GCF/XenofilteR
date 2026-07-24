@@ -386,13 +386,14 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
         record: &mut RecordBuf,
         header: &vcf::Header,
         chrom: &str,
-        parse_fn: impl Fn(&mut RecordBuf, &vcf::Header) -> Result<Vec<V>, Error>,
+        parse_fn: impl Fn(&mut RecordBuf, &vcf::Header, f64) -> Result<Vec<V>, Error>,
         parse_label: &str,
+        min: f64,
     ) -> Result<Vec<V>, Error>
     where
         V: Clone + WithAlleles + Variant,
     {
-        let canonicals = match parse_fn(record, header) {
+        let canonicals = match parse_fn(record, header, min) {
             Ok(v) => v,
             Err(e) => {
                 warn!(chrom, "{parse_label} failed: {e}; skipping");
@@ -447,6 +448,7 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
         record: &mut RecordBuf,
         header: &vcf::Header,
         chrom: &str,
+        min_af: f64,
     ) -> Result<Vec<SampleVariant>, Error> {
         self.expand_variants(
             record,
@@ -454,6 +456,7 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
             chrom,
             parse_sample_record,
             "parse_sample_record",
+            min_af,
         )
     }
 
@@ -463,6 +466,7 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
         record: &mut RecordBuf,
         header: &vcf::Header,
         chrom: &str,
+        min_gq: f64,
     ) -> Result<Vec<Population>, Error> {
         self.expand_variants(
             record,
@@ -470,6 +474,7 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
             chrom,
             parse_population_record,
             "parse_population_record",
+            min_gq,
         )
     }
 }
@@ -531,10 +536,7 @@ where
     for_each_vcf_rec(vcf_path, &hdr, |rec| {
         n_canonical += 1;
         let chrom = rec.reference_sequence_name().to_string();
-        let ref_id = name_to_id
-            .get(&chrom)
-            .copied()
-            .ok_or(Error::NoRefSeqId)?;
+        let ref_id = name_to_id.get(&chrom).copied().ok_or(Error::NoRefSeqId)?;
         let variants = expand(rec, &hdr, &chrom)?;
         n_expanded += variants.len() as u64;
         store.insert_expanded(ref_id, variants);
@@ -556,13 +558,14 @@ where
 pub(crate) fn build_sample_store_expanded(
     vcf_path: &Path,
     fasta_path: &Path,
+    min_gq: f64,
 ) -> Result<Store<SampleVariant>, Error> {
     let fasta_reader = fasta::io::indexed_reader::Builder::default().build_from_path(fasta_path)?;
     let mut expander = IndelEquivalenceExpander::new(fasta_reader);
     build_expanded_store(
         vcf_path,
         "Sample variant store built with indel equivalence expansion",
-        |rec, hdr, chrom| expander.expand_sample(rec, hdr, chrom),
+        |rec, hdr, chrom| expander.expand_sample(rec, hdr, chrom, min_gq),
     )
 }
 
@@ -570,13 +573,14 @@ pub(crate) fn build_sample_store_expanded(
 pub(crate) fn build_population_store_expanded(
     vcf_path: &Path,
     fasta_path: &Path,
+    min_af: f64,
 ) -> Result<Store<Population>, Error> {
     let fasta_reader = fasta::io::indexed_reader::Builder::default().build_from_path(fasta_path)?;
     let mut expander = IndelEquivalenceExpander::new(fasta_reader);
     build_expanded_store(
         vcf_path,
         "Population variant store built with indel equivalence expansion",
-        |rec, hdr, chrom| expander.expand_population(rec, hdr, chrom),
+        |rec, hdr, chrom| expander.expand_population(rec, hdr, chrom, min_af),
     )
 }
 

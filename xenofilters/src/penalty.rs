@@ -77,6 +77,10 @@ pub struct Penalty {
     /// Penalty for bisulfite conversions (C->T or G->A).
     /// Used only when --bisulfite is active.
     pub(crate) log_likelihood_bisulfite_base: [f64; MAX_Q],
+    /// Minimum p_variant required for a variant to contribute rescue
+    /// evidence (see `ScoringArgs::min_rescue_p_variant`). Enforced in
+    /// `wis_max_rescue_delta`'s filter predicate.
+    pub(crate) min_rescue_p_variant: f64,
 }
 
 impl Penalty {
@@ -86,6 +90,7 @@ impl Penalty {
         mismatch_penalty: f64,
         chimeric_junction_bases: u32,
         error_model: ErrorModel,
+        min_rescue_p_variant: f64,
     ) -> Self {
         let calib = error_model.quality_calibration();
         let mut ll_match = [0.0f64; MAX_Q];
@@ -127,6 +132,7 @@ impl Penalty {
             log_likelihood_mismatch: ll_mismatch,
             chimeric_junction_penalty,
             log_likelihood_bisulfite_base: ll_bisulfite,
+            min_rescue_p_variant,
         }
     }
 }
@@ -134,7 +140,7 @@ impl Penalty {
 #[cfg(test)]
 impl Default for Penalty {
     fn default() -> Self {
-        Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina /*, 0.5 */)
+        Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina, 0.5)
     }
 }
 
@@ -147,7 +153,7 @@ mod tests {
     fn default_mismatch_penalty_is_a_genuine_log_probability() {
         // At the reference penalty (4.0), ll_mismatch must equal ln(p_err)
         // exactly — no residual scaling artifact.
-        let p = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina);
+        let p = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina, 0.5);
         let q = 30;
         let eff_q = q as f64; // calib = 1.0 for Illumina
         let expected = 10f64.powf(-eff_q / 10.0).ln();
@@ -156,8 +162,8 @@ mod tests {
 
     #[test]
     fn nondefault_mismatch_penalty_shifts_by_flat_bias_not_rescale() {
-        let p_ref = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina);
-        let p_double = Penalty::build(6.0, 1.0, 8.0, 20, ErrorModel::Illumina);
+        let p_ref = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina, 0.5);
+        let p_double = Penalty::build(6.0, 1.0, 8.0, 20, ErrorModel::Illumina, 0.5);
         // The *difference* between Q10 and Q30 mismatch cost must be
         // identical across mismatch_penalty settings (flat additive bias
         // does not change the quality-dependent shape, only its offset).
@@ -183,7 +189,7 @@ mod tests {
 
     #[test]
     fn gap_costs_are_negative_and_penalize() {
-        let p = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina);
+        let p = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina, 0.5);
         assert!(
             p.gap_open < 0.0,
             "gap_open must be a negative cost, got {}",
@@ -199,13 +205,13 @@ mod tests {
 
     #[test]
     fn gap_open_at_least_as_costly_as_extend_in_converted_units() {
-        let p = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina);
+        let p = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina, 0.5);
         assert!(p.gap_open.abs() >= p.gap_extend.abs());
     }
 
     #[test]
     fn bisulfite_conversion_cost_scales_with_quality() {
-        let p = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina);
+        let p = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina, 0.5);
         // Low-quality "conversion" must be cheaper to trust (less negative
         // relative to its own scale) than... actually the key invariant is
         // simply that it is NOT flat/zero across quality, unlike before.

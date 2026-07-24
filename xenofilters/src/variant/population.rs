@@ -37,6 +37,7 @@ impl Variant for Population {
 pub(crate) fn parse_population_record(
     record: &mut RecordBuf,
     header: &Header,
+    min_af: f64,
 ) -> Result<Vec<Population>, Error> {
     let core = crate::variant::parse_core::parse_variant_core(record, header)?;
 
@@ -53,19 +54,26 @@ pub(crate) fn parse_population_record(
     core.alts
         .iter()
         .enumerate()
-        .map(|(i, alt_a)| {
-            let af = afs
-                .get(i)
-                .copied()
-                .or_else(|| afs.first().copied())
-                .ok_or(Error::MissingOrInvalidAfTag)?;
-            Ok(Population {
+        .filter_map(|(i, alt_a)| {
+            let af = match afs.get(i).copied().or_else(|| afs.first().copied()) {
+                Some(af) => af,
+                None => return Some(Err(Error::MissingOrInvalidAfTag)),
+            };
+            if af < min_af {
+                // Below cutoff -- cannot rescue given AF <= 1.0 requires
+                // p_variant > 0.5 to fire, and per-flag semantics this
+                // variant is not the near-fixed diagnostic marker the tool
+                // targets. Skip loading rather than silently keeping dead
+                // weight in the store.
+                return None;
+            }
+            Some(Ok(Population {
                 ref_id: core.ref_id,
                 pos: core.pos,
                 ref_a: core.ref_a.clone(),
                 alt_a: alt_a.clone(),
                 allele_frequency: af,
-            })
+            }))
         })
         .collect()
 }

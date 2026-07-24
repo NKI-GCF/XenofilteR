@@ -319,19 +319,21 @@ fn build_variant_stores(
     // Resolve the VCF paths for this stream index.
     let sample_vcf_path = path_for_stream(&config.variants.sample_variants, stream_idx);
     let population_vcf_path = path_for_stream(&config.variants.population_variants, stream_idx);
+    let min_gq = config.variants.min_sample_gq;
+    let min_af = config.variants.min_population_af;
 
     if !config.variants.expand_indels {
         // -- Plain path: existing behavior, unchanged -------------------------
         let sample_store: Option<Arc<dyn StoreTrait>> = sample_vcf_path
             .map(|p| {
-                Store::<Sample>::new_from_path(p, parse_sample_record)
+                Store::<Sample>::new_from_path(p, parse_sample_record, min_gq)
                     .map(|s| Arc::new(s) as Arc<dyn StoreTrait>)
             })
             .transpose()?;
 
         let population_store: Option<Arc<dyn StoreTrait>> = population_vcf_path
             .map(|p| {
-                Store::<Population>::new_from_path(p, parse_population_record)
+                Store::<Population>::new_from_path(p, parse_population_record, min_af)
                     .map(|s| Arc::new(s) as Arc<dyn StoreTrait>)
             })
             .transpose()?;
@@ -356,13 +358,14 @@ fn build_variant_stores(
 
     let sample_store: Option<Arc<dyn StoreTrait>> = sample_vcf_path
         .map(|p| {
-            build_sample_store_expanded(p, fasta_path).map(|s| Arc::new(s) as Arc<dyn StoreTrait>)
+            build_sample_store_expanded(p, fasta_path, min_gq)
+                .map(|s| Arc::new(s) as Arc<dyn StoreTrait>)
         })
         .transpose()?;
 
     let population_store: Option<Arc<dyn StoreTrait>> = population_vcf_path
         .map(|p| {
-            build_population_store_expanded(p, fasta_path)
+            build_population_store_expanded(p, fasta_path, min_af)
                 .map(|s| Arc::new(s) as Arc<dyn StoreTrait>)
         })
         .transpose()?;

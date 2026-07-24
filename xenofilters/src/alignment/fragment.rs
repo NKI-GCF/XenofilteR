@@ -38,9 +38,13 @@ pub struct Fragment<'r, R> {
 pub fn wis_max_rescue_delta<'v>(
     dvnt: &mut FragEvalVec<'v>,
     dp: &mut SmallVec<[f64; READ_CT]>,
+    min_p_variant: f64,
 ) -> f64 {
-    let mut variants: SmallVec<[&Eval; VNT_CT]> =
-        dvnt.iter().flatten().filter(|v| v.delta() > 0.0).collect();
+    let mut variants: SmallVec<[&Eval; VNT_CT]> = dvnt
+        .iter()
+        .flatten()
+        .filter(|v| v.delta() > 0.0 && v.vnt().p_variant() >= min_p_variant)
+        .collect();
 
     if variants.is_empty() {
         return 0.0;
@@ -124,7 +128,8 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             d.extend(f.drain(..));
         }
 
-        let variant_delta = wis_max_rescue_delta(dvnt, &mut scratch.dp);
+        let variant_delta =
+            wis_max_rescue_delta(dvnt, &mut scratch.dp, self.pen.min_rescue_p_variant);
         scratch.last_variant_delta = variant_delta;
         Ok(score + variant_delta)
     }

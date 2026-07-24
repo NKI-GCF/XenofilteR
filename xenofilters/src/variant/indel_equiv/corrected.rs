@@ -38,7 +38,7 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
         rec: &mut vcf::variant::RecordBuf,
         header: &vcf::Header,
         name_to_id: &HashMap<String, usize>,
-        _gamete: bool,
+        min_gq: f64,
     ) -> Result<Option<(usize, Vec<Sample>)>, Error> {
         let chrom = rec.reference_sequence_name().to_string();
         let ref_id = match name_to_id.get(&chrom) {
@@ -51,7 +51,7 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
                 return Ok(None);
             }
         };
-        let canonicals = match crate::variant::sample::parse_sample_record(rec, header) {
+        let canonicals = match crate::variant::sample::parse_sample_record(rec, header, min_gq) {
             Ok(v) => v,
             Err(e) => {
                 warn!(chrom, "parse_sample_record: {e}; skipping");
@@ -69,6 +69,7 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
         rec: &mut vcf::variant::RecordBuf,
         header: &vcf::Header,
         name_to_id: &HashMap<String, usize>,
+        min_af: f64,
     ) -> Result<Option<(usize, Vec<Population>)>, Error> {
         let chrom = rec.reference_sequence_name().to_string();
         let ref_id = match name_to_id.get(&chrom) {
@@ -78,13 +79,14 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
                 return Ok(None);
             }
         };
-        let canonicals = match crate::variant::population::parse_population_record(rec, header) {
-            Ok(v) => v,
-            Err(e) => {
-                warn!(chrom, "parse_population_record: {e}; skipping");
-                return Ok(None);
-            }
-        };
+        let canonicals =
+            match crate::variant::population::parse_population_record(rec, header, min_af) {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!(chrom, "parse_population_record: {e}; skipping");
+                    return Ok(None);
+                }
+            };
         let out =
             self.expand_with_refid_inner(canonicals, &chrom, ref_id, "Population indel expansion")?;
         Ok(Some((ref_id, out)))
@@ -228,39 +230,40 @@ impl WithAllelesRefId for Population {
 }
 
 // ---------------------------------------------------------------------------
-// build_sample_store_expanded  (corrected)
+// build_sample_store_expanded
 // ---------------------------------------------------------------------------
 
 pub(crate) fn build_sample_store_expanded(
     vcf_path: &Path,
     fasta_path: &Path,
     name_to_id: &HashMap<String, usize>,
-    gamete: bool,
+    min_gq: f64,
 ) -> Result<Store<Sample>, Error> {
     let fasta_reader = fasta::io::indexed_reader::Builder::default().build_from_path(fasta_path)?;
     let mut expander = IndelEquivalenceExpander::new(fasta_reader);
     build_expanded_store_corrected(
         vcf_path,
         "Sample store built with indel equivalence expansion",
-        |rec, hdr| expander.expand_sample_with_refid(rec, hdr, name_to_id, gamete),
+        |rec, hdr| expander.expand_sample_with_refid(rec, hdr, name_to_id, min_gq),
     )
 }
 
 // ---------------------------------------------------------------------------
-// build_population_store_expanded  (corrected)
+// build_population_store_expanded
 // ---------------------------------------------------------------------------
 
 pub(crate) fn build_population_store_expanded(
     vcf_path: &Path,
     fasta_path: &Path,
     name_to_id: &HashMap<String, usize>,
+    min_af: f64,
 ) -> Result<Store<Population>, Error> {
     let fasta_reader = fasta::io::indexed_reader::Builder::default().build_from_path(fasta_path)?;
     let mut expander = IndelEquivalenceExpander::new(fasta_reader);
     build_expanded_store_corrected(
         vcf_path,
         "Population store built with indel equivalence expansion",
-        |rec, hdr| expander.expand_population_with_refid(rec, hdr, name_to_id),
+        |rec, hdr| expander.expand_population_with_refid(rec, hdr, name_to_id, min_af),
     )
 }
 

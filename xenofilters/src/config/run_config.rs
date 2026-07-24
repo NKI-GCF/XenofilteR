@@ -44,6 +44,7 @@ impl RunConfig {
         // validate number of streams
         io.validate(max_stdin, streams)?;
         common.scoring.validate()?;
+        common.variants.validate()?;
 
         let (chimeric_pairs, stream_labels) = match chimeric {
             Some(c) => (c.chimeric_pairs, c.stream_labels),

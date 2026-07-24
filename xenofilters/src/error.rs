@@ -231,6 +231,12 @@ pub enum Error {
     #[error("{algorithm} does not support --score-threads > 1")]
     AlgorithmNotParallel { algorithm: &'static str },
 
+    #[error("--min-rescue-p-population must be in [0.0, 1.0], got {value}")]
+    InvalidMinPopulationAf { value: f64 },
+
+    #[error("--min-rescue-p-variant must be in [0.0, 1.0], got {value}")]
+    InvalidMinRescuePVariant { value: f64 },
+
     // ---------------------------------------------------------------------------
     // Region / BED / Tabix
     // ---------------------------------------------------------------------------

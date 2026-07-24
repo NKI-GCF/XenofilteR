@@ -150,7 +150,7 @@ fn bench_wis(c: &mut Criterion) {
             b.iter(|| {
                 let mut dvnt = make_dvnt(n);
                 let mut dp = smallvec![];
-                black_box(wis_max_rescue_delta(&mut dvnt, &mut dp))
+                black_box(wis_max_rescue_delta(&mut dvnt, &mut dp, 0.5))
             })
         });
     }
