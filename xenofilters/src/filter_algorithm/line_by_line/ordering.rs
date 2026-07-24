@@ -488,14 +488,8 @@ fn score_candidate_owned(
         if flags.is_unmapped() || !has_variants {
             dvnt.push(SmallVec::new());
         } else {
-            let tid = rec
-                .ref_seq_id()
-                .transpose()?
-                .ok_or(Error::NoRefSeqId)?;
-            let start = rec
-                .alignment_start()
-                .ok_or(Error::NoAlnStart)?
-                .get();
+            let tid = rec.ref_seq_id().transpose()?.ok_or(Error::NoRefSeqId)?;
+            let start = rec.alignment_start().ok_or(Error::NoAlnStart)?.get();
             let cig_len = mcfs_opt[idx]
                 .as_ref()
                 .ok_or(Error::NoMdCigFlagsForIdx { idx })?
@@ -579,7 +573,11 @@ impl<R: SimpleRec> LineByLine<R> {
                         continue;
                     }
                     // Full detection: read-split + false-positive rejection via supplementary MD.
-                    let cd = detect_chimeric_event(&best, &self.chimeric_pairs);
+                    let cd = detect_chimeric_event(
+                        &best,
+                        &self.chimeric_pairs,
+                        &self.chimeric_thresholds,
+                    );
                     if matches!(cd, ChimericDecision::Chimeric { .. }) {
                         tracing::debug!(
                             fragment = ?best.first().map(|s| s.first_qname()),

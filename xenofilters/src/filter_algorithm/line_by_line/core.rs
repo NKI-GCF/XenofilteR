@@ -9,6 +9,7 @@ use crate::{
     alignment::{FragmentState, SimpleRec},
     aln_stream::AlignmentStream,
     config::run_config::RunConfig,
+    filter_algorithm::line_by_line::ChimericThresholds,
     penalty::Penalty,
     progress::ProgressReporter,
     region::{ScoreFn, ScoredRegions},
@@ -130,6 +131,7 @@ pub(crate) struct LineByLine<R> {
     pub(super) bisulfite: bool,
     pub(super) positive_regions: [Option<Arc<ScoredRegions>>; MAX_STREAMS],
     pub(super) region_score_fn: ScoreFn,
+    pub(super) chimeric_thresholds: ChimericThresholds,
 }
 
 impl<R: SimpleRec> LineByLine<R> {
@@ -200,6 +202,7 @@ impl<R: SimpleRec> LineByLine<R> {
             bisulfite: config.scoring.bisulfite,
             positive_regions,
             region_score_fn: config.variants.region_score_fn,
+            chimeric_thresholds: config.chimeric_thresholds.clone(),
         })
     }
 }

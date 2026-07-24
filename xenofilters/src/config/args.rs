@@ -209,7 +209,7 @@ pub(crate) struct ParallelArgs {
 
 /// Chimeric-pair detection -- only meaningful for namesorted (paired-end,
 /// multi-stream). Shared verbatim between `namesorted` and `viral-integration`.
-#[derive(Args, Debug, Clone, Default)]
+#[derive(Args, Debug, Clone)]
 pub(crate) struct ChimericArgs {
     /// Chimeric stream-index pairs (format A:B). Reads spanning species
     /// boundaries get XC:Z:<other_label> and are written to both outputs.
@@ -219,6 +219,40 @@ pub(crate) struct ChimericArgs {
     /// Labels per stream, used in XC:Z tags and stats JSON.
     #[arg(long, num_args = 0..=MAX_STREAMS, help_heading = "Chimeric")]
     pub(crate) stream_labels: Vec<String>,
+
+    /// Minimum mapped bases required on EACH arm of a candidate read-split,
+    /// expressed as a FRACTION of read length (not an absolute base count).
+    /// Default 0.1 (10%). The previous implementation used a fixed 15bp
+    /// floor, which is trivially satisfied by long reads (ONT/HiFi) even in
+    /// low-complexity regions with no real breakpoint signal; expressing
+    /// this as a fraction keeps the same relative stringency across read
+    /// length regimes. Needs empirical validation against a simulated
+    /// integration-breakpoint dataset before trusting defaults in a
+    /// publication.
+    #[arg(long, default_value_t = 0.10, help_heading = "Chimeric")]
+    pub(crate) chimeric_min_mapped_frac: f64,
+
+    /// Maximum allowed overlap between the two arms' mapped read ranges, as
+    /// a fraction of read length. Default 0.20 (20%).
+    #[arg(long, default_value_t = 0.20, help_heading = "Chimeric")]
+    pub(crate) chimeric_max_overlap_frac: f64,
+
+    /// Minimum combined (union) coverage of the read by both arms, as a
+    /// fraction of read length. Default 0.80 (80%).
+    #[arg(long, default_value_t = 0.80, help_heading = "Chimeric")]
+    pub(crate) chimeric_min_union_frac: f64,
+}
+
+impl Default for ChimericArgs {
+    fn default() -> Self {
+        Self {
+            chimeric_pairs: vec![],
+            stream_labels: vec![],
+            chimeric_min_mapped_frac: 0.10,
+            chimeric_max_overlap_frac: 0.20,
+            chimeric_min_union_frac: 0.80,
+        }
+    }
 }
 
 /// Tabix-indexed region flags. Hashmap and collated algorithm only.

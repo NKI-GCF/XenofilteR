@@ -230,26 +230,47 @@ fn mapped_read_range<R: SimpleRec>(rec: &R) -> (usize, usize) {
 /// - Each arm must contribute >= 15 aligned bases.
 /// - Overlap < 20 % of `read_len` (tolerance for aligner boundary fuzz).
 /// - Union >= 80 % of `read_len` (together they explain the full read).
-fn is_complementary(range_a: (usize, usize), range_b: (usize, usize), read_len: usize) -> bool {
+/// Chimeric read-split thresholds, all expressed relative to read length
+/// (fix for review item #5 — previously a fixed 15bp absolute floor that
+/// was trivially satisfied by long reads regardless of signal quality).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ChimericThresholds {
+    pub(crate) min_mapped_frac: f64,
+    pub(crate) max_overlap_frac: f64,
+    pub(crate) min_union_frac: f64,
+}
+
+impl Default for ChimericThresholds {
+    fn default() -> Self {
+        Self {
+            min_mapped_frac: 0.10,
+            max_overlap_frac: 0.20,
+            min_union_frac: 0.80,
+        }
+    }
+}
+
+fn is_complementary(
+    range_a: (usize, usize),
+    range_b: (usize, usize),
+    read_len: usize,
+    t: &ChimericThresholds,
+) -> bool {
     let (a0, a1) = range_a;
     let (b0, b1) = range_b;
-
     if a1 <= a0 || b1 <= b0 || read_len == 0 {
         return false;
     }
     let mapped_a = a1 - a0;
     let mapped_b = b1 - b0;
-    if mapped_a < 15 || mapped_b < 15 {
+    let min_mapped = ((read_len as f64) * t.min_mapped_frac).round() as usize;
+    if mapped_a < min_mapped || mapped_b < min_mapped {
         return false;
     }
-
-    // Overlap between mapped ranges.
     let overlap = a1.min(b1).saturating_sub(a0.max(b0));
-    // Union of mapped ranges.
     let union = a1.max(b1) - a0.min(b0);
-
-    // overlap < 20 % of read_len  AND  union >= 80 % of read_len
-    overlap * 5 < read_len && union * 10 >= read_len * 8
+    (overlap as f64) < (read_len as f64) * t.max_overlap_frac
+        && (union as f64) >= (read_len as f64) * t.min_union_frac
 }
 
 // ---------------------------------------------------------------------------
@@ -291,6 +312,7 @@ fn md_mismatches_from_record<R: SimpleRec>(rec: &R) -> usize {
 fn detect_split_read<R: SimpleRec>(
     state_a: &FragmentState<R>,
     state_b: &FragmentState<R>,
+    t: &ChimericThresholds,
 ) -> Option<u8> {
     // Candidate segment identifiers (read1, read2, single-end).
     for &seg_id in &[0x40u8, 0x80u8, 0x00u8] {
@@ -329,7 +351,7 @@ fn detect_split_read<R: SimpleRec>(
         let range_a = mapped_read_range(rec_a);
         let range_b = mapped_read_range(rec_b);
 
-        if !is_complementary(range_a, range_b, read_len) {
+        if !is_complementary(range_a, range_b, read_len, t) {
             continue;
         }
 
@@ -383,6 +405,7 @@ fn detect_split_read<R: SimpleRec>(
 pub(crate) fn detect_chimeric_event<R: SimpleRec>(
     best: &FragmentBuffer<R>,
     chimeric_pairs: &[[usize; 2]],
+    t: &ChimericThresholds,
 ) -> ChimericDecision {
     for &[a, b] in chimeric_pairs {
         let state_a = best.iter().find(|s| s.get_nr() == a);
@@ -417,7 +440,7 @@ pub(crate) fn detect_chimeric_event<R: SimpleRec>(
         }
 
         // -- Phase 2: read-split (single-end or paired-end) ---------------
-        if let Some(seg_id) = detect_split_read(sa, sb) {
+        if let Some(seg_id) = detect_split_read(sa, sb, t) {
             return ChimericDecision::Chimeric {
                 stream_a: a,
                 stream_b: b,

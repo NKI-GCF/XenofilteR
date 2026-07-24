@@ -3,8 +3,8 @@
 //! MultiQC format reference:
 //! <https://multiqc.info/docs/development/custom_content/#json-data>
 
-use crate::Error;
 use crate::filter_algorithm::COUNTER_STRIDE;
+use crate::Error;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -69,13 +69,6 @@ pub(crate) fn write_stats(
     labels: &[String],
     sample_name: &str,
 ) -> Result<(), Error> {
-    let _data: HashMap<String, StreamStats> = HashMap::new();
-    for nr in 0..stream_count {
-        let label = labels.get(nr).map(|s| s.as_str()).unwrap_or("unknown");
-        let key = format!("{sample_name}:stream_{nr}:{label}");
-        // We need owned keys; use a Vec to back them.
-        let _ = (key, StreamStats::from_counters(counters, nr));
-    }
     // Rebuild with owned strings to satisfy lifetime:
     let owned: Vec<(String, StreamStats)> = (0..stream_count)
         .map(|nr| {
@@ -84,21 +77,7 @@ pub(crate) fn write_stats(
             (key, StreamStats::from_counters(counters, nr))
         })
         .collect();
-    let _map: HashMap<&str, &StreamStats> = owned.iter().map(|(k, v)| (k.as_str(), v)).collect();
 
-    let _doc = MultiQcData {
-        id: "xenofilters",
-        plot_type: "generalstats",
-        pconfig: PConfig {
-            namespace: "xenofilters",
-        },
-        data: owned
-            .iter()
-            .map(|(k, _v)| {
-                (k.as_str(), StreamStats::from_counters(counters, 0)) // placeholder
-            })
-            .collect(),
-    };
     // Re-derive correctly:
     let data_map: HashMap<String, StreamStats> = owned.into_iter().collect();
     let final_doc = serde_json::json!({

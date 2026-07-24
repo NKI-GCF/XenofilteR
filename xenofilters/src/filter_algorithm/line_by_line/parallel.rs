@@ -172,7 +172,11 @@ impl LineByLine<RecordBuf> {
                             continue;
                         }
                         // Full detection: read-split + false-positive rejection via supplementary MD.
-                        let cd = detect_chimeric_event(&best, &self.chimeric_pairs);
+                        let cd = detect_chimeric_event(
+                            &best,
+                            &self.chimeric_pairs,
+                            &self.chimeric_thresholds,
+                        );
                         if matches!(cd, ChimericDecision::Chimeric { .. }) {
                             // Chimeric routing is a pure IO-thread decision
                             // (no NW DP needed); handle inline.

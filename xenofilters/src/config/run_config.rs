@@ -4,13 +4,13 @@ use crate::{
         args::{ChimericArgs, IoArgs, RelatedArgs, ScoringArgs, SegregateArgs},
         CommonArgs, MatchingAlgorithm, NameEncoderKind,
     },
+    filter_algorithm::line_by_line::ChimericThresholds,
     Error,
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::{smallvec, SmallVec};
 use std::num::NonZeroUsize;
 use std::ops::RangeInclusive;
-
 /// Single flat struct consumed by all three engines. No Args-struct
 /// indirection survives past `into_run_config()`. This is what
 /// `LineByLine::new`, `HashLookup::new`, `CollatedMatcher::new` accept --
@@ -27,6 +27,7 @@ pub(crate) struct RunConfig {
     pub(crate) name_encoder: Option<NameEncoderKind>,
     pub(crate) is_pass2: bool,
     pub(crate) is_paired: Option<bool>,
+    pub(crate) chimeric_thresholds: ChimericThresholds,
 }
 
 impl RunConfig {
@@ -46,9 +47,17 @@ impl RunConfig {
         common.scoring.validate()?;
         common.variants.validate()?;
 
-        let (chimeric_pairs, stream_labels) = match chimeric {
-            Some(c) => (c.chimeric_pairs, c.stream_labels),
-            None => (vec![], vec![]),
+        let (chimeric_pairs, stream_labels, chimeric_thresholds) = match chimeric {
+            Some(c) => (
+                c.chimeric_pairs,
+                c.stream_labels,
+                ChimericThresholds {
+                    min_mapped_frac: c.chimeric_min_mapped_frac,
+                    max_overlap_frac: c.chimeric_max_overlap_frac,
+                    min_union_frac: c.chimeric_min_union_frac,
+                },
+            ),
+            None => (vec![], vec![], ChimericThresholds::default()),
         };
 
         Ok(RunConfig {
@@ -60,6 +69,7 @@ impl RunConfig {
             stream_labels,
             segregate,
             name_encoder,
+            chimeric_thresholds,
             ..Default::default()
         })
     }
