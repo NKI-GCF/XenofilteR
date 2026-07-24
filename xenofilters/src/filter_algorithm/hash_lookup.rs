@@ -541,7 +541,7 @@ impl<R: SimpleRec> HashLookup<R> {
                 dvnt.push(SmallVec::new());
             } else {
                 let tid = buf.reference_sequence_id().ok_or(Error::NoRefSeqId)?;
-                let start = buf.alignment_start().ok_or(Error::NoAlignmentStart)?.get();
+                let start = buf.alignment_start().ok_or(Error::NoAlnStart)?.get();
                 let end = start + buf.cigar().len();
 
                 // Borrow from the `store` we fetched outside the loop

@@ -139,10 +139,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         frag: &FragmentState<R>,
         aln_idx: usize,
     ) -> Result<bool, Error> {
-        let bed = match &self.bed[aln_idx] {
-            Some(b) => b,
-            None => return Ok(false),
-        };
+        let bed = match &self.bed[aln_idx] { Some(b) => b, None => return Ok(false) };
         for (rec, flags) in frag.get_records().iter().zip(frag.flags.iter()) {
             if flags.is_secondary() || flags.is_unmapped() {
                 continue;

@@ -320,13 +320,13 @@ pub enum Error {
     NoRefSeqId,
 
     #[error("No alignment start")]
-    NoAlignmentStart,
+    NoAlnStart,
 
     #[error("No alignment for index {aln_idx}")]
-    NoAlignmentForIndex { aln_idx: usize },
+    NoAlnForIndex { aln_idx: usize },
 
     #[error("No alignment for index {nr}")]
-    NoAlignmentForNr { nr: usize },
+    NoAlnForNr { nr: usize },
 
     #[error("No flags for record {idx}")]
     NoFlagsForRecord { idx: usize },
@@ -336,12 +336,6 @@ pub enum Error {
 
     #[error("No flags for record index {idx} in alignment {aln_idx}")]
     NoFlagsForRecordInAlignment { idx: usize, aln_idx: usize },
-
-    #[error("Mapped record has no reference sequence ID")]
-    MappedRecordNoRefSeqId,
-
-    #[error("Mapped record has no alignment start")]
-    MappedRecordNoAlignmentStart,
 
     #[error("MdCigFlags missing for {idx}")]
     MdCigFlagsMissing { idx: usize },
@@ -526,9 +520,6 @@ pub enum Error {
 
     #[error("missing flags at index {idx}")]
     MissingFlags { idx: usize },
-
-    #[error("mapped record missing alignment start")]
-    MissingAlignStart,
 
     #[error("NW error: {0}")]
     NwError(String),

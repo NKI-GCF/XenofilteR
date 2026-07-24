@@ -296,7 +296,7 @@ fn fragment_overlaps_region(&self, frag: &FragmentState<R>, aln_idx: usize) -> R
         if flags.is_secondary() || flags.is_unmapped() { continue; }
         let is_rev  = flags.is_reverse_complemented();
         let ref_id  = rec.ref_seq_id().transpose()?.ok_or(Error::MissingRefSeqId)?;
-        let start   = rec.alignment_start().transpose()?.ok_or(Error::MissingAlignStart)?
+        let start   = rec.alignment_start().transpose()?.ok_or(Error::NoAlnStart)?
                          .get().saturating_sub(1);
         let end     = start + rec.cigar().as_ref().len();
         // `any_overlap` now strand-aware via BED column 6.

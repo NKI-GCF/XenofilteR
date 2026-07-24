@@ -467,10 +467,10 @@ fn score_candidate_owned(
             let tid = rec
                 .ref_seq_id()
                 .transpose()?
-                .ok_or(Error::MappedRecordNoRefSeqId)?;
+                .ok_or(Error::NoRefSeqId)?;
             let start = rec
                 .alignment_start()
-                .ok_or(Error::MappedRecordNoAlignmentStart)?
+                .ok_or(Error::NoAlnStart)?
                 .get();
             let cig_len = mcfs_opt[idx]
                 .as_ref()
@@ -641,7 +641,7 @@ impl<R: SimpleRec> LineByLine<R> {
             let aln = self
                 .aln
                 .get(nr)
-                .ok_or(Error::NoAlignmentForIndex { aln_idx: nr })?;
+                .ok_or(Error::NoAlnForIndex { aln_idx: nr })?;
             let store = aln.variant_store();
             let positive_regions = aln.positive_regions();
             let score = state.score_state_nw(
@@ -722,7 +722,7 @@ impl<R: SimpleRec> LineByLine<R> {
                     .aln
                     .get(nr)
                     .map(|a| a.header())
-                    .ok_or(Error::NoAlignmentForIndex { aln_idx: nr })?;
+                    .ok_or(Error::NoAlnForIndex { aln_idx: nr })?;
                 let mut rb = RecordBuf::try_from_alignment_record(header, &r)?;
                 apply_decision_tag(&mut rb, decision.as_ref());
                 self.write_record(nr, rb, best_state)

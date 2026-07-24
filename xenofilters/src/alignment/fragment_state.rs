@@ -82,11 +82,11 @@ impl<R: SimpleRec> FragmentState<R> {
             let r = &self.records[i];
             let start = match r.alignment_start() {
                 Some(Ok(pos)) => pos.get(),
-                _ => return Err(Error::MappedRecordNoAlignmentStart),
+                _ => return Err(Error::NoAlnStart),
             };
             let tid = match r.ref_seq_id() {
                 Some(Ok(tid)) => tid,
-                _ => return Err(Error::MappedRecordNoRefSeqId),
+                _ => return Err(Error::NoRefSeqId),
             };
             let flags = &self.flags[i];
             let pos = if flags.is_reverse_complemented() {
@@ -219,11 +219,11 @@ impl<R: SimpleRec> FragmentState<R> {
                 let tid = rec
                     .ref_seq_id()
                     .transpose()?
-                    .ok_or(Error::MappedRecordNoRefSeqId)?;
+                    .ok_or(Error::NoRefSeqId)?;
                 let start = rec
                     .alignment_start()
                     .transpose()?
-                    .ok_or(Error::MappedRecordNoAlignmentStart)?
+                    .ok_or(Error::NoAlnStart)?
                     .get();
                 let cig_len = mcfs_opt[idx]
                     .as_ref()
