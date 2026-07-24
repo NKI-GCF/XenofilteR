@@ -188,7 +188,7 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         // must be scored via NW to properly account for variant rescue).
         if !a_needs_scoring
             && !b_needs_scoring
-            && let PreAssessResult::EarlyDecision(pa_ord) = pre_assess_alignments(&mcfs1, &mcfs2)
+            && let PreAssessResult::EarlyDecision(pa_ord) = pre_assess_alignments(&mcfs1, &mcfs2, &self.penalties, self.ambiguous_log_threshold)
         {
             drop(mcfs1);
             drop(mcfs2);

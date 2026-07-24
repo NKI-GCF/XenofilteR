@@ -38,7 +38,7 @@
 //! candidate rather than one per read segment.
 
 use super::core::{FragmentBuffer, LineByLine, Scratch};
-use crate::Error;
+use crate::alignment::pre_assess::min_delta_for_early_decision;
 use crate::alignment::{
     BaseOp, FragmentState, MateClassifiable, MateKind, MdCigFlags, ScoreOpIter, SimpleRec,
     mate_slot, segment_id,
@@ -49,8 +49,10 @@ use crate::filter_algorithm::line_by_line::{
     chimeric::{ChimericKind, detect_chimeric_mate_complement},
     detect_chimeric_event,
 };
+use crate::penalty::Penalty;
 use crate::region::{ScoreFn, ScoredRegions};
 use crate::variant::StoreTrait;
+use crate::Error;
 use noodles::sam::alignment::RecordBuf;
 use smallvec::{SmallVec, smallvec};
 use std::f64::consts::LN_10;
@@ -169,6 +171,7 @@ where
 fn apply_tiers<R: SimpleRec, D>(
     best: &mut FragmentBuffer<R>,
     m: &TournamentMetrics,
+    min_delta: usize,
     threshold: f64,
     add_tag: bool,
     mut discard: D,
@@ -193,22 +196,41 @@ where
         return Ok(add_tag.then_some(Decision::Ambiguous));
     }
 
-    // Tier 2.5
+    // Tier 2.5 - add the same conservative floor before discarding based on
+    // match_bases alone.
     let max_mb = best
         .iter()
         .map(|s| m.match_bases[s.get_nr()])
         .max()
         .unwrap_or(0);
+    let candidates_below_floor = best.iter().any(|s| {
+        let nr = s.get_nr();
+        max_mb.saturating_sub(m.match_bases[nr]) > 0
+            && max_mb.saturating_sub(m.match_bases[nr]) < min_delta
+    });
     let min_sc = best
         .iter()
         .filter(|s| m.match_bases[s.get_nr()] == max_mb)
         .map(|s| m.supp_counts[s.get_nr()])
         .min()
         .unwrap_or(0);
-    if best.iter().any(|s| {
+    if candidates_below_floor {
+        // Not enough margin to trust match-count alone; skip Tier 2.5 entirely
+        // for this fragment and fall through to Tier 3 NW scoring.
+        tracing::debug!(
+            fragment = ?best.first().map(|s| s.first_qname()),
+            "Tier 2.5 skipped: max_mb={} min_delta={} candidates_below_floor={}",
+            max_mb,
+            min_delta,
+            candidates_below_floor
+        );
+        return Ok(None);
+    } else if best.iter().any(|s| {
+        // existing match_bases/supp_count check
         let nr = s.get_nr();
-        m.match_bases[nr] < max_mb || m.supp_counts[nr] > min_sc
+        m.match_bases[nr] < max_mb || m.supp_counts[nr] > 0
     }) {
+        // existing discard logic, unchanged
         for i in (0..best.len()).rev() {
             let nr = best[i].get_nr();
             if m.match_bases[nr] < max_mb || m.supp_counts[nr] > min_sc {
@@ -350,11 +372,13 @@ pub(super) fn score_bundle(
         Ok((score, scratch.last_variant_delta))
     })
     .ok()?; // wrap_err converts Option<T> closure to Result<T> inside compute_metrics
-
+    let threshold = ctx.ambiguous_log_threshold;
+    let min_delta = min_delta_for_early_decision(&ctx.penalties, threshold);
     apply_tiers(
         best,
         &metrics,
-        ctx.ambiguous_log_threshold,
+        min_delta,
+        threshold,
         ctx.add_decision_tag,
         |b, i| {
             b.remove(i);
@@ -654,11 +678,13 @@ impl<R: SimpleRec> LineByLine<R> {
             )?;
             Ok((score, self.scratch.last_variant_delta))
         })?;
-
+        let threshold = self.ambiguous_log_threshold;
+        let min_delta = min_delta_for_early_decision(&self.penalties, threshold);
         apply_tiers(
             best,
             &metrics,
-            self.ambiguous_log_threshold,
+            min_delta,
+            threshold,
             self.add_decision_tag,
             |b, i| self.discard_at(b, i),
         )

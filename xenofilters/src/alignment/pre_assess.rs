@@ -25,6 +25,7 @@ use super::read_profile::{
     FragmentProfile, ReadOp, ReadSpaceDecision, build_read_profile, compare_fragment_profiles,
 };
 use crate::alignment::MdCigFlags;
+use crate::filter_algorithm::hash_lookup::assemble::RecordKind;
 use crate::filter_algorithm::line_by_line::READ_CT;
 use smallvec::SmallVec;
 use std::cmp::Ordering;
@@ -65,33 +66,72 @@ fn sig_from_fragment_profile(fp: &FragmentProfile) -> AlignSig {
     sig
 }
 
-/// Two-axis structural domination:
-/// - more `primary_match_bases` is better (higher NW log-likelihood contribution)
-/// - fewer `supp_count` is better (fewer chimeric-junction penalties)
-///
-/// Returns `None` when one axis favours A and the other favours B; the NW score
-/// must then break the tie.
-fn subsumes(a: &AlignSig, b: &AlignSig) -> Option<Ordering> {
-    if a.supp_count == b.supp_count {
-        if a.primary_match_bases > b.primary_match_bases {
+/// Smallest possible per-base log-likelihood advantage a matched base can
+/// have over a mismatched one, across the full quality range. Occurs at the
+/// lowest quality score, where `ll_match` and `ll_mismatch` are closest
+/// together. Used as a conservative (worst-case) lower bound: if
+/// `match_count_delta * min_per_base_advantage >= threshold`, then the
+/// TRUE NW margin (which uses actual, generally larger, per-base
+/// advantages) is guaranteed to also clear the threshold, so short-circuiting
+/// here cannot produce a decision that full NW scoring would have called
+/// ambiguous.
+fn min_per_base_advantage(pen: &crate::penalty::Penalty) -> f64 {
+    (0..pen.log_likelihood_match.len())
+        .map(|q| pen.log_likelihood_match[q] - pen.log_likelihood_mismatch[q])
+        .fold(f64::INFINITY, f64::min)
+        .max(0.0) // defensive: should never be negative given match >= mismatch by construction
+}
+
+/// Minimum match-count delta required before Tier 2.5a is permitted to
+/// short-circuit, given a configured ambiguous threshold (in nats). Returns
+/// `usize::MAX` (never short-circuit) if `min_per_base_advantage` is ~zero,
+/// which happens only in pathological penalty configurations.
+pub(crate) fn min_delta_for_early_decision(
+    pen: &crate::penalty::Penalty,
+    threshold_nats: f64,
+) -> usize {
+    let per_base = min_per_base_advantage(pen);
+    if per_base <= 1e-12 {
+        return usize::MAX;
+    }
+    (threshold_nats / per_base).ceil() as usize
+}
+
+/// Two-axis structural domination, now threshold-aware (fix for review
+/// item #2: Tier 2.5 could previously override Tier 3's own ambiguity bar
+/// on a 1-base match-count difference, silently discarding quality
+/// information near the decision boundary).
+fn subsumes(a: &AlignSig, b: &AlignSig, min_delta: usize) -> Option<Ordering> {
+    if a.supp_count != b.supp_count {
+        // Differing supp_count already requires the >= match-count guard
+        // below in the original logic; the threshold floor only gates the
+        // *magnitude* of a match-count-only decision, so this branch is
+        // unchanged from before except for propagating min_delta into the
+        // equal-supp_count case, which is where a bare 1-base delta most
+        // commonly arises.
+        return if a.supp_count < b.supp_count && a.primary_match_bases >= b.primary_match_bases {
             Some(Ordering::Greater)
-        } else if a.primary_match_bases < b.primary_match_bases {
+        } else if b.supp_count < a.supp_count && b.primary_match_bases >= a.primary_match_bases {
             Some(Ordering::Less)
         } else {
-            Some(Ordering::Equal) // identical on both axes
-        }
-    } else if a.supp_count < b.supp_count {
-        if a.primary_match_bases >= b.primary_match_bases {
-            Some(Ordering::Greater)
-        } else {
-            None // a has fewer supps but fewer matches -> incomparable
-        }
+            None
+        };
+    }
+
+    let delta = a.primary_match_bases.abs_diff(b.primary_match_bases);
+    if delta == 0 {
+        return Some(Ordering::Equal);
+    }
+    if delta < min_delta {
+        // Not enough of a margin to guarantee Tier 3 would agree — fall
+        // through to full scoring instead of risking a false-confident
+        // early decision.
+        return None;
+    }
+    if a.primary_match_bases > b.primary_match_bases {
+        Some(Ordering::Greater)
     } else {
-        if b.primary_match_bases >= a.primary_match_bases {
-            Some(Ordering::Less)
-        } else {
-            None // b has fewer supps but fewer matches -> incomparable
-        }
+        Some(Ordering::Less)
     }
 }
 
@@ -209,61 +249,36 @@ pub enum PreAssessResult {
 pub fn pre_assess_alignments(
     mcfs_a: &SmallVec<[MdCigFlags<'_>; READ_CT]>,
     mcfs_b: &SmallVec<[MdCigFlags<'_>; READ_CT]>,
+    pen: &crate::penalty::Penalty,
+    ambiguous_threshold_nats: f64,
 ) -> PreAssessResult {
     if mcfs_a.len() != mcfs_b.len() || mcfs_a.is_empty() {
-        #[cfg(test)]
-        eprintln!(
-            "pre_assess_alignments: segment count mismatch ({} vs {})",
-            mcfs_a.len(),
-            mcfs_b.len()
-        );
         return PreAssessResult::FullScoring;
     }
-
-    // Single CIGAR+MD walk per record; both tiers read from these profiles.
     let fp_a = FragmentProfile {
         mates: mcfs_a.iter().map(build_read_profile).collect(),
     };
     let fp_b = FragmentProfile {
         mates: mcfs_b.iter().map(build_read_profile).collect(),
     };
-
     if !fp_a.valid() || !fp_b.valid() {
-        #[cfg(test)]
-        eprintln!("pre_assess_alignments: invalid fragment profile (malformed CIGAR/MD)");
         return PreAssessResult::FullScoring;
     }
 
-    // Tier 2.5a: match-count domination -- derived from profiles at zero extra cost.
     let sig_a = sig_from_fragment_profile(&fp_a);
     let sig_b = sig_from_fragment_profile(&fp_b);
-    if let Some(ord) = subsumes(&sig_a, &sig_b) {
-        #[cfg(test)]
-        eprintln!(
-            "pre_assess_alignments: Tier 2.5a early decision1: {:?} vs {:?} => {:?}",
-            sig_a, sig_b, ord
-        );
+    let min_delta = min_delta_for_early_decision(pen, ambiguous_threshold_nats);
+    if let Some(ord) = subsumes(&sig_a, &sig_b, min_delta) {
         return PreAssessResult::EarlyDecision(ord);
     }
 
-    // Tier 2.5b: per-position read-space comparison -- reuses the same profiles.
+    // Tier 2.5b (read-space comparison) is unaffected: it already requires
+    // a per-position dominance proof (every differing position favors the
+    // same side), which is a strictly stronger, quality-blind-safe
+    // condition than a raw count delta — no threshold floor needed there.
     match compare_fragment_profiles(&fp_a, &fp_b) {
-        ReadSpaceDecision::EarlyDecision(ord) => {
-            #[cfg(test)]
-            eprintln!(
-                "pre_assess_alignments: Tier 2.5b early decision2: {:?} vs {:?} => {:?}",
-                sig_a, sig_b, ord
-            );
-            PreAssessResult::EarlyDecision(ord)
-        }
-        ReadSpaceDecision::PartialScoring { .. } | ReadSpaceDecision::FallThrough => {
-            #[cfg(test)]
-            eprintln!(
-                "pre_assess_alignments: Tier 2.5b fallthrough: {:?} vs {:?} => FullScoring",
-                sig_a, sig_b
-            );
-            PreAssessResult::FullScoring
-        }
+        ReadSpaceDecision::EarlyDecision(ord) => PreAssessResult::EarlyDecision(ord),
+        _ => PreAssessResult::FullScoring,
     }
 }
 
@@ -274,11 +289,11 @@ pub fn pre_assess_alignments(
 /// `match_count_raw` (same match-count semantics as Tier 2.5a above) and
 /// respects `supp_count` from the SA:Z tag parsed in `next_scoring_record`.
 pub(crate) fn pre_assess_scoring_records(
-    recs_a: &[crate::filter_algorithm::hash_lookup::assemble::RecordKind],
-    recs_b: &[crate::filter_algorithm::hash_lookup::assemble::RecordKind],
+    recs_a: &[RecordKind],
+    recs_b: &[RecordKind],
+    pen: &crate::penalty::Penalty,
+    ambiguous_threshold_nats: f64,
 ) -> PreAssessResult {
-    use crate::filter_algorithm::hash_lookup::assemble::RecordKind;
-
     let primaries_a: SmallVec<[_; 2]> = recs_a
         .iter()
         .filter_map(|r| match r {
@@ -312,8 +327,12 @@ pub(crate) fn pre_assess_scoring_records(
         sig_b.primary_match_bases += match_count_raw(&m.cigar_bytes, &m.md);
         sig_b.supp_count += m.supp_count;
     }
-
-    match subsumes(&sig_a, &sig_b) {
+    // Same conservative floor as pre_assess_alignments: a raw match-count
+    // delta only short-circuits Tier 3 if it's large enough that even the
+    // worst-case (lowest-quality) per-base advantage would still clear the
+    // configured ambiguous threshold.
+    let min_delta = min_delta_for_early_decision(pen, ambiguous_threshold_nats);
+    match subsumes(&sig_a, &sig_b, min_delta) {
         Some(ord) => PreAssessResult::EarlyDecision(ord),
         None => PreAssessResult::FullScoring,
     }
@@ -460,7 +479,8 @@ mod tests {
             |c| {
                 let mcfs_a = mcfs_from(c.cigar_a, c.md_a);
                 let mcfs_b = mcfs_from(c.cigar_b, c.md_b);
-                let result = pre_assess_alignments(&mcfs_a, &mcfs_b);
+                let pen = crate::penalty::Penalty::default();
+                let result = pre_assess_alignments(&mcfs_a, &mcfs_b, &pen, 0.0);
 
                 match (c.want, result) {
                     (Some(want_ord), PreAssessResult::EarlyDecision(got_ord)) => {
@@ -622,7 +642,7 @@ mod tests {
             },
         ];
         for c in cases {
-            assert_eq!(subsumes(&c.a, &c.b), c.want, "[{}]", c.label);
+            assert_eq!(subsumes(&c.a, &c.b, 0), c.want, "[{}]", c.label);
         }
     }
     #[test]
@@ -646,5 +666,110 @@ mod tests {
     fn md_mismatches_malformed_input_does_not_panic_and_stops_gracefully() {
         // '!' is not a valid MD character; function must stop rather than panic.
         assert_eq!(md_mismatches(b"5!5"), 0);
+    }
+
+    // alignment/pre_assess.rs — add to existing #[cfg(test)] mod tests
+    #[test]
+    fn small_match_delta_below_threshold_floor_falls_through_to_full_scoring() {
+        let pen =
+            crate::penalty::Penalty::build(6.0, 1.0, 4.0, 20, crate::penalty::ErrorModel::Illumina);
+        // ambiguous_threshold = Phred 30 -> a large nats threshold; a 1-base
+        // match-count delta cannot possibly guarantee this margin even in the
+        // best case, so it must NOT early-decide.
+        let threshold_nats = 30.0 * std::f64::consts::LN_10 / 10.0;
+        let mcfs_a = mcfs_from("10M", "9A0"); // 9 matches
+        let mcfs_b = mcfs_from("10M", "10"); // 10 matches
+        let result = pre_assess_alignments(&mcfs_a, &mcfs_b, &pen, threshold_nats);
+        assert!(
+            matches!(result, PreAssessResult::FullScoring),
+            "1-base delta must not clear a Phred-30 threshold floor"
+        );
+    }
+
+    #[test]
+    fn large_match_delta_above_threshold_floor_still_early_decides() {
+        let pen =
+            crate::penalty::Penalty::build(6.0, 1.0, 4.0, 20, crate::penalty::ErrorModel::Illumina);
+        let threshold_nats = 10.0 * std::f64::consts::LN_10 / 10.0; // modest threshold
+        let mcfs_a = mcfs_from("50M", "50"); // 50 matches
+        let mcfs_b = mcfs_from("50M", "0A49"); // 49 matches — large-enough delta
+        let result = pre_assess_alignments(&mcfs_a, &mcfs_b, &pen, threshold_nats);
+        assert!(matches!(
+            result,
+            PreAssessResult::EarlyDecision(std::cmp::Ordering::Greater)
+        ));
+    }
+
+    #[test]
+    fn zero_threshold_permits_any_nonzero_delta() {
+        let pen =
+            crate::penalty::Penalty::build(6.0, 1.0, 4.0, 20, crate::penalty::ErrorModel::Illumina);
+        let mcfs_a = mcfs_from("10M", "9A0");
+        let mcfs_b = mcfs_from("10M", "10");
+        let result = pre_assess_alignments(&mcfs_a, &mcfs_b, &pen, 0.0);
+        assert!(matches!(result, PreAssessResult::EarlyDecision(_)));
+    }
+}
+
+#[cfg(test)]
+mod hashlookup_threshold_floor_tests {
+    use super::*;
+    use crate::filter_algorithm::hash_lookup::assemble::{MappedRecord, RecordKind};
+    use crate::penalty::{ErrorModel, Penalty};
+    use noodles::sam::alignment::record::Flags;
+    use std::f64::consts::LN_10;
+
+    fn cigar_bytes(len: u32) -> Vec<u8> {
+        ((len << 4) | 0/* Match */).to_le_bytes().to_vec()
+    }
+
+    fn mapped(cigar_len: u32, md: &[u8], supp_count: usize) -> RecordKind {
+        RecordKind::Mapped(Box::new(MappedRecord {
+            flags: Flags::empty(),
+            ref_id: 0,
+            pos: 1,
+            ref_len: cigar_len as usize,
+            cigar_bytes: cigar_bytes(cigar_len),
+            md: md.to_vec(),
+            qualities: vec![30; cigar_len as usize],
+            sequence: vec![b'A'; cigar_len as usize],
+            virtual_offset: 0,
+            supp_count,
+        }))
+    }
+
+    #[test]
+    fn hashlookup_small_delta_below_threshold_floor_falls_through() {
+        let pen = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina /*, 0.5*/);
+        let threshold_nats = 30.0 * LN_10 / 10.0; // Phred 30 -- a demanding bar
+        let recs_a = vec![mapped(10, b"9A0", 0)]; // 9 matches
+        let recs_b = vec![mapped(10, b"10", 0)]; // 10 matches -- 1-base delta only
+        let result = pre_assess_scoring_records(&recs_a, &recs_b, &pen, threshold_nats);
+        assert!(
+            matches!(result, PreAssessResult::FullScoring),
+            "1-base match delta must not clear a Phred-30 threshold floor in HashLookup"
+        );
+    }
+
+    #[test]
+    fn hashlookup_large_delta_above_threshold_still_early_decides() {
+        let pen = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina /*, 0.5*/);
+        let threshold_nats = 10.0 * LN_10 / 10.0;
+        let recs_a = vec![mapped(50, b"50", 0)]; // 50 matches
+        let recs_b = vec![mapped(50, b"0A49", 0)]; // 49 matches -- large-enough delta
+        let result = pre_assess_scoring_records(&recs_a, &recs_b, &pen, threshold_nats);
+        assert!(matches!(
+            result,
+            PreAssessResult::EarlyDecision(std::cmp::Ordering::Greater)
+        ));
+    }
+
+    #[test]
+    fn hashlookup_zero_threshold_matches_pre_fix_behavior() {
+        let pen = Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina /*, 0.5*/);
+        let recs_a = vec![mapped(10, b"9A0", 0)];
+        let recs_b = vec![mapped(10, b"10", 0)];
+        let result = pre_assess_scoring_records(&recs_a, &recs_b, &pen, 0.0);
+        assert!(matches!(result, PreAssessResult::EarlyDecision(_)));
     }
 }

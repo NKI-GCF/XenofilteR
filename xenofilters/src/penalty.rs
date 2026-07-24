@@ -132,6 +132,13 @@ impl Penalty {
 }
 
 #[cfg(test)]
+impl Default for Penalty {
+    fn default() -> Self {
+        Penalty::build(6.0, 1.0, 4.0, 20, ErrorModel::Illumina /*, 0.5 */)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::f64::consts::LN_10;

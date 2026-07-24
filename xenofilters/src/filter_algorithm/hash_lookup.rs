@@ -20,9 +20,9 @@ pub(crate) mod stage;
 #[cfg(test)]
 pub(crate) mod tests;
 
-use crate::Error;
-use crate::alignment::{Fragment, MateKind, MdCigFlags, SimpleRec, mate_slot, segment_id};
-use crate::alignment::{PreAssessResult, pre_assess_scoring_records};
+use crate::alignment::pre_assess::min_delta_for_early_decision;
+use crate::alignment::{mate_slot, segment_id, Fragment, MateKind, MdCigFlags, SimpleRec};
+use crate::alignment::{pre_assess_scoring_records, PreAssessResult};
 use crate::aln_stream::AlignmentStream;
 use crate::config::args::resolve_threshold;
 use crate::config::run_config::RunConfig;
@@ -32,14 +32,15 @@ use crate::penalty::Penalty;
 use crate::region::tabix_query::{TabixBed, TabixVcf};
 use crate::region::{ScoreFn, ScoredRegions};
 use crate::variant::FragEvalVec;
+use crate::Error;
 use assemble::{
     EarlyKind, FragmentTable, MappedRecord, PendingFragment, RecordKind, StreamKind, insert,
     new_fragment_table,
 };
 use noodles::core::Position;
-use noodles::sam::alignment::record::Cigar as CigarTrait;
 use noodles::sam::alignment::record::cigar::op::{Kind, Op};
 use noodles::sam::alignment::record::data::field::{Tag, Value};
+use noodles::sam::alignment::record::Cigar as CigarTrait;
 use noodles::sam::alignment::record_buf::{
     Cigar, Data, QualityScores, RecordBuf, Sequence, data::field::Value as BufValue,
 };
@@ -404,9 +405,12 @@ impl<R: SimpleRec> HashLookup<R> {
 
         let off_a: SmallVec<[(usize, u64); 2]> = offsets_a.iter().map(|&o| (0, o)).collect();
         let off_b: SmallVec<[(usize, u64); 2]> = offsets_b.iter().map(|&o| (1, o)).collect();
-
-        let (winner_nr, decision, is_ambiguous) = match pre_assess_scoring_records(&recs_a, &recs_b)
-        {
+        let (winner_nr, decision, is_ambiguous) = match pre_assess_scoring_records(
+            &recs_a,
+            &recs_b,
+            &self.penalties,
+            self.ambiguous_log_threshold,
+        ) {
             PreAssessResult::EarlyDecision(ord) => match ord {
                 Ordering::Greater => (0, self.add_decision_tag.then_some(Decision::First), false),
                 Ordering::Less => (1, self.add_decision_tag.then_some(Decision::Last), false),
