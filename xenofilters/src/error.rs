@@ -86,6 +86,15 @@ pub enum Error {
     #[error("No reader available")]
     NoReaderAvailable,
 
+    #[error(
+        "Pass-2 input on stream {stream} has no detected BQSR (or equivalent recalibration) \
+     in its @PG header chain, but --ambiguous-threshold is 'auto' (resolves to Phred 0 \
+     for pass2). Trusting a zero-margin threshold is only justified after quality \
+     recalibration -- pass an explicit --ambiguous-threshold value if this BAM was not \
+     recalibrated, or run BQSR (e.g. GATK BaseRecalibrator + ApplyBQSR) between passes."
+    )]
+    Pass2RequiresExplicitThresholdWithoutBqsr { stream: usize },
+
     // ---------------------------------------------------------------------------
     // CLI / Configuration
     // ---------------------------------------------------------------------------

@@ -25,6 +25,7 @@ use noodles::bam::{io::Reader as BamReader, record::Record};
 use noodles::bgzf::{io::MultithreadedReader, VirtualPosition};
 use noodles::fasta::io::indexed_reader::Builder;
 use noodles::sam::alignment::record_buf::RecordBuf;
+use noodles::sam::header::record::value::map::program::tag;
 use noodles::sam::Header;
 use std::fs::File;
 use std::num::NonZeroUsize;
@@ -108,6 +109,9 @@ where
 
         if is_pass2 {
             opt.is_pass2 = true; // set on RunConfig; overrides threshold selection
+            if opt.scoring.ambiguous_threshold == u32::MAX && !header_indicates_bqsr(&header) {
+                return Err(Error::Pass2RequiresExplicitThresholdWithoutBqsr { stream: i });
+            }
         }
 
         // Sort-order check (namesorted only).
@@ -407,6 +411,38 @@ pub(crate) fn build_diagnostic_store_for_stream(
     } else {
         Ok(None)
     }
+}
+
+/// Heuristically detects whether BQSR (or an equivalent base-quality
+/// recalibration step) appears in the BAM's @PG chain, by scanning program
+/// IDs, @PG NAME, and @PG CO/command-line fields for known tool signatures.
+///
+/// This is inherently a heuristic, not a proof: a BAM recalibrated by an
+/// unlisted tool will be (safely) treated as "not recalibrated." The
+/// failure direction is deliberately conservative -- worst case, a user
+/// with a legitimately recalibrated BAM has to pass `--ambiguous-threshold`
+/// explicitly once for pass2; the alternative (silently trusting
+/// `auto` -> threshold 0 on non-recalibrated data) risks resolving
+/// ambiguous reads that a fair per-base error model would not have
+/// resolved.
+fn header_indicates_bqsr(header: &Header) -> bool {
+    const SIGNATURES: &[&str] = &["baserecalibrator", "applybqsr", "bqsr", "recalibrat"];
+
+    header.programs().roots().any(|(id, map)| {
+        let id_lower = id.to_string().to_ascii_lowercase();
+        if SIGNATURES.iter().any(|s| id_lower.contains(s)) {
+            return true;
+        }
+        let of = map.other_fields();
+        [tag::NAME, tag::COMMAND_LINE].iter().any(|t| {
+            of.get(t)
+                .map(|v| {
+                    let v_lower = v.to_string().to_ascii_lowercase();
+                    SIGNATURES.iter().any(|s| v_lower.contains(s))
+                })
+                .unwrap_or(false)
+        })
+    })
 }
 
 #[cfg(test)]

@@ -470,4 +470,31 @@ mod chimeric_pair_tests {
     fn empty_specs_yields_empty_vec() {
         assert!(parse_chimeric_pairs(&[], 2).unwrap().is_empty());
     }
+
+    #[test]
+    fn min_population_af_out_of_range_rejected() {
+        let args = RelatedArgs {
+            min_population_af: 1.5,
+            ..Default::default()
+        };
+        assert!(matches!(
+            args.validate(),
+            Err(Error::InvalidMinPopulationAf { .. })
+        ));
+    }
+
+    #[test]
+    fn min_rescue_p_variant_out_of_range_rejected() {
+        let mut s = ScoringArgs {
+            gap_open: 6.0,
+            gap_extend: 1.0,
+            mismatch_penalty: 4.0,
+            min_rescue_p_variant: -0.1,
+            ..Default::default()
+        };
+        assert!(matches!(
+            s.validate(),
+            Err(Error::InvalidMinRescuePVariant { .. })
+        ));
+    }
 }

@@ -19,9 +19,20 @@ pub enum ErrorModel {
     /// PacBio HiFi (CCS): qualities highly accurate, SNR-based;
     /// indel rate ~0.01%.  Tighter gap penalties. gap_open=4, gap_extend=0.5.
     HiFi,
-    /// Oxford Nanopore (R9.4 / R10.4): quality calibration ~0.7*,
-    /// indel rate 1-10%.  Low gap penalties. gap_open=2, gap_extend=0.3.
+    /// Legacy Oxford Nanopore chemistry (R9.4.x). Historically the least
+    /// calibrated basecalled qualities of the supported platforms; kept as
+    /// a distinct, more conservative default from `OntR10`.
+    /// NEEDS VALIDATION against your specific basecaller version/model.
     Ont,
+    /// Modern Oxford Nanopore chemistry (R10.4.x) with a recent
+    /// super-accuracy (sup) basecaller model. Calibration and indel rate
+    /// are both meaningfully better than legacy R9.4, justifying a
+    /// separate, less-conservative default rather than reusing `Ont`'s
+    /// heuristic. NEEDS VALIDATION -- 0.85/gap defaults below are a
+    /// reasoned midpoint between "trust qualities like Illumina" (1.0) and
+    /// legacy R9.4 (0.6), not a value derived from a published calibration
+    /// study for a specific Dorado/Guppy model version.
+    OntR10,
 }
 
 impl ErrorModel {
@@ -30,12 +41,13 @@ impl ErrorModel {
         match self {
             ErrorModel::Illumina => (1.0, 6.0, 1.0, 4.0),
             ErrorModel::HiFi => (1.0, 4.0, 0.5, 4.0),
-            // NEEDS VALIDATION: 0.7 is a placeholder calibration factor, not
-            // derived from a specific basecaller's published error model.
-            // Do not treat ONT output confidence as validated without
-            // checking against a real R9.4/R10.4 dataset for your basecaller
-            // version.
-            ErrorModel::Ont => (0.7, 2.0, 0.3, 2.0),
+            // reserved for legacy/unspecified ONT chemistry where
+            // miscalibration is worst-documented in the literature.
+            ErrorModel::Ont => (0.6, 2.0, 0.3, 2.0),
+            // Meaningfully better calibration and indel rate than legacy
+            // R9.4; gap costs raised toward Illumina/HiFi territory to
+            // reflect the substantially lower R10.4 indel rate.
+            ErrorModel::OntR10 => (0.85, 3.0, 0.4, 3.0),
         }
     }
     /// Fraction by which reported Phred scores are scaled before computing
@@ -222,6 +234,31 @@ mod tests {
         assert!(
             p.log_likelihood_bisulfite_base[40] > p.log_likelihood_bisulfite_base[5],
             "higher-quality conversion calls should be more favorably scored"
+        );
+    }
+    #[test]
+    fn ont_r10_is_better_calibrated_than_legacy_ont() {
+        assert!(ErrorModel::OntR10.quality_calibration() > ErrorModel::Ont.quality_calibration());
+    }
+
+    #[test]
+    fn ont_r10_gap_costs_sit_between_legacy_ont_and_illumina() {
+        let ont = ErrorModel::Ont.default_gap_open();
+        let r10 = ErrorModel::OntR10.default_gap_open();
+        let illumina = ErrorModel::Illumina.default_gap_open();
+        assert!(
+            ont < r10 && r10 < illumina,
+            "R10.4 gap_open should sit strictly between legacy ONT and Illumina"
+        );
+    }
+
+    #[test]
+    fn error_model_value_enum_parses_kebab_case_ont_r10() {
+        use clap::ValueEnum;
+        let parsed = ErrorModel::from_str("ont-r10", false);
+        assert!(
+            parsed.is_ok(),
+            "clap derive must expose OntR10 as --error-model ont-r10"
         );
     }
 }

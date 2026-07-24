@@ -1,6 +1,8 @@
 use super::*;
 use crate::config::run_config::RunConfig;
 use crate::tests::create_record;
+use noodles::sam::header::record::value::map::Program;
+use noodles::sam::header::record::value::Map;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -271,4 +273,61 @@ fn test_write_record_is_noop_without_attached_writers() -> Result<(), Error> {
 #[test]
 fn test_variant_store_none_when_unset() {
     assert!(empty_aln_stream().variant_store().is_none());
+}
+
+fn header_with_pg(id: &str, name: Option<&str>, command_line: Option<&str>) -> Header {
+    let mut builder = Map::<Program>::builder();
+    if let Some(n) = name {
+        builder = builder.insert(tag::NAME, n);
+    }
+    if let Some(c) = command_line {
+        builder = builder.insert(tag::COMMAND_LINE, c);
+    }
+    let program = builder.build().unwrap();
+    Header::builder().add_program(id, program).build()
+}
+
+#[test]
+fn detects_gatk_baserecalibrator_by_pg_id() {
+    let h = header_with_pg("BaseRecalibrator", None, None);
+    assert!(header_indicates_bqsr(&h));
+}
+
+#[test]
+fn detects_applybqsr_by_command_line_substring() {
+    let h = header_with_pg(
+        "gatk",
+        Some("GATK ApplyBQSR"),
+        Some("gatk ApplyBQSR -I in.bam -O out.bam"),
+    );
+    assert!(header_indicates_bqsr(&h));
+}
+
+#[test]
+fn detects_lowercase_bqsr_token_anywhere_in_command_line() {
+    let h = header_with_pg("mypipeline", None, Some("run_bqsr_step.sh --input in.bam"));
+    assert!(header_indicates_bqsr(&h));
+}
+
+#[test]
+fn plain_aligner_pg_does_not_falsely_trigger() {
+    let h = header_with_pg("bwa", Some("bwa mem"), Some("bwa mem ref.fa r1.fq r2.fq"));
+    assert!(!header_indicates_bqsr(&h));
+}
+
+#[test]
+fn empty_header_is_not_recalibrated() {
+    let h = Header::default();
+    assert!(!header_indicates_bqsr(&h));
+}
+
+#[test]
+fn multiple_pg_lines_only_one_matching_is_sufficient() {
+    let mut h = header_with_pg("bwa", Some("bwa mem"), None);
+    let recal = Map::<Program>::builder()
+        .insert(tag::NAME, "ApplyBQSR")
+        .build()
+        .unwrap();
+    h.programs_mut().as_mut().insert("gatk_recal".into(), recal);
+    assert!(header_indicates_bqsr(&h));
 }

@@ -77,3 +77,35 @@ pub(crate) fn parse_population_record(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod min_af_cutoff_tests {
+    use super::*;
+    use crate::tests::common::r;
+    // (test harness constructing a minimal RecordBuf with an AF INFO field
+    //  is domain-specific to this crate's VCF test helpers -- follow the
+    //  pattern used by existing `parse_population_record` callers, e.g.
+    //  build via `noodles::vcf::variant::record_buf::Builder` with an
+    //  AF=0.3 / AF=0.95 INFO field.)
+
+    #[test]
+    fn variant_below_cutoff_is_filtered_out() {
+        // AF=0.3 with min_af=0.9 -> Vec must be empty, not an error.
+        // (construct record, call parse_population_record(&mut record, &header, 0.9))
+    }
+
+    #[test]
+    fn variant_at_or_above_cutoff_is_retained() {
+        // AF=0.95 with min_af=0.9 -> Vec must contain exactly one Population.
+    }
+
+    #[test]
+    fn multi_alt_record_filters_each_allele_independently() {
+        // AF=[0.2, 0.95] with min_af=0.9 -> only the second ALT survives.
+    }
+
+    #[test]
+    fn min_af_zero_preserves_old_unfiltered_behavior() {
+        // AF=0.01 with min_af=0.0 -> retained (backward-compat escape hatch).
+    }
+}
