@@ -112,9 +112,9 @@ fn test_header_name_to_id() {
     use noodles::sam::Header;
     // Construct a realistic SAM header to ensure iteration and indexing are correct
     let header_str = "@HD\tVN:1.6\n@SQ\tSN:chr1\tLN:100\n@SQ\tSN:chr2\tLN:200";
-    let header: Header = header_str.parse().expect("Failed to parse SAM header");
+    let header: noodles::sam::Header = header_str.parse().expect("Failed to parse SAM header");
 
-    let map = header_name_to_id(&header);
+    let map = crate::variant::name_to_id::header_name_to_id(&header);
 
     assert_eq!(map.len(), 2);
     assert_eq!(map.get("chr1"), Some(&0));
@@ -141,7 +141,7 @@ fn test_load_distinct_variants_ignores_empty_strings() {
     use crate::region::load::load_distinct_variants_memory;
     let name_to_id = HashMap::new();
     let specs = vec!["".to_string(), "".to_string()];
-    let result = load_distinct_variants_memory(&specs, &name_to_id).unwrap();
+    let result = crate::region::load::load_distinct_variants_memory(&specs, &name_to_id).unwrap();
     assert!(result[0].is_none());
     assert!(result[1].is_none());
 }

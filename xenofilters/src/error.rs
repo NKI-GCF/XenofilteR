@@ -120,6 +120,9 @@ pub enum Error {
     #[error("Path '{path}' is not valid UTF-8", path = path.display())]
     InvalidPathUtf8 { path: PathBuf },
 
+    #[error("--gap-open ({gap_open}) must be >= --gap-extend ({gap_extend}) for a valid affine gap model")]
+    GapOpenBelowGapExtend { gap_open: f64, gap_extend: f64 },
+
     #[error("Cannot create output file '{path}': {source}", path = path.display())]
     CreateOutputFileFailed {
         path: PathBuf,

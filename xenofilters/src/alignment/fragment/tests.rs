@@ -671,3 +671,29 @@ fn test_test_variant_p_variant_reflects_constructed_field() {
     };
     assert_eq!(v2.p_variant(), 0.25);
 }
+
+#[test]
+fn gap_penalty_is_strictly_worse_than_equivalent_mismatches_at_production_penalty() {
+    // Regression guard for the gap-sign bug found during the statistics
+    // review: build penalties via the PRODUCTION path (ScoringArgs::to_penalty,
+    // not the hand-negated test helper `setup_penalties()`), and confirm a
+    // 1-base deletion scores strictly worse than a perfect match. Before the
+    // fix, a positive (unnegated) gap_open made deletions score *better*
+    // than perfect matches, which is nonsensical for a real aligner.
+    let scoring = crate::config::args::ScoringArgs {
+        gap_open: 6.0,
+        gap_extend: 1.0,
+        mismatch_penalty: 4.0,
+        ..Default::default()
+    };
+    let pen = scoring.to_penalty();
+
+    let perfect = score_one("5M", "5", &[30u8; 5], &pen);
+    let with_deletion = score_one("2M1D2M", "2^A2", &[30u8; 5], &pen);
+
+    assert!(
+        with_deletion < perfect,
+        "a deletion must score strictly worse than a perfect match under \
+         production-path penalties (perfect={perfect}, with_deletion={with_deletion})"
+    );
+}

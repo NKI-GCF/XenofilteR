@@ -18,7 +18,7 @@ mod tests {
 
     use crate::alignment::{Fragment, VariantWindow, align_alt_to_read, weighted_ref_score};
     use crate::filter_algorithm::line_by_line::{READ_CT, Scratch};
-    use crate::penalty::Penalty;
+    use crate::penalty::{MAX_Q, Penalty};
     use crate::tests::create_record; // existing test helper used across the codebase
     use crate::variant::Eval;
     use crate::variant::FragEvalVec;
@@ -34,10 +34,10 @@ mod tests {
         Penalty {
             gap_open: -2.0,
             gap_extend: -0.5,
-            log_likelihood_match: [0.0; crate::penalty::MAX_Q],
-            log_likelihood_mismatch: [-1.0; crate::penalty::MAX_Q],
+            log_likelihood_match: [0.0; MAX_Q],
+            log_likelihood_mismatch: [-1.0; MAX_Q],
             chimeric_junction_penalty: -3.0,
-            log_likelihood_bisulfite: 0.0,
+            log_likelihood_bisulfite_base: [0.0; MAX_Q],
         }
     }
 

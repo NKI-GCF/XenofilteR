@@ -268,6 +268,14 @@ impl ScoringArgs {
                 value: self.warn_ambig_fraction,
             });
         }
+        // An affine gap model requires opening a gap to cost at least as much as extending one,
+        // or the optimizer prefers many independent small gaps over one contiguous gap.
+        if self.gap_open < self.gap_extend {
+            return Err(Error::GapOpenBelowGapExtend {
+                gap_open: self.gap_open,
+                gap_extend: self.gap_extend,
+            });
+        }
         Ok(())
     }
 
