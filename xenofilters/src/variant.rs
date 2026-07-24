@@ -46,4 +46,18 @@ pub trait Variant: Sync + Send {
         v_start < read_end && v_end > read_start
     }
     fn p_variant(&self) -> f64;
+
+    /// External phase-set identifier (VCF FORMAT `PS` tag), if the variant
+    /// was phased by an upstream tool (WhatsHap/HapCUT2/GATK
+    /// ReadBackedPhasing) before being loaded here. Variants sharing a
+    /// phase_set are on the same haplotype and are NOT statistically
+    /// independent -- see `merge_phased_evals` in fragment.rs, applied
+    /// before WIS scheduling to avoid double-counting linked evidence
+    /// (addresses the WIS-independence caveat from the statistical review).
+    /// Default `None`: unphased variants (or variant sources that don't
+    /// carry phasing, like `Population`) are treated as independent, exactly
+    /// as before.
+    fn phase_set(&self) -> Option<u32> {
+        None
+    }
 }

@@ -128,6 +128,8 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             d.extend(f.drain(..));
         }
 
+        merge_phased_evals(dvnt);
+
         let variant_delta =
             wis_max_rescue_delta(dvnt, &mut scratch.dp, self.pen.min_rescue_p_variant);
         scratch.last_variant_delta = variant_delta;
@@ -375,6 +377,54 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
     }
 }
 
+/// Collapse variants sharing an externally-assigned phase set (see
+/// `Variant::phase_set`) down to their single highest-delta representative,
+/// before WIS scheduling runs.
+///
+/// WIS treats every remaining entry as independent evidence. Variants
+/// linked on the same haplotype are demonstrably NOT independent -- if
+/// their reference windows happen not to overlap, plain WIS would sum both
+/// deltas as if they were two separate confirmations, double-counting a
+/// single underlying haplotype signal. Retaining only the best-evidence
+/// entry per phase set is the conservative choice: it never overstates
+/// confidence, at the cost of discarding corroborating (but non-independent)
+/// evidence from the same block.
+///
+/// Requires no internal phasing math -- phasing is expected to be run
+/// externally (WhatsHap/HapCUT2/GATK ReadBackedPhasing) before the VCF is
+/// passed to `--sample-variants`, exactly as BQSR is expected to be run
+/// externally before pass2.
+fn merge_phased_evals(dvnt: &mut FragEvalVec<'_>) {
+    use std::collections::HashMap;
+    for seg in dvnt.iter_mut() {
+        let mut best_by_phase: HashMap<u32, usize> = HashMap::new();
+        let mut drop: Vec<usize> = Vec::new();
+        for i in 0..seg.len() {
+            let Some(ps) = seg[i].vnt().phase_set() else {
+                continue;
+            };
+            match best_by_phase.get(&ps).copied() {
+                None => {
+                    best_by_phase.insert(ps, i);
+                }
+                Some(best_i) => {
+                    if seg[i].delta() > seg[best_i].delta() {
+                        drop.push(best_i);
+                        best_by_phase.insert(ps, i);
+                    } else {
+                        drop.push(i);
+                    }
+                }
+            }
+        }
+        drop.sort_unstable();
+        drop.dedup();
+        for &i in drop.iter().rev() {
+            seg.remove(i);
+        }
+    }
+}
+
 impl<'r, R> Fragment<'r, R>
 where
     R: Record + SimpleRec,
@@ -399,3 +449,111 @@ fn complement(b: u8) -> u8 {
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(test)]
+mod phasing_merge_tests {
+    use super::*;
+    use crate::variant::Variant;
+
+    struct PhasedVariant {
+        pos: usize,
+        len: usize,
+        delta: f64,
+        ps: Option<u32>,
+    }
+    impl Variant for PhasedVariant {
+        fn pos(&self) -> usize {
+            self.pos
+        }
+        fn ref_allele(&self) -> &[u8] {
+            b"A"
+        }
+        fn alt_allele(&self) -> &[u8] {
+            b"G"
+        }
+        fn p_variant(&self) -> f64 {
+            0.9
+        }
+        fn phase_set(&self) -> Option<u32> {
+            self.ps
+        }
+    }
+
+    fn eval(pos: usize, delta: f64, ps: Option<u32>) -> Eval<'static> {
+        let v: &'static PhasedVariant = Box::leak(Box::new(PhasedVariant {
+            pos,
+            len: 1,
+            delta,
+            ps,
+        }));
+        let mut e = Eval::new();
+        e.set_variant(v);
+        e.update(0.0, delta);
+        e
+    }
+
+    #[test]
+    fn same_phase_set_keeps_only_highest_delta_entry() {
+        let mut dvnt: FragEvalVec = smallvec![smallvec![
+            eval(10, 3.0, Some(1)),
+            eval(20, 7.0, Some(1)), // same block, higher delta -- must survive
+            eval(30, 2.0, None),    // unlinked -- untouched
+        ]];
+        merge_phased_evals(&mut dvnt);
+        assert_eq!(
+            dvnt[0].len(),
+            2,
+            "one phase-1 entry dropped, unlinked entry kept"
+        );
+        let deltas: Vec<f64> = dvnt[0].iter().map(|e| e.delta()).collect();
+        assert!(
+            deltas.contains(&7.0),
+            "higher-delta entry in the block must survive"
+        );
+        assert!(
+            !deltas.contains(&3.0),
+            "lower-delta entry in the same block must be dropped"
+        );
+        assert!(deltas.contains(&2.0), "unlinked entry must be unaffected");
+    }
+
+    #[test]
+    fn distinct_phase_sets_are_independent() {
+        let mut dvnt: FragEvalVec =
+            smallvec![smallvec![eval(10, 3.0, Some(1)), eval(50, 4.0, Some(2)),]];
+        merge_phased_evals(&mut dvnt);
+        assert_eq!(
+            dvnt[0].len(),
+            2,
+            "different phase sets must both survive independently"
+        );
+    }
+
+    #[test]
+    fn no_phase_set_present_is_a_no_op() {
+        let mut dvnt: FragEvalVec = smallvec![smallvec![eval(10, 3.0, None), eval(20, 5.0, None),]];
+        merge_phased_evals(&mut dvnt);
+        assert_eq!(
+            dvnt[0].len(),
+            2,
+            "unphased input must be completely unaffected"
+        );
+    }
+
+    #[test]
+    fn merge_prevents_double_counting_in_full_wis_pipeline() {
+        // End-to-end: two same-phase, non-overlapping-window variants would
+        // sum to 3.0+7.0=10.0 under plain WIS; after merge, only 7.0 survives.
+        let mut dvnt: FragEvalVec = smallvec![smallvec![
+            eval(10, 3.0, Some(1)),
+            eval(100, 7.0, Some(1)), // non-overlapping window, same haplotype
+        ]];
+        merge_phased_evals(&mut dvnt);
+        let mut dp = smallvec![];
+        let total = wis_max_rescue_delta(&mut dvnt, &mut dp, 0.5);
+        assert_eq!(
+            total, 7.0,
+            "linked evidence must not be summed as if independent"
+        );
+    }
+}

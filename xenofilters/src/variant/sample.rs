@@ -18,6 +18,8 @@ pub(crate) struct Sample {
     pub(crate) genotype_quality: f64,
     /// True if GT is 0/1 or 1/1
     pub(crate) is_called: bool,
+    /// FORMAT `PS` tag, if present -- see `Variant::phase_set`.
+    pub(crate) phase_set: Option<u32>,
 }
 
 impl Variant for Sample {
@@ -40,6 +42,9 @@ impl Variant for Sample {
         } else {
             1.0 - p_gt_correct
         }
+    }
+    fn phase_set(&self) -> Option<u32> {
+        self.phase_set
     }
 }
 
@@ -64,6 +69,12 @@ pub(crate) fn parse_sample_record(
         Some(Value::Integer(gt)) => *gt,
         _ => return Err(Error::MissingOrInvalidGtTag),
     };
+    // PS is optional -- absent for unphased VCFs, which is the common case
+    // and must not error.
+    let phase_set = match sample.get("PS").flatten() {
+        Some(Value::Integer(ps)) => Some(*ps as u32),
+        _ => None,
+    };
 
     core.alts
         .iter()
@@ -80,6 +91,7 @@ pub(crate) fn parse_sample_record(
                 alt_a: alt_a.to_vec(),
                 genotype_quality: gq,
                 is_called,
+                phase_set,
             }))
         })
         .collect()

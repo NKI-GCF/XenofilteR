@@ -277,4 +277,41 @@ mod indel_expansion_integration {
             );
         }
     }
+    #[test]
+    fn pass2_without_bqsr_and_auto_threshold_is_rejected() {
+        let mut cfg = RunConfig {
+            io: IoArgs {
+                alignment: vec!["tests/fixtures/pass2_no_bqsr.bam".into()],
+                ..Default::default()
+            },
+            scoring: ScoringArgs {
+                ambiguous_threshold: u32::MAX,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let result = cfg.open_streams_unified(MatchingAlgorithm::Namesorted, 1);
+        assert!(matches!(
+            result,
+            Err(Error::Pass2RequiresExplicitThresholdWithoutBqsr { .. })
+        ));
+    }
+
+    #[test]
+    fn pass2_without_bqsr_but_explicit_threshold_is_allowed() {
+        let mut cfg = RunConfig {
+            io: IoArgs {
+                alignment: vec!["tests/fixtures/pass2_no_bqsr.bam".into()],
+                ..Default::default()
+            },
+            scoring: ScoringArgs {
+                ambiguous_threshold: 5,
+                ..Default::default()
+            }, // explicit, not auto
+            ..Default::default()
+        };
+        assert!(cfg
+            .open_streams_unified(MatchingAlgorithm::Namesorted, 1)
+            .is_ok());
+    }
 }
