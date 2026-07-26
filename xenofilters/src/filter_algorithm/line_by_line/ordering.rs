@@ -217,18 +217,12 @@ where
     if candidates_below_floor {
         // Not enough margin to trust match-count alone -- do NOT return here.
         // Fall through to Tier 3 NW scoring below, exactly as intended.
-        //
-        // BUG FIXED: this previously did `return Ok(None);`, which exited
-        // apply_tiers entirely and skipped Tier 3, leaving every stream in
-        // `best` un-discarded. The caller (`run_tournament`) then treated a
-        // 3-stream (or 2-stream) fragment with nobody discarded as fully
-        // ambiguous -- even when full NW scoring would have resolved it
-        // decisively. The comment always described "skip Tier 2.5, fall
-        // through to Tier 3" but the code never actually fell through.
         tracing::debug!(
             fragment = ?best.first().map(|s| s.first_qname()),
-            "Tier 2.5 skipped: max_mb={} min_delta={} candidates_below_floor=true",
-            max_mb, min_delta,
+            "Tier 2.5 skipped: max_mb={} min_delta={} candidates_below_floor={}",
+            max_mb,
+            min_delta,
+            candidates_below_floor
         );
     } else if best.iter().any(|s| {
         let nr = s.get_nr();
