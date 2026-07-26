@@ -1,6 +1,5 @@
 use crate::tests::common::{r, u};
 use crate::{
-    Error, LineByLine,
     alignment::FragmentState,
     aln_stream::AlignmentStream,
     config::{
@@ -8,11 +7,12 @@ use crate::{
         run_config::RunConfig,
     },
     filter_algorithm::line_by_line::core::FragmentBuffer,
-    tests::{MockStream, create_record},
+    tests::{create_record, MockStream},
+    Error, LineByLine,
 };
 use noodles::sam::alignment::record::Flags;
 use noodles::sam::alignment::record_buf::RecordBuf;
-use smallvec::{SmallVec, smallvec};
+use smallvec::{smallvec, SmallVec};
 
 // ---------------------------------------------------------------------------
 // Builder helpers
@@ -520,7 +520,7 @@ fn test_branch_counters_and_skipping() -> Result<(), Error> {
     assert!(lbl.write_record(0, unmapped_single, Some(false)).is_ok());
     assert_eq!(lbl.routing_counters[2], 2); // ambiguous:0: 2
     assert_eq!(lbl.routing_counters[0], 1); // discard:0:
-    // ingest_record should skip secondary
+                                            // ingest_record should skip secondary
     let mut best: FragmentBuffer<RecordBuf> = smallvec![];
     let finished = lbl.ingest_record(0, secondary, &mut best).unwrap();
     assert!(!finished);
@@ -698,5 +698,78 @@ fn test_ambiguous_log_threshold_conversion() -> Result<(), Error> {
     let lbl: LineByLine<RecordBuf> = LineByLine::new(&config, aln, vec![], vec![])?;
     assert!((lbl.test_ambiguous_log_threshold() - ln_10 * 3.0 / 10.0).abs() < 1e-9);
 
+    Ok(())
+}
+
+#[test]
+fn mixed_mapped_unmapped_mate_pair_two_streams_sequential_no_crash() -> Result<(), Error> {
+    // Regression guard for Bug A: a fragment where stream 0 has mate1
+    // mapped + mate2 unmapped, and stream 1 has both mates mapped. This
+    // fragment is NOT all-unmapped (Tier 1's is_all_unmapped() only
+    // inspects flags[0]), so it reaches build_mcfs/cmp_perfect/
+    // order_mates and previously errored the whole pipeline via `?`.
+    let mut mate1_s0 = create_record(b"R1", "10M", &[], &[30u8; 10], "9A0", false)?;
+    *mate1_s0.flags_mut() = Flags::from_bits(0x41).unwrap(); // paired, first, mapped
+
+    let mut mate2_s0 = create_record(b"R1", "", &[], &[], "", false)?;
+    *mate2_s0.flags_mut() = Flags::from_bits(0x85).unwrap(); // paired, last, unmapped
+
+    let mut mate1_s1 = create_record(b"R1", "10M", &[], &[30u8; 10], "8A1", false)?;
+    *mate1_s1.flags_mut() = Flags::from_bits(0x41).unwrap();
+
+    let mut mate2_s1 = create_record(b"R1", "10M", &[], &[30u8; 10], "7A2", false)?;
+    *mate2_s1.flags_mut() = Flags::from_bits(0x81).unwrap();
+
+    let config = RunConfig::default();
+    let mut lbl = lbl_chimeric(
+        &[
+            ("a", vec![mate1_s0, mate2_s0]),
+            ("b", vec![mate1_s1, mate2_s1]),
+        ],
+        &[],
+    );
+
+    // Must not error -- this exact shape crashed the whole run pre-fix.
+    lbl.process_sequential(&config)?;
+
+    let total: u64 = lbl.routing_counters.iter().sum();
+    assert!(total > 0, "fragment must be routed somewhere, not dropped");
+    Ok(())
+}
+
+#[test]
+fn mixed_mapped_unmapped_mate_pair_two_streams_parallel_no_crash() -> Result<(), Error> {
+    // Same fragment shape through the parallel worker pool -- the
+    // pre-fix parallel path swallowed the error via `.ok()` in
+    // score_bundle rather than crashing, so this guards silent
+    // fragment-drop / mis-scoring rather than a panic.
+    let mut mate1_s0 = create_record(b"R1", "10M", &[], &[30u8; 10], "9A0", false)?;
+    *mate1_s0.flags_mut() = Flags::from_bits(0x41).unwrap();
+
+    let mut mate2_s0 = create_record(b"R1", "", &[], &[], "", false)?;
+    *mate2_s0.flags_mut() = Flags::from_bits(0x85).unwrap();
+
+    let mut mate1_s1 = create_record(b"R1", "10M", &[], &[30u8; 10], "8A1", false)?;
+    *mate1_s1.flags_mut() = Flags::from_bits(0x41).unwrap();
+
+    let mut mate2_s1 = create_record(b"R1", "10M", &[], &[30u8; 10], "7A2", false)?;
+    *mate2_s1.flags_mut() = Flags::from_bits(0x81).unwrap();
+
+    let config = RunConfig::default();
+    let mut lbl = lbl_chimeric(
+        &[
+            ("a", vec![mate1_s0, mate2_s0]),
+            ("b", vec![mate1_s1, mate2_s1]),
+        ],
+        &[],
+    );
+
+    lbl.process_parallel(&config, 2)?;
+
+    let total: u64 = lbl.routing_counters.iter().sum();
+    assert!(
+        total > 0,
+        "fragment must be routed somewhere, not silently dropped by the parallel path"
+    );
     Ok(())
 }

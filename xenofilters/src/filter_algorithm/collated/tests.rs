@@ -115,3 +115,31 @@ fn collated_table() {
         },
     );
 }
+
+#[test]
+fn collated_mixed_mapped_unmapped_mate_pair_no_crash() {
+    // Regression guard for Bug A on the Collated backend: cmp_perfect
+    // and order_mates are reached via CollatedMatcher::score_pair.
+    let mut mate1_s0 = r(b"R1", "10M", "9A0");
+    *mate1_s0.flags_mut() = noodles::sam::alignment::record::Flags::from_bits(0x41).unwrap();
+
+    let mut mate2_s0 = u(b"R1");
+    *mate2_s0.flags_mut() = noodles::sam::alignment::record::Flags::from_bits(0x85).unwrap();
+
+    let mut mate1_s1 = r(b"R1", "10M", "8A1");
+    *mate1_s1.flags_mut() = noodles::sam::alignment::record::Flags::from_bits(0x41).unwrap();
+
+    let mut mate2_s1 = r(b"R1", "10M", "7A2");
+    *mate2_s1.flags_mut() = noodles::sam::alignment::record::Flags::from_bits(0x81).unwrap();
+
+    let config = cfg();
+    let mut m = make(vec![mate1_s0, mate2_s0], vec![mate1_s1, mate2_s1], &config);
+
+    // Must not error -- exact fragment shape that previously crashed
+    // via cmp_perfect's unconditional try_from_record call.
+    m.process(&config)
+        .expect("collated must not error on mixed mapped/unmapped mate pair");
+
+    let total: u64 = m.routing_counters.iter().sum();
+    assert!(total > 0, "fragment must be routed somewhere, not dropped");
+}

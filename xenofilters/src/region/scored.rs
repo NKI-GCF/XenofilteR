@@ -3,8 +3,8 @@
 //! BED format: chrom, start(0-based), end, name, score(0-1000), strand(+/-/.)
 //! Columns 4-6 are optional. Missing strand = any. Missing score = 1000.
 
-use crate::Error;
 use crate::variant::store::load_lappers;
+use crate::Error;
 use rust_lapper::{Interval, Lapper};
 use std::collections::HashMap;
 use std::path::Path;
@@ -17,7 +17,7 @@ pub(crate) enum Strand {
 }
 
 impl Strand {
-    fn from_byte(b: u8) -> Self {
+    pub(crate) fn from_byte(b: u8) -> Self {
         match b {
             b'+' => Self::Plus,
             b'-' => Self::Minus,

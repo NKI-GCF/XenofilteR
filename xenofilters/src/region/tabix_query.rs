@@ -8,46 +8,130 @@
 //! - BED query: use tabix index chunks to check overlap; parse overlapping records.
 //! - VCF indexed reader: `vcf::io::IndexedReader` provides `.query(&header, &region)`.
 
+use crate::region::ScoreFn;
 use crate::Error;
 use noodles::bgzf;
 use noodles::core::{region::Interval, Position, Region};
 use noodles::csi::BinningIndex;
 use noodles::{tabix, vcf};
+use std::cell::RefCell;
 use std::fs::File;
+use std::io::{BufRead, Seek};
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
-use crate::region::ScoreFn;
 use vcf::io::IndexedReader;
-use std::cell::RefCell;
 
 pub(crate) struct TabixScored {
-    inner: TabixBed,
+    index: tabix::Index,
+    path: PathBuf,
 } // reuses index + adds column parsing
 
 impl TabixScored {
     pub(crate) fn open(path: &Path) -> Result<Self, Error> {
+        let index = read_tabix_index(path)?;
         Ok(Self {
-            inner: TabixBed::open(path)?,
+            index,
+            path: path.to_path_buf(),
         })
     }
-    /// NEEDS FOLLOW-UP: currently returns overlap existence + a constant score;
-    /// full per-record score/strand parsing from tabix chunks requires reading
-    /// the matched byte ranges, not just checking chunk non-emptiness.
-    /// Tracked in ROADMAP -- this unblocks compilation with correct semantics
-    /// for the constant/linear default case only.
+    /// Real per-record score/strand overlap bonus, replacing the previous
+    /// existence-only + constant-1000 placeholder. Seeks to each matched
+    /// BGZF chunk, reads lines within it, and applies `score_fn` using the
+    /// record's actual BED score (col 5) and strand (col 6), restricted to
+    /// records that genuinely overlap [start, end).
+    ///
+    /// NEEDS VERIFICATION: exact noodles 0.112 API for `Chunk::start()` /
+    /// `Chunk::end()` (bgzf::VirtualPosition) and `bgzf::io::Reader::seek`/
+    /// `virtual_position()` -- written to match the pattern already used by
+    /// `TabixVcf`/`IndexedReader` elsewhere in this file, but not compiled
+    /// here.
     pub(crate) fn overlapping_bonus(
         &self,
         ref_id: usize,
-        s: usize,
-        e: usize,
-        _rev: bool,
+        start: usize,
+        end: usize,
+        read_is_reverse: bool,
         score_fn: ScoreFn,
     ) -> Result<f64, Error> {
-        if self.inner.overlaps(ref_id, s, e)? {
-            Ok(score_fn.apply(1000.0, e - s, e - s))
-        } else {
-            Ok(0.0)
+        let q_start =
+            Position::try_from(start + 1).map_err(|e| Error::InvalidRegion(e.to_string()))?;
+        let q_end = Position::try_from(end.max(start + 1))
+            .map_err(|e| Error::InvalidRegion(e.to_string()))?;
+        let interval = Interval::from(RangeInclusive::new(q_start, q_end));
+
+        let chunks = self
+            .index
+            .query(ref_id, interval)
+            .map_err(|e| Error::TabixBedQueryFailed(e.to_string()))?;
+        if chunks.is_empty() {
+            return Ok(0.0);
         }
+
+        let file = std::fs::File::open(&self.path).map_err(|e| Error::CannotOpenBedFile {
+            path: self.path.clone(),
+            source: e,
+        })?;
+        let mut reader = bgzf::io::Reader::new(file);
+
+        let mut total = 0.0;
+        for chunk in chunks {
+            reader
+                .seek(chunk.start())
+                .map_err(|e| Error::TabixBedQueryFailed(e.to_string()))?;
+
+            loop {
+                let mut line = String::new();
+                let n = reader
+                    .read_line(&mut line)
+                    .map_err(|e| Error::TabixBedQueryFailed(e.to_string()))?;
+                if n == 0 {
+                    break; // EOF
+                }
+                let past_chunk = reader.virtual_position() >= chunk.end();
+                let trimmed = line.trim_end();
+
+                if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("track") {
+                    if past_chunk {
+                        break;
+                    }
+                    continue;
+                }
+
+                let cols: Vec<&str> = trimmed.split('\t').collect();
+                if cols.len() >= 3 {
+                    if let (Ok(rec_start), Ok(rec_end)) =
+                        (cols[1].parse::<usize>(), cols[2].parse::<usize>())
+                    {
+                        if rec_start < end && rec_end > start {
+                            let score = cols
+                                .get(4)
+                                .and_then(|s| s.parse::<f64>().ok())
+                                .unwrap_or(1000.0);
+                            let strand = cols
+                                .get(5)
+                                .and_then(|s| s.as_bytes().first().copied())
+                                .map(crate::region::scored::Strand::from_byte)
+                                .unwrap_or(crate::region::scored::Strand::Any);
+                            if strand.matches(read_is_reverse) {
+                                let overlap_bases =
+                                    rec_end.min(end).saturating_sub(rec_start.max(start));
+                                let region_len = rec_end.saturating_sub(rec_start).max(1);
+                                total += score_fn.apply(score, overlap_bases, region_len);
+                            }
+                        }
+                    }
+                }
+
+                if past_chunk {
+                    break;
+                }
+            }
+        }
+        Ok(total)
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.index.reference_sequences().is_empty()
     }
 }
 
@@ -162,7 +246,10 @@ impl TabixVcf {
         let header = reader
             .read_header()
             .map_err(|e| Error::VcfHeaderReadError(e.to_string()))?;
-        Ok(Self { reader: RefCell::new(reader), header })
+        Ok(Self {
+            reader: RefCell::new(reader),
+            header,
+        })
     }
 
     /// Returns `true` if any diagnostic variant overlaps `[start, end)` (1-based, BAM coords).
@@ -188,7 +275,9 @@ impl TabixVcf {
             .header
             .contigs()
             .get_index(ref_id)
-            .ok_or(Error::NoRefSeqId)?.0.to_owned();
+            .ok_or(Error::NoRefSeqId)?
+            .0
+            .to_owned();
         self.chrom_overlaps(&chrom, start, end)
     }
 
