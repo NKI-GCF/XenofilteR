@@ -299,16 +299,17 @@ pub(crate) fn compare_fragment_profiles(
             ReadSpaceDecision::EarlyDecision(ord) => {
                 // This mate has a clear winner; check if it conflicts with prior mates.
                 let a_wins = ord == Ordering::Greater;
+
                 let no_conflict_a = combined_b_better.is_empty()
-                    && (combined_del.b_events <= combined_del.a_events);
+                    && combined_del.b_events <= combined_del.a_events
+                    && combined_del.b_bases <= combined_del.a_bases;
                 let no_conflict_b = combined_a_better.is_empty()
-                    && (combined_del.a_events <= combined_del.b_events);
+                    && combined_del.a_events <= combined_del.b_events
+                    && combined_del.a_bases <= combined_del.b_bases;
                 if (a_wins && !no_conflict_a) || (!a_wins && !no_conflict_b) {
                     // Conflict between mates; must score.
                     return ReadSpaceDecision::FallThrough;
                 }
-                // Consistent: represent as all-a_better or all-b_better sentinel
-                // by adding a dummy position (the caller only checks emptiness).
                 if a_wins {
                     combined_a_better.push(pos_offset);
                 } else {
@@ -485,5 +486,31 @@ mod tests {
             compare_mate_profiles(&a, &b),
             ReadSpaceDecision::PartialScoring { .. }
         ));
+    }
+    #[test]
+    fn mid_loop_conflict_check_considers_deletion_bases_not_just_events() {
+        // Mate 0: A wins per-base, and A's deletion EVENT count is <= B's,
+        // but A's deletion BASE count is > B's -- must not be treated as
+        // "no conflict" on events alone.
+        let a0 = profile(&[ReadOp::Match, ReadOp::Match], 1, 5); // 1 event, 5 bases
+        let b0 = profile(&[ReadOp::Mismatch, ReadOp::Mismatch], 1, 1); // 1 event, 1 base
+        let a1 = profile(&[ReadOp::Match], 0, 0);
+        let b1 = profile(&[ReadOp::Match], 0, 0);
+
+        let frag_a = FragmentProfile {
+            mates: smallvec::smallvec![a0, a1],
+        };
+        let frag_b = FragmentProfile {
+            mates: smallvec::smallvec![b0, b1],
+        };
+
+        // A wins mate 0 on per-base ops, but has strictly more deletion
+        // bases (5 > 1) despite equal event count -- this must now be
+        // detected as a conflict requiring full scoring, not silently
+        // combined as "no conflict" the way pre-fix logic would.
+        match compare_fragment_profiles(&frag_a, &frag_b) {
+            ReadSpaceDecision::PartialScoring { .. } | ReadSpaceDecision::FallThrough => {}
+            other => panic!("expected the base-count conflict to force scoring, got {other:?}"),
+        }
     }
 }

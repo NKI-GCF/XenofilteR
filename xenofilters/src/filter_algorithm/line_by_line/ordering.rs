@@ -68,15 +68,16 @@ pub(crate) fn compute_cancel_slot<R: SimpleRec>(best: &FragmentBuffer<R>) -> [bo
     for s in best.iter() {
         let mk = mate_kinds_arr[s.get_nr()];
         for slot in 0..2 {
-            match (mk[slot], cancel_kind[slot]) {
-                (Some(MateKind::Other), _) | (_, _)
-                    if matches!(mk[slot], Some(MateKind::Other)) =>
-                {
+            match mk[slot] {
+                Some(MateKind::Other) => {
                     cancel_ok[slot] = false;
                 }
-                (Some(k), None) => cancel_kind[slot] = Some(k),
-                (Some(k), Some(prev)) if prev != k => cancel_ok[slot] = false,
-                _ => {}
+                Some(k) => match cancel_kind[slot] {
+                    None => cancel_kind[slot] = Some(k),
+                    Some(prev) if prev != k => cancel_ok[slot] = false,
+                    _ => {}
+                },
+                None => {}
             }
         }
     }
