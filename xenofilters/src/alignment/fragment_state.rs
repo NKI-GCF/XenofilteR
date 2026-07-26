@@ -1,13 +1,13 @@
-use crate::Error;
-use crate::alignment::mate_kind::{MateClassifiable, MateKind, mate_slot, segment_id};
-use crate::alignment::{Fragment, MdCigFlags, SimpleRec, tie_break_bool};
-use crate::filter_algorithm::line_by_line::{READ_CT, Scratch};
+use crate::alignment::mate_kind::{mate_slot, segment_id, MateClassifiable, MateKind};
+use crate::alignment::{tie_break_bool, Fragment, MdCigFlags, SimpleRec};
+use crate::filter_algorithm::line_by_line::{Scratch, READ_CT};
 use crate::penalty::Penalty;
 use crate::region::{PositiveRegions, ScoreFn};
 use crate::variant::{FragEvalVec, StoreTrait};
+use crate::Error;
 use noodles::sam::alignment::record::Cigar;
 use noodles::sam::alignment::record::Flags;
-use smallvec::{SmallVec, smallvec};
+use smallvec::{smallvec, SmallVec};
 use std::cmp::Ordering;
 
 #[derive(PartialEq, Debug)]
@@ -18,7 +18,10 @@ pub(crate) struct FragmentState<R> {
     bisulfite: bool,
 }
 
-type McfPair<'f> = (SmallVec<[MdCigFlags<'f>; 8]>, SmallVec<[MdCigFlags<'f>; 8]>);
+type McfPair<'f> = (
+    SmallVec<[Option<MdCigFlags<'f>>; 8]>,
+    SmallVec<[Option<MdCigFlags<'f>>; 8]>,
+);
 
 impl<R: SimpleRec> FragmentState<R> {
     pub(crate) fn from_record(r: R, species_nr: usize, bisulfite: bool) -> Result<Self, Error> {
@@ -67,11 +70,19 @@ impl<R: SimpleRec> FragmentState<R> {
     /// borrows alive.  Called before any mutable access to the fragment buffer so
     /// the borrow checker sees no aliasing.  Matches the record-order iteration
     /// expected by `score_candidate`.
-    pub(crate) fn build_mcfs<'f>(&'f self) -> Result<SmallVec<[MdCigFlags<'f>; READ_CT]>, Error> {
+    pub(crate) fn build_mcfs<'f>(
+        &'f self,
+    ) -> Result<SmallVec<[Option<MdCigFlags<'f>>; READ_CT]>, Error> {
         self.flags
             .iter()
             .zip(self.records.iter())
-            .map(|(flags, rec)| MdCigFlags::try_from_record(rec, flags, self.bisulfite))
+            .map(|(flags, rec)| {
+                if flags.is_unmapped() {
+                    Ok(None)
+                } else {
+                    MdCigFlags::try_from_record(rec, flags, self.bisulfite).map(Some)
+                }
+            })
             .collect()
     }
 
@@ -80,6 +91,13 @@ impl<R: SimpleRec> FragmentState<R> {
         let mut indices: SmallVec<[(u8, usize, usize, usize); 2]> = SmallVec::with_capacity(len);
         for i in 0..len {
             let r = &self.records[i];
+            let flags = &self.flags[i];
+
+            if flags.is_unmapped() {
+                let ord = u8::from(flags.is_last_segment()) * 2 + u8::from(flags.is_secondary());
+                indices.push((ord, usize::MAX, 0, i));
+                continue;
+            }
             let start = match r.alignment_start() {
                 Some(Ok(pos)) => pos.get(),
                 _ => return Err(Error::NoAlnStart),
@@ -105,26 +123,36 @@ impl<R: SimpleRec> FragmentState<R> {
         other: &'f FragmentState<R>,
         ord: &mut Option<Ordering>,
     ) -> Result<McfPair<'f>, Error> {
-        let mut mcfs1: SmallVec<[MdCigFlags<'f>; 8]> =
+        let mut mcfs1: SmallVec<[Option<MdCigFlags<'f>>; 8]> =
             SmallVec::with_capacity(self.get_records().len());
         let mut perfect_self = true;
         for (flags, record) in self.flags.iter().zip(self.records.iter()) {
+            if flags.is_unmapped() {
+                perfect_self = false;
+                mcfs1.push(None);
+                continue;
+            }
             let mcf = MdCigFlags::try_from_record(record, flags, self.bisulfite)?;
             if flags.is_supplementary() || !mcf.is_perfect() {
                 perfect_self = false;
             }
-            mcfs1.push(mcf);
+            mcfs1.push(Some(mcf));
         }
 
-        let mut mcfs2: SmallVec<[MdCigFlags<'f>; 8]> =
+        let mut mcfs2: SmallVec<[Option<MdCigFlags<'f>>; 8]> =
             SmallVec::with_capacity(other.get_records().len());
         let mut perfect_other = true;
         for (flags, record) in other.flags.iter().zip(other.records.iter()) {
+            if flags.is_unmapped() {
+                perfect_other = false;
+                mcfs2.push(None);
+                continue;
+            }
             let mcf = MdCigFlags::try_from_record(record, flags, self.bisulfite)?;
             if flags.is_supplementary() || !mcf.is_perfect() {
                 perfect_other = false;
             }
-            mcfs2.push(mcf);
+            mcfs2.push(Some(mcf));
         }
 
         *ord = tie_break_bool(perfect_self, perfect_other);
@@ -143,7 +171,7 @@ impl<R: SimpleRec> FragmentState<R> {
     ///   equal across all competing streams (same read, same quality string).
     pub(crate) fn score_state_nw(
         &self,
-        mcfs: SmallVec<[MdCigFlags<'_>; READ_CT]>,
+        mcfs: SmallVec<[Option<MdCigFlags<'_>>; READ_CT]>,
         store: Option<&dyn StoreTrait>,
         penalties: &Penalty,
         scratch: &mut Scratch,
@@ -177,7 +205,12 @@ impl<R: SimpleRec> FragmentState<R> {
                         .flatten()
                         .map(|p| p.get().saturating_sub(1))
                         .unwrap_or(0);
-                    let r_end = r_start + mcfs.first().map(|m| m.get_cigar().len()).unwrap_or(0);
+                    let r_end = r_start
+                        + mcfs
+                            .first()
+                            .map(|m| m.as_ref().map(|m| m.get_cigar().len()))
+                            .flatten()
+                            .unwrap_or(0);
                     regions
                         .overlapping(ref_id, r_start, r_end, is_rev)
                         .map(|region| {
@@ -191,8 +224,7 @@ impl<R: SimpleRec> FragmentState<R> {
             0.0
         };
 
-        let mut mcfs_opt: SmallVec<[Option<MdCigFlags<'_>>; READ_CT]> =
-            mcfs.into_iter().map(Some).collect();
+        let mut mcfs_opt: SmallVec<[Option<MdCigFlags<'_>>; READ_CT]> = mcfs;
 
         for idx in self.order_mates()? {
             let flags = self.flags(idx).ok_or(Error::NoFlagsForRecord { idx })?;
@@ -216,10 +248,7 @@ impl<R: SimpleRec> FragmentState<R> {
                 continue;
             }
             if has_variants {
-                let tid = rec
-                    .ref_seq_id()
-                    .transpose()?
-                    .ok_or(Error::NoRefSeqId)?;
+                let tid = rec.ref_seq_id().transpose()?.ok_or(Error::NoRefSeqId)?;
                 let start = rec
                     .alignment_start()
                     .transpose()?

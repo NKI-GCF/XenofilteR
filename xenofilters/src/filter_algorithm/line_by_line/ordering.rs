@@ -111,7 +111,7 @@ where
     F: FnMut(
         usize,
         &FragmentState<R>,
-        SmallVec<[MdCigFlags<'_>; READ_CT]>,
+        SmallVec<[Option<MdCigFlags<'_>>; READ_CT]>,
         [bool; 2],
     ) -> Result<(f64, f64), Error>,
 {
@@ -129,10 +129,10 @@ where
         let nr = best[i].get_nr();
         let mcfs = best[i].build_mcfs()?;
 
-        let perf = mcfs
-            .iter()
-            .filter(|m| !m.is_supplementary())
-            .all(|m| m.is_perfect());
+        let perf = mcfs.iter().all(|m| match m {
+            None => false, // unmapped mate: fragment cannot be "perfect"
+            Some(mcf) => mcf.is_supplementary() || mcf.is_perfect(),
+        });
         m.is_perfect[nr] = perf;
         if perf {
             m.any_perfect = true;
@@ -140,7 +140,8 @@ where
             m.any_imperfect = true;
         }
 
-        for mcf in &mcfs {
+        for mcf_opt in &mcfs {
+            let Some(mcf) = mcf_opt else { continue };
             if mcf.is_supplementary() {
                 continue;
             }
@@ -403,7 +404,7 @@ pub(super) fn score_bundle(
 /// per segment -- so the no-variant case is as lean as possible.
 fn score_candidate_owned(
     state: &FragmentState<RecordBuf>,
-    mcfs: SmallVec<[MdCigFlags<'_>; READ_CT]>,
+    mcfs: SmallVec<[Option<MdCigFlags<'_>>; READ_CT]>,
     store: Option<&dyn StoreTrait>,
     positive_regions: Option<&ScoredRegions>,
     score_fn: ScoreFn,
@@ -443,7 +444,12 @@ fn score_candidate_owned(
                     .alignment_start()
                     .map(|p| p.get().saturating_sub(1))
                     .unwrap_or(0);
-                let r_end = r_start + mcfs.first().map(|m| m.get_cigar().len()).unwrap_or(0);
+                let r_end = r_start
+                    + mcfs
+                        .first()
+                        .map(|m| m.as_ref().map(|m| m.get_cigar().len()))
+                        .flatten()
+                        .unwrap_or(0);
                 regions
                     .overlapping(ref_id, r_start, r_end, is_rev)
                     .map(|region| {
@@ -457,8 +463,7 @@ fn score_candidate_owned(
         0.0
     };
 
-    let mut mcfs_opt: SmallVec<[Option<MdCigFlags>; READ_CT]> =
-        mcfs.into_iter().map(Some).collect();
+    let mut mcfs_opt: SmallVec<[Option<MdCigFlags>; READ_CT]> = mcfs;
 
     for idx in state.order_mates()? {
         let flags = state
@@ -476,6 +481,12 @@ fn score_candidate_owned(
         let slot = mate_slot(segment_id(flags));
         if cancel_slot[slot] {
             mcfs_opt[idx] = None; // release the borrow; never consumed
+            continue;
+        }
+
+        if flags.is_unmapped() {
+            dvnt.push(SmallVec::new());
+            mcfs_opt[idx] = None;
             continue;
         }
 

@@ -82,8 +82,8 @@ fn bench_pre_assess(c: &mut Criterion) {
         let fb = rb.flags();
         g.bench_with_input(BenchmarkId::from_parameter(i), &i, |b, _| {
             b.iter(|| {
-                let ma = smallvec![MdCigFlags::try_from_record(&ra, &fa, false).unwrap()];
-                let mb = smallvec![MdCigFlags::try_from_record(&rb, &fb, false).unwrap()];
+                let ma = smallvec![Some(MdCigFlags::try_from_record(&ra, &fa, false).unwrap())];
+                let mb = smallvec![Some(MdCigFlags::try_from_record(&rb, &fb, false).unwrap())];
                 black_box(pre_assess_alignments(&ma, &mb, &pen, 0.5))
             })
         });

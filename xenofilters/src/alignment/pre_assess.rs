@@ -264,19 +264,31 @@ pub enum PreAssessResult {
 /// Falls back to `FullScoring` on segment-count mismatch, malformed MD/CIGAR,
 /// insertions, or when one stream has more matches but also more supplementaries.
 pub fn pre_assess_alignments(
-    mcfs_a: &SmallVec<[MdCigFlags<'_>; READ_CT]>,
-    mcfs_b: &SmallVec<[MdCigFlags<'_>; READ_CT]>,
+    mcfs_a: &SmallVec<[Option<MdCigFlags<'_>>; READ_CT]>,
+    mcfs_b: &SmallVec<[Option<MdCigFlags<'_>>; READ_CT]>,
     pen: &crate::penalty::Penalty,
     ambiguous_threshold_nats: f64,
 ) -> PreAssessResult {
     if mcfs_a.len() != mcfs_b.len() || mcfs_a.is_empty() {
         return PreAssessResult::FullScoring;
     }
+    if mcfs_a.iter().any(Option::is_none) || mcfs_b.iter().any(Option::is_none) {
+        return PreAssessResult::FullScoring;
+    }
+
     let fp_a = FragmentProfile {
-        mates: mcfs_a.iter().map(build_read_profile).collect(),
+        mates: mcfs_a
+            .iter()
+            .filter_map(Option::as_ref)
+            .map(build_read_profile)
+            .collect(),
     };
     let fp_b = FragmentProfile {
-        mates: mcfs_b.iter().map(build_read_profile).collect(),
+        mates: mcfs_b
+            .iter()
+            .filter_map(Option::as_ref)
+            .map(build_read_profile)
+            .collect(),
     };
     if !fp_a.valid() || !fp_b.valid() {
         return PreAssessResult::FullScoring;
@@ -396,14 +408,14 @@ mod tests {
     use smallvec::{smallvec, SmallVec};
     use std::cmp::Ordering::{Equal, Greater, Less};
 
-    fn mcfs_from(cigar: &str, md: &str) -> SmallVec<[MdCigFlags<'static>; READ_CT]> {
+    fn mcfs_from(cigar: &str, md: &str) -> SmallVec<[Option<MdCigFlags<'static>>; READ_CT]> {
         // Leak to get 'static lifetime for convenience in tests.
         let rec: &'static _ = Box::leak(Box::new(
             create_record(b"r", cigar, &[], &[30u8; 150], md, false).unwrap(),
         ));
         let flags: &'static _ = Box::leak(Box::new(rec.flags()));
         let mcf = MdCigFlags::try_from_record(rec, flags, false).unwrap();
-        smallvec![mcf]
+        smallvec![Some(mcf)]
     }
 
     struct Row {
