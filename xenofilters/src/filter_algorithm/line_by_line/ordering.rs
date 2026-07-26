@@ -40,20 +40,19 @@
 use super::core::{FragmentBuffer, LineByLine, Scratch};
 use crate::alignment::pre_assess::min_delta_for_early_decision;
 use crate::alignment::{
-    BaseOp, FragmentState, MateClassifiable, MateKind, MdCigFlags, ScoreOpIter, SimpleRec,
-    mate_slot, segment_id,
+    mate_slot, segment_id, BaseOp, FragmentState, MateClassifiable, MateKind, MdCigFlags,
+    ScoreOpIter, SimpleRec,
 };
 use crate::config::run_config::RunConfig;
 use crate::filter_algorithm::line_by_line::{
-    ChimericDecision, MAX_STREAMS, READ_CT,
-    chimeric::{ChimericKind, detect_chimeric_mate_complement},
-    detect_chimeric_event,
+    chimeric::{detect_chimeric_mate_complement, ChimericKind},
+    detect_chimeric_event, ChimericDecision, MAX_STREAMS, READ_CT,
 };
 use crate::region::{ScoreFn, ScoredRegions};
 use crate::variant::StoreTrait;
 use crate::Error;
 use noodles::sam::alignment::RecordBuf;
-use smallvec::{SmallVec, smallvec};
+use smallvec::{smallvec, SmallVec};
 use std::f64::consts::LN_10;
 use std::sync::Arc;
 
@@ -213,23 +212,27 @@ where
         .map(|s| m.supp_counts[s.get_nr()])
         .min()
         .unwrap_or(0);
+
     if candidates_below_floor {
-        // Not enough margin to trust match-count alone; skip Tier 2.5 entirely
-        // for this fragment and fall through to Tier 3 NW scoring.
+        // Not enough margin to trust match-count alone -- do NOT return here.
+        // Fall through to Tier 3 NW scoring below, exactly as intended.
+        //
+        // BUG FIXED: this previously did `return Ok(None);`, which exited
+        // apply_tiers entirely and skipped Tier 3, leaving every stream in
+        // `best` un-discarded. The caller (`run_tournament`) then treated a
+        // 3-stream (or 2-stream) fragment with nobody discarded as fully
+        // ambiguous -- even when full NW scoring would have resolved it
+        // decisively. The comment always described "skip Tier 2.5, fall
+        // through to Tier 3" but the code never actually fell through.
         tracing::debug!(
             fragment = ?best.first().map(|s| s.first_qname()),
-            "Tier 2.5 skipped: max_mb={} min_delta={} candidates_below_floor={}",
-            max_mb,
-            min_delta,
-            candidates_below_floor
+            "Tier 2.5 skipped: max_mb={} min_delta={} candidates_below_floor=true",
+            max_mb, min_delta,
         );
-        return Ok(None);
     } else if best.iter().any(|s| {
-        // existing match_bases/supp_count check
         let nr = s.get_nr();
         m.match_bases[nr] < max_mb || m.supp_counts[nr] > 0
     }) {
-        // existing discard logic, unchanged
         for i in (0..best.len()).rev() {
             let nr = best[i].get_nr();
             if m.match_bases[nr] < max_mb || m.supp_counts[nr] > min_sc {
@@ -241,7 +244,8 @@ where
         }
     }
 
-    // Tier 3
+    // Tier 3 -- now unconditionally reached here (unless an earlier branch
+    // returned), instead of being unreachable whenever candidates_below_floor.
     let max_nw = best
         .iter()
         .map(|s| m.nw_scores[s.get_nr()])
@@ -407,7 +411,7 @@ fn score_candidate_owned(
     scratch: &mut Scratch,
     cancel_slot: [bool; 2],
 ) -> Result<f64, Error> {
-    use crate::alignment::{Fragment, stringify_record};
+    use crate::alignment::{stringify_record, Fragment};
     use crate::variant::FragEvalVec;
 
     let mut segment: SmallVec<[&RecordBuf; READ_CT]> = SmallVec::new();

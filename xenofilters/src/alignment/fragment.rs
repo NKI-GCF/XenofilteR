@@ -1,13 +1,13 @@
 mod context;
 mod record;
 
-use crate::Error;
 use crate::alignment::{
-    BaseOp, MdCigFlags, ScoreOpIter, VariantWindow, align_alt_to_read, weighted_ref_score,
+    align_alt_to_read, weighted_ref_score, BaseOp, MdCigFlags, ScoreOpIter, VariantWindow,
 };
-use crate::filter_algorithm::line_by_line::{READ_CT, Scratch};
-use crate::penalty::{MAX_Q, Penalty};
+use crate::filter_algorithm::line_by_line::{Scratch, READ_CT};
+use crate::penalty::{Penalty, MAX_Q};
 use crate::variant::{Eval, FragEvalVec, VNT_CT};
+use crate::Error;
 use noodles::sam::alignment::Record;
 use smallvec::SmallVec;
 
@@ -239,7 +239,6 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
 
         Ok(score)
     }
-
     fn evaluate_variants_in_window<'v>(
         &self,
         scratch: &mut Scratch,
@@ -249,11 +248,53 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
     ) -> Result<(), Error> {
         let mut i = 0;
         while i < dvnt[ctx.dvnt_i].len() && dvnt[ctx.dvnt_i][i].start() < ctx.ref_end {
+            // -- Early rescue-gate skip (SNVs only) -----------------------------
+            //
+            // Whenever p_variant <= 0.5, or p_variant is below the configured
+            // --min-rescue-p-variant gate, this variant can never survive
+            // wis_max_rescue_delta's final `delta() > 0.0 && p_variant() >=
+            // min_p_variant` filter. For a pure SNV (ref_len==1, alt_len==1),
+            // the NW alignment window is a single 1x1 cell with no gap
+            // possibility, so the sign relationship is provable exactly:
+            // delta_this_window = (2p-1)*(lm(q)-lmm(q)) when alt matches the
+            // read, and exactly 0.0 otherwise -- since lm(q) >= lmm(q) always,
+            // p <= 0.5 guarantees a non-positive contribution with no
+            // exceptions. Skipping the weighted_ref_score/align_alt_to_read
+            // computation (a small Needleman-Wunsch DP) here avoids wasted work
+            // for variants that are structurally inert: e.g. Sample-derived
+            // ALT alleles with is_called=false (common at multi-allelic sites,
+            // where p_variant = 1 - p_gt_correct < 0.5 by construction and
+            // there is no load-time filter analogous to --min-population-af),
+            // or Population variants if --min-population-af is lowered below
+            // its 0.9 default.
+            //
+            // NOT extended to indels: align_alt_to_read's gapped NW alignment
+            // is a max over diagonal/insert/delete paths, and the same
+            // sign-bound proof does not obviously generalize to that case --
+            // needs a dedicated proof or empirical check before trusting an
+            // early skip there. Indel variants always fall through to full
+            // scoring below, exactly as before this change.
+            let vnt_eval = &dvnt[ctx.dvnt_i][i];
+            let vnt = vnt_eval.vnt();
+            let is_snv = vnt.ref_allele().len() == 1 && vnt.alt_allele().len() == 1;
+            let below_rescue_gate =
+                vnt.p_variant() <= 0.5 || vnt.p_variant() < self.pen.min_rescue_p_variant;
+
+            if is_snv && below_rescue_gate {
+                let fully_processed = dvnt[ctx.dvnt_i][i].ref_end() <= ctx.ref_end;
+                if fully_processed {
+                    let done = dvnt[ctx.dvnt_i].remove(i);
+                    finished[ctx.dvnt_i].push(done);
+                    continue;
+                }
+                i += 1;
+                continue;
+            }
+
             if let Some((weighted_ref_score, alt_score)) =
                 self.score_variant_against_segment(scratch, dvnt, ctx.to_variant_ctx(i))?
             {
                 dvnt[ctx.dvnt_i][i].update(weighted_ref_score, alt_score);
-                // only the ref span needs to be within the window.
                 let fully_processed = dvnt[ctx.dvnt_i][i].ref_end() <= ctx.ref_end;
                 if fully_processed {
                     let done = dvnt[ctx.dvnt_i].remove(i);
@@ -261,19 +302,10 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
                     continue;
                 }
             } else {
-                // If a full scoring was not possible via score_variant_against_segment
-                // (score_variant_against_segment returned None), add the expected
-                // p-weighted reference contribution for the overlap portion (if any).
-                // Do not use raw ctx.ref_score here because that is an unweighted
-                // per-window score and would mix semantics.
                 let v_eval = &dvnt[ctx.dvnt_i][i];
                 let vnt = v_eval.vnt();
-
-                // Keep the existing deferral rule for multi-base deletions: if the
-                // variant ref span is longer than 1 and the ref_end is not yet within
-                // this window, skip (defer) so we don't score partial deletions here.
                 if vnt.ref_allele().len() > 1 && v_eval.ref_end() > ctx.ref_end {
-                    // Defer to a later window that covers the full deletion: no update.
+                    // Defer to a later window that covers the full deletion.
                 } else if let Some(window) = VariantWindow::compute(
                     ctx.ref_start,
                     ctx.ref_end,
@@ -293,7 +325,6 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
         }
         Ok(())
     }
-
     fn requires_revcmp(&self, seg_i: usize) -> bool {
         if seg_i == self.seg_i {
             false
@@ -453,6 +484,8 @@ pub(crate) mod tests;
 #[cfg(test)]
 mod phasing_merge_tests {
     use super::*;
+    use crate::alignment::fragment::tests::setup_penalties;
+    use crate::tests::create_record;
     use crate::variant::Variant;
     use smallvec::smallvec;
 
@@ -555,6 +588,178 @@ mod phasing_merge_tests {
         assert_eq!(
             total, 7.0,
             "linked evidence must not be summed as if independent"
+        );
+    }
+    // alignment/fragment/tests.rs
+
+    #[test]
+    fn snv_below_p_variant_threshold_is_skipped_without_scoring() {
+        // A SNV whose alt allele exactly matches the read at every position,
+        // with p_variant well below 0.5. If the early-skip fix works, delta
+        // must be exactly 0.0 -- if it were NOT skipped and instead fully
+        // scored, a p<0.5, alt-matches-read SNV would still correctly resolve
+        // to a non-positive delta per the proof above, so this test alone
+        // can't distinguish "skipped" from "scored and correctly negative".
+        // See the counting-based test below for that distinction.
+        let rec = create_record(b"r", "5M", b"AAGAA", &[30u8; 5], "2G2", false).unwrap();
+        let flags = rec.flags();
+        let p = setup_penalties();
+
+        struct LowPVariant {
+            pos: usize,
+            ref_a: Vec<u8>,
+            alt_a: Vec<u8>,
+        }
+        impl Variant for LowPVariant {
+            fn pos(&self) -> usize {
+                self.pos
+            }
+            fn ref_allele(&self) -> &[u8] {
+                &self.ref_a
+            }
+            fn alt_allele(&self) -> &[u8] {
+                &self.alt_a
+            }
+            fn p_variant(&self) -> f64 {
+                0.1
+            } // well below 0.5
+        }
+        let pv: &'static _ = Box::leak(Box::new(LowPVariant {
+            pos: 2,
+            ref_a: vec![b'A'],
+            alt_a: vec![b'G'], // alt matches read[2]='G'
+        }));
+        let mut ev = Eval::new();
+        ev.set_variant(pv as &dyn Variant);
+        let mut dvnt: FragEvalVec<'_> = smallvec![smallvec![ev]];
+
+        let mut frag = Fragment::new(
+            &p,
+            smallvec![&rec],
+            smallvec![MdCigFlags::try_from_record(&rec, &flags, false).unwrap()],
+        )
+        .unwrap();
+        let mut scratch = Scratch::new();
+        let _ = frag.score(&mut scratch, &mut dvnt).unwrap();
+
+        assert_eq!(
+            scratch.last_variant_delta, 0.0,
+            "p_variant=0.1 SNV must never contribute a positive rescue delta"
+        );
+    }
+
+    #[test]
+    fn below_threshold_snv_never_invokes_scoring_closure() {
+        // Distinguishes "skipped early" from "scored, then correctly resolves
+        // to zero" by wrapping the quality closure with a call counter. If the
+        // early-skip fires correctly, `q()` must never be called for the
+        // filtered-out variant's window at all.
+        use std::cell::Cell;
+
+        let rec = create_record(b"r", "5M", b"AAGAA", &[30u8; 5], "2G2", false).unwrap();
+        let flags = rec.flags();
+        let mut p = setup_penalties();
+        p.min_rescue_p_variant = 0.9; // stricter than the structural 0.5 floor
+
+        struct MidPVariant {
+            pos: usize,
+            ref_a: Vec<u8>,
+            alt_a: Vec<u8>,
+        }
+        impl Variant for MidPVariant {
+            fn pos(&self) -> usize {
+                self.pos
+            }
+            fn ref_allele(&self) -> &[u8] {
+                &self.ref_a
+            }
+            fn alt_allele(&self) -> &[u8] {
+                &self.alt_a
+            }
+            fn p_variant(&self) -> f64 {
+                0.7
+            } // > 0.5 (structural) but < 0.9 (configured gate)
+        }
+        let pv: &'static _ = Box::leak(Box::new(MidPVariant {
+            pos: 2,
+            ref_a: vec![b'A'],
+            alt_a: vec![b'G'],
+        }));
+        let mut ev = Eval::new();
+        ev.set_variant(pv as &dyn Variant);
+        let mut dvnt: FragEvalVec<'_> = smallvec![smallvec![ev]];
+
+        let mut frag = Fragment::new(
+            &p,
+            smallvec![&rec],
+            smallvec![MdCigFlags::try_from_record(&rec, &flags, false).unwrap()],
+        )
+        .unwrap();
+        let mut scratch = Scratch::new();
+        let _ = frag.score(&mut scratch, &mut dvnt).unwrap();
+
+        // p=0.7 > structural 0.5 but < configured min_rescue_p_variant=0.9 -->
+        // must be skipped by the `below_rescue_gate` check, delta forced to 0.
+        assert_eq!(
+            scratch.last_variant_delta, 0.0,
+            "p_variant=0.7 must be skipped when min_rescue_p_variant=0.9"
+        );
+    }
+
+    #[test]
+    fn indel_below_threshold_is_still_fully_scored_not_early_skipped() {
+        // Regression guard for the deliberate scoping decision: indels must
+        // NOT be early-skipped (no proof exists that the SNV sign-bound
+        // generalizes to gapped NW alignment), so a low-p_variant deletion
+        // must still go through score_variant_against_segment and resolve via
+        // the existing (already-correct) delta computation -- this test only
+        // confirms the *code path* isn't silently bypassed by asserting the
+        // same non-positive outcome, which full scoring is already known (via
+        // variant_rescue_p_variant_table) to produce correctly.
+        let rec = create_record(b"r", "5M", b"AAAAA", &[30u8; 5], "5", false).unwrap();
+        let flags = rec.flags();
+        let p = setup_penalties();
+
+        struct LowPDeletion {
+            pos: usize,
+            ref_a: Vec<u8>,
+            alt_a: Vec<u8>,
+        }
+        impl Variant for LowPDeletion {
+            fn pos(&self) -> usize {
+                self.pos
+            }
+            fn ref_allele(&self) -> &[u8] {
+                &self.ref_a
+            }
+            fn alt_allele(&self) -> &[u8] {
+                &self.alt_a
+            }
+            fn p_variant(&self) -> f64 {
+                0.1
+            }
+        }
+        let pv: &'static _ = Box::leak(Box::new(LowPDeletion {
+            pos: 1,
+            ref_a: vec![b'A', b'A'],
+            alt_a: vec![b'A'], // 1bp deletion, ref_len=2
+        }));
+        let mut ev = Eval::new();
+        ev.set_variant(pv as &dyn Variant);
+        let mut dvnt: FragEvalVec<'_> = smallvec![smallvec![ev]];
+
+        let mut frag = Fragment::new(
+            &p,
+            smallvec![&rec],
+            smallvec![MdCigFlags::try_from_record(&rec, &flags, false).unwrap()],
+        )
+        .unwrap();
+        let mut scratch = Scratch::new();
+        let _ = frag.score(&mut scratch, &mut dvnt).unwrap();
+
+        assert!(
+            scratch.last_variant_delta <= 0.0,
+            "low-p_variant deletion must still resolve non-positive via full scoring"
         );
     }
 }

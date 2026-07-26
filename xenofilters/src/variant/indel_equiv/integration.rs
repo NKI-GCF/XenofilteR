@@ -56,6 +56,51 @@ mod indel_expansion_integration {
         }
     }
 
+    /// Build a minimal single-record, single-reference SAM header whose sole
+    /// read group ID ends in the pass2 ambiguous suffix (`_xenoambig`), so
+    /// `AlnStream::new` classifies the stream as pass2 input, and whose @PG
+    /// chain does NOT mention BQSR/ApplyBQSR/recalibration -- i.e. a BAM that
+    /// legitimately looks like it was never quality-recalibrated between passes.
+    fn build_no_bqsr_pass2_header() -> noodles::sam::Header {
+        use noodles::core::Position;
+        use noodles::sam::header::record::value::map::header::tag as hd_tag;
+        use noodles::sam::header::record::value::map::program::tag as pg_tag;
+        use noodles::sam::header::record::value::{
+            map::{Header as HdHeader, Program, ReadGroup, ReferenceSequence},
+            Map,
+        };
+        let header_str = concat!(
+            "@HD\tVN:1.6\n",
+            "@SQ\tSN:chr1\tLN:1000\n",
+            "@RG\tID:rg0_xenoambig\n",
+            "@PG\tID:bwa\tPN:bwa\tCL:bwa mem ref.fa r1.fq\n",
+        );
+        let header: noodles::sam::Header = header_str.parse().expect("Failed to parse SAM header");
+
+        header
+    }
+
+    /// Writes `header` plus one mapped record (RG:Z:rg0_xenoambig) to `path`.
+    fn write_bam_fixture(header: &noodles::sam::Header, path: &std::path::Path) {
+        use noodles::bam;
+        use noodles::sam::alignment::io::Write as _;
+        use noodles::sam::alignment::record::data::field::Tag;
+        use noodles::sam::alignment::record_buf::data::field::Value;
+
+        let file = std::fs::File::create(path).expect("create fixture bam");
+        let mut writer = bam::io::Writer::new(file);
+        writer.write_header(header).expect("write header");
+
+        let mut rec = crate::tests::create_record(b"read1", "10M", &[], &[30u8; 10], "10", false)
+            .expect("create record");
+        rec.data_mut()
+            .insert(Tag::READ_GROUP, Value::from("rg0_xenoambig"));
+        writer
+            .write_alignment_record(header, &rec)
+            .expect("write record");
+        writer.try_finish().expect("finish bam");
+    }
+
     // -- Test 1: store finds all expanded positions ----------------------------
 
     #[test]
@@ -281,9 +326,13 @@ mod indel_expansion_integration {
     }
     #[test]
     fn pass2_without_bqsr_and_auto_threshold_is_rejected() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("pass2_no_bqsr.bam");
+        write_bam_fixture(&build_no_bqsr_pass2_header(), &path);
+
         let mut cfg = RunConfig {
             io: IoArgs {
-                alignment: vec!["tests/fixtures/pass2_no_bqsr.bam".into()],
+                alignment: vec![path],
                 ..Default::default()
             },
             scoring: ScoringArgs {
@@ -301,19 +350,25 @@ mod indel_expansion_integration {
 
     #[test]
     fn pass2_without_bqsr_but_explicit_threshold_is_allowed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("pass2_no_bqsr.bam");
+        write_bam_fixture(&build_no_bqsr_pass2_header(), &path);
+
         let mut cfg = RunConfig {
             io: IoArgs {
-                alignment: vec!["tests/fixtures/pass2_no_bqsr.bam".into()],
+                alignment: vec![path],
                 ..Default::default()
             },
             scoring: ScoringArgs {
                 ambiguous_threshold: 5,
                 ..Default::default()
-            }, // explicit, not auto
+            },
             ..Default::default()
         };
-        assert!(cfg
-            .open_streams_unified(MatchingAlgorithm::Namesorted, 1)
-            .is_ok());
+        let result = cfg.open_streams_unified(MatchingAlgorithm::Namesorted, 1);
+        if let Err(ref e) = result {
+            eprintln!("ACTUAL ERROR: {e:?}");
+        }
+        assert!(result.is_ok());
     }
 }

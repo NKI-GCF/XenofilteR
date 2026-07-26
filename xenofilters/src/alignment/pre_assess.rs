@@ -31,23 +31,20 @@ use smallvec::SmallVec;
 use std::cmp::Ordering;
 
 /// Realistic lower bound on base quality for the "worst-case" per-base
-/// advantage scan. Below Q4 (`p_err >= ~0.4`), a "matched" base is not even
-/// guaranteed to be more likely correct than a mismatch under this model
-/// (`ll_match[q] <= ll_mismatch[q]` for q <= 3, and `ll_match[0] = -infinity`
-/// exactly, since Q0 means certain error by definition) -- so the
-/// match-count-favors-this-side assumption underlying Tier 2.5 is not even
-/// meaningful in that range, let alone boundable.
+/// advantage scan. Q20 (~1% error rate) is the conventional "usable"
+/// quality threshold across Illumina, ONT, and PacBio platforms, and is a
+/// far more defensible floor than an arbitrarily low value: real aligners
+/// essentially never report a matched CIGAR M-position below Q20 in
+/// practice, whereas anything below ~Q4 makes the underlying
+/// match-favors-this-side assumption not even theoretically meaningful
+/// (`ll_match[q] <= ll_mismatch[q]` once `p_err >= 0.5`, i.e. q <~ 3).
 ///
-/// Including q=0..3 in the scan made `min_delta_for_early_decision` return
-/// `usize::MAX` unconditionally for every Penalty configuration -- a
-/// silent, total loss of the Tier 2.5 optimization, not a merely-slow
-/// fallback. Real aligners essentially never report a matched CIGAR
-/// M-position at Q0-Q1; Q2-Q3 floor values do exist on some platforms but
-/// are rare. This is a documented, deliberate tradeoff, not a proof: if a
-/// matched base below this floor is ever genuinely present in scored
-/// reads, Tier 2.5's guarantee (that it never contradicts Tier 3) can in
-/// principle be violated for that specific comparison.
-const MIN_PLAUSIBLE_MATCH_QUALITY: usize = 4;
+/// This is a documented, deliberate tradeoff, not a proof: a genuinely
+/// low-quality (sub-Q20) matched base in scored reads means Tier 2.5's
+/// guarantee -- that it never contradicts what Tier 3 would decide -- can
+/// in principle be violated for that specific comparison. Lower this if
+/// your platform/basecaller genuinely reports usable matches below Q20.
+const MIN_PLAUSIBLE_MATCH_QUALITY: usize = 20;
 
 // ---------------------------------------------------------------------------
 // AlignSig -- match-count-based quality signature (private to this module)
@@ -701,14 +698,25 @@ mod tests {
         );
         // ambiguous_threshold = Phred 30 -> a large nats threshold; a 1-base
         // match-count delta cannot possibly guarantee this margin even in the
-        // best case, so it must NOT early-decide.
+        // best case (Tier 2.5a).
+        //
+        // A "clean" 1-base delta (identical CIGAR structure, one substituted
+        // base) would ALSO be resolved unconditionally by Tier 2.5b
+        // (`compare_fragment_profiles`) -- correctly, since a single
+        // differing read position is a strict per-position dominance proof
+        // that doesn't need a threshold floor at all (see its doc comment).
+        // To actually isolate and exercise Tier 2.5a's floor here, stream A
+        // carries an insertion, which unconditionally forces Tier 2.5b to
+        // FallThrough (`compare_mate_profiles`'s `has_insertions` guard),
+        // leaving Tier 2.5a's count-based floor as the only path to a decision.
+        let mcfs_a = mcfs_from("5M1I4M", "9"); // 9 matches, has an insertion
+        let mcfs_b = mcfs_from("10M", "4A4A0"); // 8 matches, 2 mismatches -- delta = 1 vs a
         let threshold_nats = 30.0 * std::f64::consts::LN_10 / 10.0;
-        let mcfs_a = mcfs_from("10M", "9A0"); // 9 matches
-        let mcfs_b = mcfs_from("10M", "10"); // 10 matches
         let result = pre_assess_alignments(&mcfs_a, &mcfs_b, &pen, threshold_nats);
         assert!(
             matches!(result, PreAssessResult::FullScoring),
-            "1-base delta must not clear a Phred-30 threshold floor"
+            "1-base delta must not clear a Phred-30 threshold floor, and Tier 2.5b \
+         must not independently resolve it either (insertion forces FallThrough)"
         );
     }
 
@@ -884,8 +892,15 @@ mod hashlookup_threshold_floor_tests {
             0.5,
         );
         let threshold_nats = crate::config::args::resolve_threshold(u32::MAX, false); // pass1 default = Phred 10
-        let recs_a = vec![mapped(10, b"9A0", 0)]; // 9 matches (2-base delta vs 7)
-        let recs_b = vec![mapped(10, b"6AAA", 0)]; // 7 matches
+        let recs_a = vec![mapped(10, b"9A0", 0)]; // 9 matches
+        let recs_b = vec![mapped(10, b"7AAA", 0)]; // 7 matches -- fixed: "6AAA" summed to
+                                                   // only 9 ref bases (1 short of the 10M
+                                                   // CIGAR), and silently returned 6 via
+                                                   // match_count_raw's lenient malformed-MD
+                                                   // truncation rather than erroring.
+                                                   // "7AAA" is internally consistent:
+                                                   // 7+1+1+1=10, matches=7, delta=2 as the
+                                                   // test name states.
         let result =
             crate::alignment::pre_assess_scoring_records(&recs_a, &recs_b, &pen, threshold_nats);
         assert!(
