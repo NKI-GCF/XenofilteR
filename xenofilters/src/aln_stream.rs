@@ -115,18 +115,16 @@ where
         }
 
         // Sort-order check (namesorted only).
-        let raw = bam.read_raw_header_bytes()?;
         if MatchingAlgorithm::Namesorted == *algorithm {
-            for parts in raw
-                .split(|&b| b == b'\n')
-                .map(|s| s.split(|&b| b == b'\t').collect::<Vec<_>>())
-            {
-                if parts.len() >= 3
-                    && parts[0] == b"@HD"
-                    && (parts[2] == b"SO:coordinate" || parts[2] == b"GO:reference")
-                {
-                    return Err(Error::CoordinateSortedInputDetected);
-                }
+            use noodles::sam::header::record::value::map::header::tag as hd_tag;
+            let sorted_or_grouped = header.header().is_some_and(|hd| {
+                let of = hd.other_fields();
+                let so = of.get(&hd_tag::SORT_ORDER).map(|v| v.to_string());
+                let go = of.get(&hd_tag::GROUP_ORDER).map(|v| v.to_string());
+                so.as_deref() == Some("coordinate") || go.as_deref() == Some("reference")
+            });
+            if sorted_or_grouped {
+                return Err(Error::CoordinateSortedInputDetected);
             }
         }
 

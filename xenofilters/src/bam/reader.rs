@@ -4,10 +4,9 @@
 //! bgzf BAM readers behind a uniform interface.
 
 use noodles::bam::{io::Reader as BamReader, record::Record};
-use noodles::bgzf::{self, VirtualPosition, io::MultithreadedReader};
+use noodles::bgzf::{self, io::MultithreadedReader, VirtualPosition};
 use noodles::sam::Header;
 use std::fs::File;
-use std::io::Read as ioRead;
 
 /// Wraps both bgzf reader variants in a zero-cost internal enum.
 ///
@@ -43,23 +42,6 @@ impl BgzfBamReader {
         match self {
             Self::Single(r) => r.records().next(),
             Self::Multi(r) => r.records().next(),
-        }
-    }
-
-    /// Re-read the raw SAM header bytes for sort-order validation.
-    /// Called during `AlnStream::new()` before any records are consumed.
-    pub(crate) fn read_raw_header_bytes(&mut self) -> std::io::Result<Vec<u8>> {
-        fn read_raw<R: ioRead>(r: &mut BamReader<R>) -> std::io::Result<Vec<u8>> {
-            let mut hr = r.header_reader();
-            hr.read_magic_number()?;
-            let mut rhr = hr.raw_sam_header_reader()?;
-            let mut buf = Vec::new();
-            rhr.read_to_end(&mut buf)?;
-            Ok(buf)
-        }
-        match self {
-            Self::Single(r) => read_raw(r),
-            Self::Multi(r) => read_raw(r),
         }
     }
 }
