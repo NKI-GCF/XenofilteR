@@ -654,7 +654,6 @@ mod phasing_merge_tests {
         // to zero" by wrapping the quality closure with a call counter. If the
         // early-skip fires correctly, `q()` must never be called for the
         // filtered-out variant's window at all.
-        use std::cell::Cell;
 
         let rec = create_record(b"r", "5M", b"AAGAA", &[30u8; 5], "2G2", false).unwrap();
         let flags = rec.flags();

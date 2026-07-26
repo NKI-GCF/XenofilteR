@@ -98,11 +98,10 @@ impl TabixScored {
                 }
 
                 let cols: Vec<&str> = trimmed.split('\t').collect();
-                if cols.len() >= 3 {
-                    if let (Ok(rec_start), Ok(rec_end)) =
+                if cols.len() >= 3
+                    && let (Ok(rec_start), Ok(rec_end)) =
                         (cols[1].parse::<usize>(), cols[2].parse::<usize>())
-                    {
-                        if rec_start < end && rec_end > start {
+                        && rec_start < end && rec_end > start {
                             let score = cols
                                 .get(4)
                                 .and_then(|s| s.parse::<f64>().ok())
@@ -119,8 +118,6 @@ impl TabixScored {
                                 total += score_fn.apply(score, overlap_bases, region_len);
                             }
                         }
-                    }
-                }
 
                 if past_chunk {
                     break;

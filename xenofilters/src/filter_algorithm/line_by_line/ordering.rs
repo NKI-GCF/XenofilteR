@@ -442,8 +442,7 @@ fn score_candidate_owned(
                 let r_end = r_start
                     + mcfs
                         .first()
-                        .map(|m| m.as_ref().map(|m| m.get_cigar().len()))
-                        .flatten()
+                        .and_then(|m| m.as_ref().map(|m| m.get_cigar().len()))
                         .unwrap_or(0);
                 regions
                     .overlapping(ref_id, r_start, r_end, is_rev)

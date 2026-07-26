@@ -62,13 +62,6 @@ mod indel_expansion_integration {
     /// chain does NOT mention BQSR/ApplyBQSR/recalibration -- i.e. a BAM that
     /// legitimately looks like it was never quality-recalibrated between passes.
     fn build_no_bqsr_pass2_header() -> noodles::sam::Header {
-        use noodles::core::Position;
-        use noodles::sam::header::record::value::map::header::tag as hd_tag;
-        use noodles::sam::header::record::value::map::program::tag as pg_tag;
-        use noodles::sam::header::record::value::{
-            map::{Header as HdHeader, Program, ReadGroup, ReferenceSequence},
-            Map,
-        };
         let header_str = concat!(
             "@HD\tVN:1.6\n",
             "@SQ\tSN:chr1\tLN:1000\n",
