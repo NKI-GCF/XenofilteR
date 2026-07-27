@@ -131,7 +131,11 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         frag: &FragmentState<R>,
         aln_idx: usize,
     ) -> Result<bool, Error> {
-        let bed = match &self.bed[aln_idx] { Some(b) => b, None => return Ok(false) };
+        let bed = self.bed[aln_idx].as_ref();
+        let vcf = self.vcf[aln_idx].as_ref();
+        if bed.is_none() && vcf.is_none() {
+            return Ok(false);
+        }
         for (rec, flags) in frag.get_records().iter().zip(frag.flags.iter()) {
             if flags.is_secondary() || flags.is_unmapped() {
                 continue;
@@ -145,9 +149,15 @@ impl<R: SimpleRec> CollatedMatcher<R> {
                 .get()
                 .saturating_sub(1);
             let end = start + rec.cigar().as_ref().len();
-            // `any_overlap` now strand-aware via BED column 6.
-            if bed.any_overlap(ref_id, start, end, is_rev)? {
-                return Ok(true);
+            if let Some(b) = bed {
+                if b.any_overlap(ref_id, start, end, is_rev)? {
+                    return Ok(true);
+                }
+            }
+            if let Some(v) = vcf {
+                if v.overlaps(ref_id, start, end)? {
+                    return Ok(true);
+                }
             }
         }
         Ok(false)
