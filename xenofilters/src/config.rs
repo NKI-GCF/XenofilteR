@@ -239,8 +239,8 @@ pub(crate) struct CollatedArgs {
     #[command(flatten)]
     pub(crate) common: CommonArgs,
 
-    /// Tabix-indexed BED.gz file(s) forcing full NW on overlap.
-    /// One per stream. Strand-aware when BED column 6 present.
+    /// In-memory BED file(s), one per stream. Strand-aware when BED
+    /// column 6 present.
     #[arg(long, num_args = 0..=2, value_name = "[IDX:]FILE",
           help_heading = "Regions", value_hint = clap::ValueHint::FilePath)]
     pub(crate) ambiguous_regions: Vec<FileSpec>,

@@ -19,6 +19,7 @@ use noodles::sam::alignment::{
     },
     record_buf::{Cigar, QualityScores, RecordBuf, Sequence},
 };
+use std::collections::HashMap;
 
 fn create_cigar(cigar: &str) -> Result<Cigar, Error> {
     let mut ops = Vec::new();

@@ -1,7 +1,9 @@
-use crate::Error;
-use crate::alignment::{MateKind, mate_slot, segment_id};
-use crate::region::tabix_query::{TabixBed, TabixVcf};
 use noodles::sam::alignment::record::Flags;
+use crate::{
+    Error,
+    alignment::{MateKind, mate_slot, segment_id},
+    region::{ambiguous::AmbiguousRegions, diagnostic::SegregateVariants},
+};
 use smallvec::SmallVec;
 
 // ---------------------------------------------------------------------------
@@ -107,8 +109,8 @@ impl StreamAccumulator {
 
     pub(super) fn classify(
         self,
-        bed: Option<&TabixBed>,
-        vcf: Option<&TabixVcf>,
+        bed: Option<&AmbiguousRegions>,
+        vcf: Option<&SegregateVariants>,
     ) -> Result<StreamKind, Error> {
         if self.primary_count == 0 {
             return Ok(StreamKind::Scoring {
@@ -139,13 +141,9 @@ impl StreamAccumulator {
                 RecordKind::Mapped(m) => {
                     if !m.is_perfect()
                         || bed
-                            .map(|b| b.overlaps(m.ref_id, m.pos, m.pos + m.ref_len))
-                            .transpose()?
-                            != Some(true)
+                            .is_some_and(|b| b.overlaps(m.ref_id, m.pos, m.pos + m.ref_len))
                         || vcf
-                            .map(|v| v.overlaps(m.ref_id, m.pos, m.pos + m.ref_len))
-                            .transpose()?
-                            != Some(true)
+                            .is_some_and(|v| v.overlaps(m.ref_id, m.pos, m.pos + m.ref_len))
                     {
                         all_perfect = false;
                         break;
@@ -175,14 +173,10 @@ impl StreamAccumulator {
                 }
                 RecordKind::Mapped(m) => {
                     let perfect_here = m.is_perfect()
-                        && bed
-                            .map(|b| b.overlaps(m.ref_id, m.pos, m.pos + m.ref_len))
-                            .transpose()?
-                            != Some(true)
-                        && vcf
-                            .map(|v| v.overlaps(m.ref_id, m.pos, m.pos + m.ref_len))
-                            .transpose()?
-                            != Some(true);
+                        && !bed
+                            .is_some_and(|b| b.overlaps(m.ref_id, m.pos, m.pos + m.ref_len))
+                        && !vcf
+                            .is_some_and(|v| v.overlaps(m.ref_id, m.pos, m.pos + m.ref_len));
                     (
                         segment_id(&m.flags),
                         if perfect_here {

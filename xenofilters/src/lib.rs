@@ -27,10 +27,12 @@ use filter_algorithm::{
     viral_integration::ViralIntegrationArgs,
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
-use region::tabix_query::{TabixBed, TabixVcf};
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use region::{ambiguous::AmbiguousRegions, diagnostic::SegregateVariants};
+use aln_stream::build_diagnostic_store_for_stream;
+use std::path::PathBuf;
 use tracing_subscriber::{EnvFilter, fmt};
+use smallvec::SmallVec;
+use crate::aln_stream::AlignmentStream;
 
 // Test helpers exposed only under cfg(test) or cfg(bench).
 #[cfg(any(test, feature = "bench-internals"))]
@@ -184,35 +186,32 @@ fn run_line_by_line(
     }
 }
 
+fn build_regions(run: &RunConfig, aln: &SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>)
+    -> Result<([Option<AmbiguousRegions>; 2], [Option<SegregateVariants>; 2]), Error>
+{
+    let mut bed: [Option<AmbiguousRegions>; 2] = [None, None];
+    let mut vcf: [Option<SegregateVariants>; 2] = [None, None];
+    for i in 0..aln.len().min(2) {
+        if let Some(segregate) = &run.segregate {
+            let name_to_id = crate::variant::name_to_id::header_name_to_id(aln[i].header());
+            if let Some(p) = path_for_stream(&segregate.ambiguous_regions, i) {
+                bed[i] = Some(AmbiguousRegions::from_bed(p, &name_to_id)?);
+            }
+        }
+        vcf[i] = build_diagnostic_store_for_stream(run, aln[i].header(), i)?;
+    }
+    Ok((bed, vcf))
+}
+
 // ---------------------------------------------------------------------------
 // Hash-lookup -- position-sorted BAMs, in-memory region filtering
 // ---------------------------------------------------------------------------
 
 fn run_hashlookup(args: HashlookupArgs) -> Result<(), Error> {
-    let bed: [Option<TabixBed>; 2] = [
-        path_for_stream(&args.ambiguous_regions, 0)
-            .map(|s| TabixBed::open(Path::new(s)))
-            .transpose()?,
-        path_for_stream(&args.ambiguous_regions, 1)
-            .map(|s| TabixBed::open(Path::new(s)))
-            .transpose()?,
-    ];
-    let vcf: [Option<TabixVcf>; 2] = [
-        path_for_stream(&args.distinct_variants, 0)
-            .map(|s| TabixVcf::open(Path::new(s)))
-            .transpose()?,
-        path_for_stream(&args.distinct_variants, 1)
-            .map(|s| TabixVcf::open(Path::new(s)))
-            .transpose()?,
-    ];
     let mut run = args.into_run_config()?;
     let aln = run.open_streams_unified(MatchingAlgorithm::Hashlookup, run.threads)?;
-    let _name_to_id = aln
-        .iter()
-        .map(|s| crate::variant::name_to_id::header_name_to_id(s.header()))
-        .collect::<Vec<HashMap<_, _>>>();
-
-    HashLookup::<RecordBuf>::new(&run, aln, bed, vcf, [None, None])?.process(&run)
+    let (bed, vcf) = build_regions(&run, &aln)?;
+    HashLookup::<RecordBuf>::new(&run, aln, bed, vcf)?.process(&run)
 }
 
 // ---------------------------------------------------------------------------
@@ -220,25 +219,10 @@ fn run_hashlookup(args: HashlookupArgs) -> Result<(), Error> {
 // ---------------------------------------------------------------------------
 
 fn run_collated(args: CollatedArgs) -> Result<(), Error> {
-    let bed: [Option<TabixBed>; 2] = [
-        path_for_stream(&args.ambiguous_regions, 0)
-            .map(|s| TabixBed::open(Path::new(s)))
-            .transpose()?,
-        path_for_stream(&args.ambiguous_regions, 1)
-            .map(|s| TabixBed::open(Path::new(s)))
-            .transpose()?,
-    ];
-    let vcf: [Option<TabixVcf>; 2] = [
-        path_for_stream(&args.distinct_variants, 0)
-            .map(|s| TabixVcf::open(Path::new(s)))
-            .transpose()?,
-        path_for_stream(&args.distinct_variants, 1)
-            .map(|s| TabixVcf::open(Path::new(s)))
-            .transpose()?,
-    ];
+
     let mut run = args.into_run_config()?;
     let aln = run.open_streams_unified(MatchingAlgorithm::Collated, run.threads)?;
-
+    let (bed, vcf) = build_regions(&run, &aln)?;
     crate::filter_algorithm::collated::CollatedMatcher::<RecordBuf>::new(&run, aln, bed, vcf)?
         .process(&run)
 }

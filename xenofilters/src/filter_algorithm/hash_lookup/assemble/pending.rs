@@ -1,7 +1,7 @@
 use super::FragmentTable;
 use super::stream::{RecordKind, StreamAccumulator, StreamKind};
 use crate::Error;
-use crate::region::tabix_query::{TabixBed, TabixVcf};
+use crate::region::{ambiguous::AmbiguousRegions, diagnostic::SegregateVariants};
 use smallvec::SmallVec;
 
 // ---------------------------------------------------------------------------
@@ -35,8 +35,8 @@ impl PendingFragment {
         &mut self,
         rec: RecordKind,
         nr: usize,
-        bed: Option<&TabixBed>,
-        vcf: Option<&TabixVcf>,
+        bed: Option<&AmbiguousRegions>,
+        vcf: Option<&SegregateVariants>,
     ) -> Result<bool, Error> {
         if self.is_paired.is_none() {
             self.is_paired = Some(rec.flags().is_segmented());
@@ -59,8 +59,8 @@ impl PendingFragment {
 
     fn check_complete(
         &mut self,
-        bed: Option<&TabixBed>,
-        vcf: Option<&TabixVcf>,
+        bed: Option<&AmbiguousRegions>,
+        vcf: Option<&SegregateVariants>,
     ) -> Result<bool, Error> {
         let exp = self.expected_primaries();
         if self.driving.is_empty() && self.driving_buf.primary_count >= exp {
@@ -81,8 +81,8 @@ pub(crate) fn insert(
     name: String,
     nr: usize,
     seq_counter: &mut u64,
-    bed: Option<&TabixBed>,
-    vcf: Option<&TabixVcf>,
+    bed: Option<&AmbiguousRegions>,
+    vcf: Option<&SegregateVariants>,
 ) -> Result<(String, bool), Error> {
     let entry = table.entry(name.clone()).or_insert_with(|| {
         let sn = *seq_counter;

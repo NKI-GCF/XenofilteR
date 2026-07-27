@@ -29,8 +29,8 @@ use crate::config::run_config::RunConfig;
 use crate::filter_algorithm::line_by_line::COUNTER_STRIDE;
 use crate::filter_algorithm::line_by_line::{READ_CT, Scratch, ordering::Decision};
 use crate::penalty::Penalty;
-use crate::region::tabix_query::{TabixBed, TabixVcf};
-use crate::region::{ScoreFn, ScoredRegions};
+use crate::region::ambiguous::AmbiguousRegions;
+use crate::region::diagnostic::SegregateVariants;
 use crate::variant::FragEvalVec;
 use assemble::{
     EarlyKind, FragmentTable, MappedRecord, PendingFragment, RecordKind, StreamKind, insert,
@@ -81,20 +81,17 @@ pub(crate) struct HashLookup<R: SimpleRec> {
     pub(crate) routing_counters: SmallVec<[u64; 8]>,
     add_decision_tag: bool,
     ambiguous_log_threshold: f64,
-    bed: [Option<TabixBed>; 2],
-    vcf: [Option<TabixVcf>; 2],
+    bed: [Option<AmbiguousRegions>; 2],
+    vcf: [Option<SegregateVariants>; 2],
     bisulfite: bool,
-    positive: [Option<(ScoredRegions, ScoreFn)>; 2],
-    codec_prefix: Vec<u8>,
 }
 
 impl<R: SimpleRec> HashLookup<R> {
     pub(crate) fn new(
         args: &RunConfig,
         aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>,
-        bed: [Option<TabixBed>; 2],
-        vcf: [Option<TabixVcf>; 2],
-        pos: [Option<(ScoredRegions, ScoreFn)>; 2],
+        bed: [Option<AmbiguousRegions>; 2],
+        vcf: [Option<SegregateVariants>; 2],
     ) -> Result<HashLookup<RecordBuf>, Error> {
         let ambiguous_log_threshold = resolve_threshold(args.scoring.ambiguous_threshold, false);
         Ok(HashLookup {
@@ -110,8 +107,6 @@ impl<R: SimpleRec> HashLookup<R> {
             ambiguous_log_threshold,
             bed,
             vcf,
-            positive: pos,
-            codec_prefix: Vec::new(),
             bisulfite: args.scoring.bisulfite,
         })
     }
@@ -561,7 +556,7 @@ impl<R: SimpleRec> HashLookup<R> {
             .score(&mut self.scratch, &mut dvnt)
             .map_err(|e| Error::ScoreStreamError(aln_idx, e.to_string()))?;
 
-        if let Some((regions, score_fn)) = self.positive[aln_idx].as_ref().map(|(r, f)| (r, *f)) {
+        if let Some((regions, score_fn)) = self.aln[aln_idx].positive_regions() {
             let bonus: f64 = bufs
                 .iter()
                 .filter(|b| !b.flags().is_secondary() && !b.flags().is_supplementary())

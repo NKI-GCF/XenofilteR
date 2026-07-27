@@ -27,7 +27,7 @@ use crate::config::run_config::RunConfig;
 use crate::filter_algorithm::line_by_line::apply_decision_tag;
 use crate::filter_algorithm::line_by_line::{Scratch, ordering::Decision};
 use crate::penalty::Penalty;
-use crate::region::tabix_query::{TabixBed, TabixVcf};
+use crate::region::{ambiguous::AmbiguousRegions, diagnostic::SegregateVariants};
 use ahash::RandomState;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use reader::CollatedReader;
@@ -44,16 +44,16 @@ pub(crate) struct CollatedMatcher<R: SimpleRec> {
     pub(crate) routing_counters: SmallVec<[u64; 8]>,
     add_decision_tag: bool,
     ambiguous_log_threshold: f64,
-    bed: [Option<TabixBed>; 2],
-    vcf: [Option<TabixVcf>; 2],
+    bed: [Option<AmbiguousRegions>; 2],
+    vcf: [Option<SegregateVariants>; 2],
 }
 
 impl<R: SimpleRec> CollatedMatcher<R> {
     pub(crate) fn new(
         args: &RunConfig,
         aln: SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>,
-        bed: [Option<TabixBed>; 2],
-        vcf: [Option<TabixVcf>; 2],
+        bed: [Option<AmbiguousRegions>; 2],
+        vcf: [Option<SegregateVariants>; 2],
     ) -> Result<CollatedMatcher<RecordBuf>, Error> {
         let ambiguous_log_threshold = resolve_threshold(args.scoring.ambiguous_threshold, false);
         let mut it = aln.into_iter();
@@ -140,7 +140,6 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             if flags.is_secondary() || flags.is_unmapped() {
                 continue;
             }
-            let is_rev = flags.is_reverse_complemented();
             let ref_id = rec.ref_seq_id().transpose()?.ok_or(Error::NoRefSeqId)?;
             let start = rec
                 .alignment_start()
@@ -149,16 +148,8 @@ impl<R: SimpleRec> CollatedMatcher<R> {
                 .get()
                 .saturating_sub(1);
             let end = start + rec.cigar().as_ref().len();
-            if let Some(b) = bed
-                && b.any_overlap(ref_id, start, end, is_rev)?
-            {
-                return Ok(true);
-            }
-            if let Some(v) = vcf
-                && v.overlaps(ref_id, start, end)?
-            {
-                return Ok(true);
-            }
+            if bed.is_some_and(|b| b.overlaps(ref_id, start, end)) { return Ok(true); }
+            if vcf.is_some_and(|v| v.overlaps(ref_id, start, end)) { return Ok(true); }
         }
         Ok(false)
     }

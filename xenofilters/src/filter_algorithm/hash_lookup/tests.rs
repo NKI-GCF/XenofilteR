@@ -15,7 +15,6 @@ fn make(s0: Vec<RecordBuf>, s1: Vec<RecordBuf>, config: &RunConfig) -> HashLooku
         smallvec![a0, a1],
         [None, None],
         [None, None],
-        [None, None],
     )
     .unwrap()
 }
