@@ -1,7 +1,7 @@
 //! Microbenchmarks for the per-fragment scoring hot path.
 //! Run: cargo bench --bench scoring
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use smallvec::smallvec;
 use xenofilters::{
     alignment::{fragment::Fragment, pre_assess::pre_assess_alignments, MdCigFlags},
@@ -9,6 +9,7 @@ use xenofilters::{
     penalty::Penalty,
     tests::create_record,
 };
+use std::hint::black_box;
 
 fn bench_penalties() -> Penalty {
     xenofilters::config::args::ScoringArgs {

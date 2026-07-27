@@ -2,8 +2,9 @@
 //! Validates the ahash adoption decision empirically.
 
 use ahash::RandomState;
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::collections::HashMap;
+use std::hint::black_box;
 
 fn make_keys(n: usize) -> Vec<Box<[u8]>> {
     // Realistic Illumina read names: ~50 bytes.
