@@ -15,8 +15,7 @@ use noodles::sam::{
     alignment::{io::Write as AlignmentWrite, record_buf::RecordBuf},
     header::record::value::{Map, map::program::tag},
 };
-use std::io::Stdout;
-use std::{fs::File, num::NonZeroUsize, path::Path};
+use std::{fs::File, io::Stdout, sync::Arc, path::Path};
 
 // -- @PG helper ----------------------------------------------------------------
 
@@ -43,7 +42,7 @@ fn add_pg_line(header: &mut Header) -> Result<(), Error> {
 ///                  pool of `threads` compression workers.
 pub(crate) enum BamOutput {
     Single(BamWriter<BgzfSyncWriter<File>>),
-    Multi(BamWriter<MultithreadedWriter<File>>),
+    Multi { writer: BamWriter<MultithreadedWriter<File>>, pool: Arc<rayon::ThreadPool> },
     Stdout(BamWriter<BgzfSyncWriter<Stdout>>),
 }
 
@@ -55,7 +54,7 @@ impl BamOutput {
     ) -> std::io::Result<()> {
         match self {
             Self::Single(w) => w.write_alignment_record(header, rec),
-            Self::Multi(w) => w.write_alignment_record(header, rec),
+            Self::Multi { writer, pool } => pool.install(|| writer.write_alignment_record(header, rec)),
             Self::Stdout(w) => w.write_alignment_record(header, rec),
         }
     }
@@ -111,13 +110,15 @@ fn open_writer(f: &Path, header: &Header, threads: usize) -> Result<BamOutput, E
         writer.write_header(header)?;
         Ok(BamOutput::Single(writer))
     } else {
-        let worker_count = NonZeroUsize::new(threads).expect("threads > 1 guaranteed by branch");
-        let enc = MultiBuilder::default()
-            .set_worker_count(worker_count)
-            .build_from_writer(file);
-        let mut writer = BamWriter::from(enc);
-        writer.write_header(header)?;
-        Ok(BamOutput::Multi(writer))
+        let pool = Arc::new(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .map_err(|e| Error::InvalidInput(format!("failed to build bgzf writer thread pool: {e}")))?,
+        );
+        let mut writer = pool.install(|| BamWriter::from(MultiBuilder::default().build_from_writer(file)));
+        pool.install(|| writer.write_header(header))?;
+        Ok(BamOutput::Multi { writer, pool })
     }
 }
 
