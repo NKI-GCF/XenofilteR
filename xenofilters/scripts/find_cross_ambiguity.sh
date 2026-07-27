@@ -201,10 +201,18 @@ run_ambiguity_mapping() {
 log_info "Initializing Bi-directional Cross-Species Mapping Workflow"
 
 # Direction A: Human -> Mouse
-run_ambiguity_mapping "$HUMAN_FA" "$MOUSE_FA" "Human" "Mouse" "${OUT_DIR}/Human_ambiguous_to_Mouse.bed"
+if [ -e "${OUT_DIR}/Human_ambiguous_to_Mouse.bed" ]; then
+    log_info "Output for Human -> Mouse already exists. Skipping this direction."
+else
+    run_ambiguity_mapping "$HUMAN_FA" "$MOUSE_FA" "Human" "Mouse" "${OUT_DIR}/Human_ambiguous_to_Mouse.bed"
+fi
 
 # Direction B: Mouse -> Human
-run_ambiguity_mapping "$MOUSE_FA" "$HUMAN_FA" "Mouse" "Human" "${OUT_DIR}/Mouse_ambiguous_to_Human.bed"
+if [ -e "${OUT_DIR}/Mouse_ambiguous_to_Human.bed" ]; then
+    log_info "Output for Mouse -> Human already exists. Skipping this direction."
+else
+    run_ambiguity_mapping "$MOUSE_FA" "$HUMAN_FA" "Mouse" "Human" "${OUT_DIR}/Mouse_ambiguous_to_Human.bed"
+fi
 
 log_info "=============================================================================="
 log_info "Pipeline executed to completion. All final target artifacts successfully built."
