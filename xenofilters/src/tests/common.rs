@@ -1,10 +1,12 @@
 //! Parametric test infrastructure shared across all test modules.
 //! Import with `use crate::tests::common::*;`
 
-use crate::config::args::ScoringArgs;
-use crate::config::run_config::RunConfig;
+use crate::config::{args::ScoringArgs,run_config::RunConfig};
 use crate::tests::create_record;
 use noodles::sam::alignment::record_buf::RecordBuf;
+use crate::aln_stream::AlignmentStream;
+use smallvec::{SmallVec, smallvec};
+use crate::aln_stream::tests::MockStream;
 
 pub(crate) fn cfg() -> RunConfig {
     RunConfig {
@@ -79,4 +81,11 @@ pub(crate) fn run_collecting<C>(
             misses.join("\n")
         );
     }
+}
+
+pub(crate) fn two_stream_aln(s0: Vec<RecordBuf>, s1: Vec<RecordBuf>) -> SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> {
+    smallvec![
+        Box::new(MockStream::new(0, s0)) as Box<dyn AlignmentStream<RecordBuf>>,
+        Box::new(MockStream::new(1, s1)) as Box<dyn AlignmentStream<RecordBuf>>,
+    ]
 }

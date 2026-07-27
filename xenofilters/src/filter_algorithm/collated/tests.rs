@@ -5,11 +5,10 @@ use crate::{
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::smallvec;
+use crate::tests::common::two_stream_aln;
 
 fn make(s0: Vec<RecordBuf>, s1: Vec<RecordBuf>, cfg: &RunConfig) -> CollatedMatcher<RecordBuf> {
-    let a0 = Box::new(MockStream::new(0, s0)) as Box<dyn AlignmentStream<RecordBuf>>;
-    let a1 = Box::new(MockStream::new(1, s1)) as Box<dyn AlignmentStream<RecordBuf>>;
-    CollatedMatcher::<RecordBuf>::new(cfg, smallvec![a0, a1], [None, None], [None, None]).unwrap()
+    CollatedMatcher::<RecordBuf>::new(cfg, two_stream_aln(s0, s1), [None, None], [None, None]).unwrap()
 }
 
 struct Row {

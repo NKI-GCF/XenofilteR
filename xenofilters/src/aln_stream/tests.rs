@@ -95,7 +95,7 @@ impl MockStream {
             .get(virtual_offset as usize)
             .cloned()
             .or_else(|| self.original_reads.first().cloned())
-            .ok_or(Error::MockStreamNoRecordAtVirtualOffset { virtual_offset })
+            .ok_or(Error::NoRecordAtVirtualOffset { virtual_offset })
     }
 }
 

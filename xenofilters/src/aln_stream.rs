@@ -422,5 +422,5 @@ fn header_indicates_bqsr(header: &Header) -> bool {
     })
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "bench-internals"))]
 pub(crate) mod tests;

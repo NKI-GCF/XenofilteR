@@ -52,10 +52,6 @@ pub enum Error {
     #[error("No record at virtual offset {virtual_offset}")]
     NoRecordAtVirtualOffset { virtual_offset: u64 },
 
-    #[cfg(test)]
-    #[error("MockStream: no record at virtual offset {virtual_offset}")]
-    MockStreamNoRecordAtVirtualOffset { virtual_offset: u64 },
-
     #[error("--matching-algorithm hashlookup|collated requires exactly 2 alignment streams")]
     AlgoRequiresTwoStreams,
 

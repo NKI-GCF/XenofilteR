@@ -682,75 +682,32 @@ fn test_ambiguous_log_threshold_conversion() -> Result<(), Error> {
     Ok(())
 }
 
+fn build_mixed_mate_pair_fixture() -> (LineByLine<RecordBuf>, RunConfig) {
+    let mut mate1_s0 = create_record(b"R1", "10M", &[], &[30u8; 10], "9A0", false).unwrap();
+    *mate1_s0.flags_mut() = Flags::from_bits(0x41).unwrap();
+    let mut mate2_s0 = create_record(b"R1", "", &[], &[], "", false).unwrap();
+    *mate2_s0.flags_mut() = Flags::from_bits(0x85).unwrap();
+    let mut mate1_s1 = create_record(b"R1", "10M", &[], &[30u8; 10], "8A1", false).unwrap();
+    *mate1_s1.flags_mut() = Flags::from_bits(0x41).unwrap();
+    let mut mate2_s1 = create_record(b"R1", "10M", &[], &[30u8; 10], "7A2", false).unwrap();
+    *mate2_s1.flags_mut() = Flags::from_bits(0x81).unwrap();
+    let config = RunConfig::default();
+    let lbl = lbl_chimeric(&[("a", vec![mate1_s0, mate2_s0]), ("b", vec![mate1_s1, mate2_s1])], &[]);
+    (lbl, config)
+}
+
 #[test]
 fn mixed_mapped_unmapped_mate_pair_two_streams_sequential_no_crash() -> Result<(), Error> {
-    // Regression guard for Bug A: a fragment where stream 0 has mate1
-    // mapped + mate2 unmapped, and stream 1 has both mates mapped. This
-    // fragment is NOT all-unmapped (Tier 1's is_all_unmapped() only
-    // inspects flags[0]), so it reaches build_mcfs/cmp_perfect/
-    // order_mates and previously errored the whole pipeline via `?`.
-    let mut mate1_s0 = create_record(b"R1", "10M", &[], &[30u8; 10], "9A0", false)?;
-    *mate1_s0.flags_mut() = Flags::from_bits(0x41).unwrap(); // paired, first, mapped
-
-    let mut mate2_s0 = create_record(b"R1", "", &[], &[], "", false)?;
-    *mate2_s0.flags_mut() = Flags::from_bits(0x85).unwrap(); // paired, last, unmapped
-
-    let mut mate1_s1 = create_record(b"R1", "10M", &[], &[30u8; 10], "8A1", false)?;
-    *mate1_s1.flags_mut() = Flags::from_bits(0x41).unwrap();
-
-    let mut mate2_s1 = create_record(b"R1", "10M", &[], &[30u8; 10], "7A2", false)?;
-    *mate2_s1.flags_mut() = Flags::from_bits(0x81).unwrap();
-
-    let config = RunConfig::default();
-    let mut lbl = lbl_chimeric(
-        &[
-            ("a", vec![mate1_s0, mate2_s0]),
-            ("b", vec![mate1_s1, mate2_s1]),
-        ],
-        &[],
-    );
-
-    // Must not error -- this exact shape crashed the whole run pre-fix.
+    let (mut lbl, config) = build_mixed_mate_pair_fixture();
     lbl.process_sequential(&config)?;
-
-    let total: u64 = lbl.routing_counters.iter().sum();
-    assert!(total > 0, "fragment must be routed somewhere, not dropped");
+    assert!(lbl.routing_counters.iter().sum::<u64>() > 0, "fragment must be routed somewhere, not dropped");
     Ok(())
 }
 
 #[test]
 fn mixed_mapped_unmapped_mate_pair_two_streams_parallel_no_crash() -> Result<(), Error> {
-    // Same fragment shape through the parallel worker pool -- the
-    // pre-fix parallel path swallowed the error via `.ok()` in
-    // score_bundle rather than crashing, so this guards silent
-    // fragment-drop / mis-scoring rather than a panic.
-    let mut mate1_s0 = create_record(b"R1", "10M", &[], &[30u8; 10], "9A0", false)?;
-    *mate1_s0.flags_mut() = Flags::from_bits(0x41).unwrap();
-
-    let mut mate2_s0 = create_record(b"R1", "", &[], &[], "", false)?;
-    *mate2_s0.flags_mut() = Flags::from_bits(0x85).unwrap();
-
-    let mut mate1_s1 = create_record(b"R1", "10M", &[], &[30u8; 10], "8A1", false)?;
-    *mate1_s1.flags_mut() = Flags::from_bits(0x41).unwrap();
-
-    let mut mate2_s1 = create_record(b"R1", "10M", &[], &[30u8; 10], "7A2", false)?;
-    *mate2_s1.flags_mut() = Flags::from_bits(0x81).unwrap();
-
-    let config = RunConfig::default();
-    let mut lbl = lbl_chimeric(
-        &[
-            ("a", vec![mate1_s0, mate2_s0]),
-            ("b", vec![mate1_s1, mate2_s1]),
-        ],
-        &[],
-    );
-
+    let (mut lbl, config) = build_mixed_mate_pair_fixture();
     lbl.process_parallel(&config, 2)?;
-
-    let total: u64 = lbl.routing_counters.iter().sum();
-    assert!(
-        total > 0,
-        "fragment must be routed somewhere, not silently dropped by the parallel path"
-    );
+    assert!(lbl.routing_counters.iter().sum::<u64>() > 0, "fragment must be routed somewhere, not silently dropped by the parallel path");
     Ok(())
 }
