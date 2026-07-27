@@ -4,9 +4,6 @@ use noodles::vcf::Header;
 use noodles::vcf::variant::record_buf::RecordBuf;
 use noodles::vcf::variant::record_buf::samples::sample::Value;
 
-// FIXME, a variant could have multiple ALT alleles, and the GT could be 0/2, so we should ideally
-// have one Sample per ALT allele, and check if each ALT allele is present in the GT. For
-// simplicity, this example assumes only one ALT allele and GT is either 0/1 or 1/1 for the ALT.
 #[derive(Debug, Clone)]
 pub(crate) struct Sample {
     pub(crate) ref_id: usize,
@@ -64,8 +61,15 @@ pub(crate) fn parse_sample_record(
         Some(Value::Integer(gq)) => *gq as f64,
         _ => return Err(Error::MissingOrInvalidGqTag),
     };
-    let gt = match sample.get("GT").flatten() {
-        Some(Value::Integer(gt)) => *gt,
+
+    // Accepts std string encoding and marks every non-REF allele index found as called.
+    let called_indices: Vec<i32> = match sample.get("GT").flatten() {
+        Some(Value::Integer(gt)) => vec![*gt],
+        Some(Value::String(s)) => s
+            .split(|c| c == '/' || c == '|')
+            .filter_map(|a| a.parse::<i32>().ok())
+            .filter(|&a| a != 0)
+            .collect(),
         _ => return Err(Error::MissingOrInvalidGtTag),
     };
     let phase_set = match sample.get("PS").flatten() {
@@ -80,7 +84,7 @@ pub(crate) fn parse_sample_record(
             if gq < min_gq {
                 return None;
             }
-            let is_called = gt == (i + 1) as i32;
+            let is_called = called_indices.contains(&((i + 1) as i32));
             Some(Ok(Sample {
                 ref_id: core.ref_id,
                 pos: core.pos,
@@ -166,5 +170,30 @@ mod sample_ps_tests {
             result[0].phase_set, None,
             "unphased VCFs (no PS tag) must not error or fabricate a phase set"
         );
+    }
+    #[test]
+    fn heterozygous_multi_alt_gt_marks_both_alleles_called() {
+        let header = test_header();
+        // GT "1/2" over a 2-ALT record: both ALT alleles must be marked called.
+        let mut record = RecordBuf::builder()
+            .set_reference_sequence_name("chr1")
+            .set_variant_start(Position::try_from(100).unwrap())
+            .set_reference_bases("A")
+            .set_alternate_bases(vec!["G".to_string(), "T".to_string()].into())
+            .build();
+        // Fix error: NoSampleData
+        let mut keys = vec![String::from("GT"), String::from("GQ")];
+        let under_test: Vec<Option<SampleValue>> = vec![
+            Some(SampleValue::String("1/2".to_string())),
+            Some(SampleValue::Integer(40)),
+        ];
+        let placeholder: Vec<Option<SampleValue>> = vec![
+            Some(SampleValue::Integer(0)),
+            Some(SampleValue::Integer(99)),
+        ];
+        *record.samples_mut() = Samples::new(Keys::from_iter(keys), vec![placeholder, under_test]);
+        let result = parse_sample_record(&mut record, &header, 0.0).unwrap();
+        assert_eq!(result.len(), 2);
+        assert!(result[0].is_called && result[1].is_called);
     }
 }
