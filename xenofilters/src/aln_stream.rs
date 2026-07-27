@@ -30,6 +30,7 @@ use noodles::sam::Header;
 use std::fs::File;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
+use rayon::ThreadPoolBuilder;
 
 pub(crate) trait AlignmentStream<R: SimpleRec> {
     fn next_qname(&self) -> &[u8];
@@ -82,14 +83,23 @@ where
         let file = File::open(&opt.io.alignment[i])?;
 
         let mut bam = if !seekable_required && usize::from(threads) > 1 {
+            let n_threads = usize::from(threads);
             tracing::debug!(
                 stream = i,
-                threads = usize::from(threads),
-                "Using MultithreadedReader for bgzf decompression"
+                threads = n_threads,
+                "Using rayon-backed MultithreadedReader for bgzf decompression"
             );
-            BgzfBamReader::Multi(BamReader::from(MultithreadedReader::with_worker_count(
-                threads, file,
-            )))
+            let pool = ThreadPoolBuilder::new()
+                .num_threads(n_threads)
+                .thread_name(move |idx| format!("xenofilters-bgzf-{i}-{idx}"))
+                .build()
+                .map_err(|e| {
+                    Error::InvalidInput(format!("failed to build bgzf thread pool: {e}"))
+                })?;
+            let pool = Arc::new(pool);
+            let reader =
+                pool.install(|| BamReader::from(MultithreadedReader::new(file)));
+            BgzfBamReader::Multi { reader, pool }
         } else {
             BgzfBamReader::Single(BamReader::new(file))
         };

@@ -28,6 +28,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"]
 crossbeam-channel  = "0.5"   # bounded MPSC channels for work/result queues
 clap_complete = "4.6"
 rust-lapper = "1.3.0"
+rayon = "1.12.0"
 
 [lib]
 name    = "xenofilters"
