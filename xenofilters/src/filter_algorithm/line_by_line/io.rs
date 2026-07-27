@@ -1,24 +1,9 @@
 use super::core::{COUNTER_STRIDE, LineByLine};
 use crate::Error;
 use crate::alignment::SimpleRec;
-use noodles::sam::alignment::record::data::field::Tag;
 use noodles::sam::alignment::record_buf::RecordBuf;
-use noodles::sam::alignment::record_buf::data::field::Value;
 
 impl<R: SimpleRec> LineByLine<R> {
-    /// Insert a single-byte aux tag into `rec`.
-    pub(super) fn add_aux_tags(
-        &mut self,
-        rec: &mut RecordBuf,
-        field: &[u8; 2],
-        value: u8,
-    ) -> Result<(), Error> {
-        let tag = Tag::new(field[0], field[1]);
-        let val = Value::from(value);
-        rec.data_mut().insert(tag, val);
-        Ok(())
-    }
-
     /// Write `rec` through stream `i`. Counter layout per stream -- stride 4:
     ///
     /// `best_state`:
@@ -43,28 +28,5 @@ impl<R: SimpleRec> LineByLine<R> {
         } else {
             Ok(())
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::run_config::RunConfig;
-    use crate::tests::create_record;
-    use smallvec::smallvec;
-
-    #[test]
-    fn test_add_aux_tags_inserts_expected_tag_and_value() -> Result<(), Error> {
-        let config = RunConfig::default();
-        let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&config, smallvec![], vec![], vec![])?;
-        let mut rec = create_record(b"r", "5M", &[], &[], "5", false)?;
-        lbl.add_aux_tags(&mut rec, b"XF", 42)?;
-
-        let tag = Tag::new(b'X', b'F');
-        match rec.data().get(&tag) {
-            Some(Value::UInt8(v)) => assert_eq!(*v, 42),
-            other => panic!("unexpected tag value: {other:?}"),
-        }
-        Ok(())
     }
 }

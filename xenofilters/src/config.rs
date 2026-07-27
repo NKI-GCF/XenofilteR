@@ -128,15 +128,6 @@ pub(crate) enum AlgorithmCommand {
 }
 
 impl AlgorithmCommand {
-    /// Extract the common args regardless of which subcommand was chosen.
-    pub(crate) fn common(&self) -> &CommonArgs {
-        match self {
-            Self::Namesorted(a) => &a.common,
-            Self::Hashlookup(a) => &a.common,
-            Self::Collated(a) => &a.common,
-            _ => unreachable!("common() not available for this subcommand"),
-        }
-    }
     pub(crate) fn common_mut(&mut self) -> &mut CommonArgs {
         match self {
             Self::Namesorted(a) => &mut a.common,
