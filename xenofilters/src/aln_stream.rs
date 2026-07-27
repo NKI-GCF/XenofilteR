@@ -1,37 +1,36 @@
+use crate::Error;
 use crate::alignment::SimpleRec;
 use crate::bam::reader::BgzfBamReader;
 use crate::bam::{
-    expand_header, out_from_file, path_unicode_ok, rewrite_rg, BamOutput, SUFFIX_AMBIGUOUS,
-    SUFFIX_FILTERED,
+    BamOutput, SUFFIX_AMBIGUOUS, SUFFIX_FILTERED, expand_header, out_from_file, path_unicode_ok,
+    rewrite_rg,
 };
-use crate::config::run_config::RunConfig;
 use crate::config::MatchingAlgorithm;
+use crate::config::run_config::RunConfig;
 use crate::file_spec::path_for_stream;
-use crate::region::{diagnostic::SegregateVariants, PositiveRegions, ScoreFn, ScoredRegions};
+use crate::region::{PositiveRegions, ScoreFn, ScoredRegions, diagnostic::SegregateVariants};
 use crate::variant::{
-    build_diagnostic_store_expanded,
+    StoreTrait, build_diagnostic_store_expanded,
+    indel_equiv::IndelEquivalenceExpander,
     indel_equiv::corrected::{
         build_population_store_expanded, build_sample_store_expanded, read_vcf_or_bcf_header,
     },
-    indel_equiv::IndelEquivalenceExpander,
     name_to_id::header_name_to_id,
-    population::{parse_population_record, Population},
-    sample::{parse_sample_record, Sample},
+    population::{Population, parse_population_record},
+    sample::{Sample, parse_sample_record},
     store::Store,
-    StoreTrait,
 };
-use crate::Error;
 use noodles::bam::{io::Reader as BamReader, record::Record};
-use noodles::bgzf::{io::MultithreadedReader, VirtualPosition};
+use noodles::bgzf::{VirtualPosition, io::MultithreadedReader};
 use noodles::fasta::io::indexed_reader::Builder;
+use noodles::sam::Header;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use noodles::sam::header::record::value::map::program::tag;
-use noodles::sam::Header;
+use rayon::ThreadPoolBuilder;
+use std::collections::HashMap;
 use std::fs::File;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
-use rayon::ThreadPoolBuilder;
-use std::collections::HashMap;
 
 pub(crate) trait AlignmentStream<R: SimpleRec> {
     fn next_qname(&self) -> &[u8];
@@ -98,8 +97,7 @@ where
                     Error::InvalidInput(format!("failed to build bgzf thread pool: {e}"))
                 })?;
             let pool = Arc::new(pool);
-            let reader =
-                pool.install(|| BamReader::from(MultithreadedReader::new(file)));
+            let reader = pool.install(|| BamReader::from(MultithreadedReader::new(file)));
             BgzfBamReader::Multi { reader, pool }
         } else {
             BgzfBamReader::Single(BamReader::new(file))

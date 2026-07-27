@@ -1,5 +1,6 @@
 use crate::tests::common::{r, u};
 use crate::{
+    Error, LineByLine,
     alignment::FragmentState,
     aln_stream::AlignmentStream,
     config::{
@@ -7,12 +8,11 @@ use crate::{
         run_config::RunConfig,
     },
     filter_algorithm::line_by_line::core::FragmentBuffer,
-    tests::{create_record, MockStream},
-    Error, LineByLine,
+    tests::{MockStream, create_record},
 };
 use noodles::sam::alignment::record::Flags;
 use noodles::sam::alignment::record_buf::RecordBuf;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 
 // ---------------------------------------------------------------------------
 // Builder helpers
@@ -501,7 +501,7 @@ fn test_branch_counters_and_skipping() -> Result<(), Error> {
     assert!(lbl.write_record(0, unmapped_single, Some(false)).is_ok());
     assert_eq!(lbl.routing_counters[2], 2); // ambiguous:0: 2
     assert_eq!(lbl.routing_counters[0], 1); // discard:0:
-                                            // ingest_record should skip secondary
+    // ingest_record should skip secondary
     let mut best: FragmentBuffer<RecordBuf> = smallvec![];
     let finished = lbl.ingest_record(0, secondary, &mut best).unwrap();
     assert!(!finished);

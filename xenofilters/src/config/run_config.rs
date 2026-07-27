@@ -1,14 +1,14 @@
 use crate::{
+    Error,
     aln_stream::{AlignmentStream, AlnStream},
     config::{
-        args::{ChimericArgs, IoArgs, RelatedArgs, ScoringArgs, SegregateArgs},
         CommonArgs, MatchingAlgorithm, NameEncoderKind,
+        args::{ChimericArgs, IoArgs, RelatedArgs, ScoringArgs, SegregateArgs},
     },
     filter_algorithm::line_by_line::ChimericThresholds,
-    Error,
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use std::num::NonZeroUsize;
 use std::ops::RangeInclusive;
 /// Single flat struct consumed by all three engines. No Args-struct
@@ -47,10 +47,10 @@ impl RunConfig {
 
         let chimeric_thresholds = match chimeric {
             Some(c) => ChimericThresholds {
-                    min_mapped_frac: c.chimeric_min_mapped_frac,
-                    max_overlap_frac: c.chimeric_max_overlap_frac,
-                    min_union_frac: c.chimeric_min_union_frac,
-                },
+                min_mapped_frac: c.chimeric_min_mapped_frac,
+                max_overlap_frac: c.chimeric_max_overlap_frac,
+                min_union_frac: c.chimeric_min_union_frac,
+            },
             None => ChimericThresholds::default(),
         };
 

@@ -1,15 +1,15 @@
 //! Microbenchmarks for the per-fragment scoring hot path.
 //! Run: cargo bench --bench scoring
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use smallvec::smallvec;
+use std::hint::black_box;
 use xenofilters::{
-    alignment::{fragment::Fragment, pre_assess::pre_assess_alignments, MdCigFlags},
+    alignment::{MdCigFlags, fragment::Fragment, pre_assess::pre_assess_alignments},
     filter_algorithm::line_by_line::core::Scratch,
     penalty::Penalty,
     tests::create_record,
 };
-use std::hint::black_box;
 
 fn bench_penalties() -> Penalty {
     xenofilters::config::args::ScoringArgs {
@@ -99,7 +99,7 @@ fn bench_pre_assess(c: &mut Criterion) {
 fn bench_wis(c: &mut Criterion) {
     use xenofilters::{
         alignment::fragment::wis_max_rescue_delta,
-        variant::{eval::Eval, Variant},
+        variant::{Variant, eval::Eval},
     };
     // FIXME: len/delta are set but the benchmark hardcodes fixed geometry/delta
     // regardless. Either wire them in to vary interval width/weight per-n for a

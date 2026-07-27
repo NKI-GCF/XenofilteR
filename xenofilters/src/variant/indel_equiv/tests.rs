@@ -22,7 +22,7 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::{enumerate_equivalents, left_normalize, MAX_SHIFT};
+    use super::super::{MAX_SHIFT, enumerate_equivalents, left_normalize};
 
     // -- Helpers ---------------------------------------------------------------
 

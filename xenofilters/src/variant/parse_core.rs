@@ -1,10 +1,6 @@
 // src/variant/parse_core.rs
 use crate::Error;
-use noodles::vcf::{
-    variant::record::AlternateBases,
-    variant::RecordBuf,
-    Header,
-};
+use noodles::vcf::{Header, variant::RecordBuf, variant::record::AlternateBases};
 
 /// Fields common to every VCF-derived variant record, extracted once.
 pub(crate) struct VariantCore {
@@ -19,7 +15,10 @@ pub(crate) fn parse_variant_core(
     header: &Header,
 ) -> Result<VariantCore, Error> {
     let chrom = record.reference_sequence_name().to_string();
-    let ref_id = header.contigs().get_index_of(&chrom).ok_or(Error::NoRefSeqId)?;
+    let ref_id = header
+        .contigs()
+        .get_index_of(&chrom)
+        .ok_or(Error::NoRefSeqId)?;
     let pos = record.variant_start().map(|p| p.get()).unwrap_or(0);
     let ref_a = record.reference_bases().as_bytes().to_vec();
     let alts = record
@@ -27,5 +26,10 @@ pub(crate) fn parse_variant_core(
         .iter()
         .map(|a| Ok(a?.as_bytes().to_vec()))
         .collect::<Result<Vec<_>, Error>>()?;
-    Ok(VariantCore { ref_id, pos, ref_a, alts })
+    Ok(VariantCore {
+        ref_id,
+        pos,
+        ref_a,
+        alts,
+    })
 }

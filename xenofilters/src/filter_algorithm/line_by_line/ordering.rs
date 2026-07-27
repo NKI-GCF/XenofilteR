@@ -38,21 +38,22 @@
 //! candidate rather than one per read segment.
 
 use super::core::{FragmentBuffer, LineByLine, Scratch};
+use crate::Error;
 use crate::alignment::pre_assess::min_delta_for_early_decision;
 use crate::alignment::{
-    mate_slot, segment_id, BaseOp, FragmentState, MateClassifiable, MateKind, MdCigFlags,
-    ScoreOpIter, SimpleRec,
+    BaseOp, FragmentState, MateClassifiable, MateKind, MdCigFlags, ScoreOpIter, SimpleRec,
+    mate_slot, segment_id,
 };
 use crate::config::run_config::RunConfig;
 use crate::filter_algorithm::line_by_line::{
-    chimeric::{detect_chimeric_mate_complement, ChimericKind},
-    detect_chimeric_event, ChimericDecision, MAX_STREAMS, READ_CT,
+    ChimericDecision, MAX_STREAMS, READ_CT,
+    chimeric::{ChimericKind, detect_chimeric_mate_complement},
+    detect_chimeric_event,
 };
 use crate::region::{ScoreFn, ScoredRegions};
 use crate::variant::StoreTrait;
-use crate::Error;
 use noodles::sam::alignment::RecordBuf;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use std::f64::consts::LN_10;
 use std::sync::Arc;
 
@@ -407,7 +408,7 @@ fn score_candidate_owned(
     scratch: &mut Scratch,
     cancel_slot: [bool; 2],
 ) -> Result<f64, Error> {
-    use crate::alignment::{stringify_record, Fragment};
+    use crate::alignment::{Fragment, stringify_record};
     use crate::variant::FragEvalVec;
 
     let mut segment: SmallVec<[&RecordBuf; READ_CT]> = SmallVec::new();

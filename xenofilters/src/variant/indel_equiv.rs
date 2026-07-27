@@ -15,11 +15,7 @@ pub(crate) mod impls;
 
 use crate::Error;
 use fasta::io::IndexedReader;
-use noodles::{
-    core::Region,
-    fasta, vcf,
-    vcf::variant::RecordBuf,
-};
+use noodles::{core::Region, fasta, vcf, vcf::variant::RecordBuf};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::io::{BufRead, Seek};

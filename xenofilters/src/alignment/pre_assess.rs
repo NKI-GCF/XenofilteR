@@ -22,7 +22,7 @@
 //! second CIGAR+MD walk is ever required.
 
 use super::read_profile::{
-    build_read_profile, compare_fragment_profiles, FragmentProfile, ReadOp, ReadSpaceDecision,
+    FragmentProfile, ReadOp, ReadSpaceDecision, build_read_profile, compare_fragment_profiles,
 };
 use crate::alignment::MdCigFlags;
 use crate::filter_algorithm::hash_lookup::assemble::RecordKind;
@@ -405,7 +405,7 @@ pub(crate) fn md_mismatches(md: &[u8]) -> usize {
 mod tests {
     use super::*;
     use crate::{alignment::MdCigFlags, tests::create_record};
-    use smallvec::{smallvec, SmallVec};
+    use smallvec::{SmallVec, smallvec};
     use std::cmp::Ordering::{Equal, Greater, Less};
 
     fn mcfs_from(cigar: &str, md: &str) -> SmallVec<[Option<MdCigFlags<'static>>; READ_CT]> {
@@ -906,13 +906,13 @@ mod hashlookup_threshold_floor_tests {
         let threshold_nats = crate::config::args::resolve_threshold(u32::MAX, false); // pass1 default = Phred 10
         let recs_a = vec![mapped(10, b"9A0", 0)]; // 9 matches
         let recs_b = vec![mapped(10, b"7AAA", 0)]; // 7 matches -- fixed: "6AAA" summed to
-                                                   // only 9 ref bases (1 short of the 10M
-                                                   // CIGAR), and silently returned 6 via
-                                                   // match_count_raw's lenient malformed-MD
-                                                   // truncation rather than erroring.
-                                                   // "7AAA" is internally consistent:
-                                                   // 7+1+1+1=10, matches=7, delta=2 as the
-                                                   // test name states.
+        // only 9 ref bases (1 short of the 10M
+        // CIGAR), and silently returned 6 via
+        // match_count_raw's lenient malformed-MD
+        // truncation rather than erroring.
+        // "7AAA" is internally consistent:
+        // 7+1+1+1=10, matches=7, delta=2 as the
+        // test name states.
         let result =
             crate::alignment::pre_assess_scoring_records(&recs_a, &recs_b, &pen, threshold_nats);
         assert!(

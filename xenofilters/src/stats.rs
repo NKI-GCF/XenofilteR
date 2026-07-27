@@ -3,8 +3,8 @@
 //! MultiQC format reference:
 //! <https://multiqc.info/docs/development/custom_content/#json-data>
 
-use crate::filter_algorithm::COUNTER_STRIDE;
 use crate::Error;
+use crate::filter_algorithm::COUNTER_STRIDE;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -79,7 +79,9 @@ pub(crate) fn write_stats(
     let doc = MultiQcData {
         id: "xenofilters",
         plot_type: "generalstats",
-        pconfig: PConfig { namespace: "xenofilters" },
+        pconfig: PConfig {
+            namespace: "xenofilters",
+        },
         data,
     };
     let f = std::fs::File::create(path)?;

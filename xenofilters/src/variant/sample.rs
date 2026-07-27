@@ -1,8 +1,8 @@
-use crate::variant::Variant;
 use crate::Error;
-use noodles::vcf::variant::record_buf::samples::sample::Value;
-use noodles::vcf::variant::record_buf::RecordBuf;
+use crate::variant::Variant;
 use noodles::vcf::Header;
+use noodles::vcf::variant::record_buf::RecordBuf;
+use noodles::vcf::variant::record_buf::samples::sample::Value;
 
 // FIXME, a variant could have multiple ALT alleles, and the GT could be 0/2, so we should ideally
 // have one Sample per ALT allele, and check if each ALT allele is present in the GT. For
@@ -98,10 +98,10 @@ pub(crate) fn parse_sample_record(
 mod sample_ps_tests {
     use super::*;
     use noodles::core::Position;
-    use noodles::vcf::header::record::value::{map::Contig, Map};
-    use noodles::vcf::variant::record_buf::samples::{sample::Value as SampleValue, Keys};
-    use noodles::vcf::variant::record_buf::{RecordBuf, Samples};
     use noodles::vcf::Header;
+    use noodles::vcf::header::record::value::{Map, map::Contig};
+    use noodles::vcf::variant::record_buf::samples::{Keys, sample::Value as SampleValue};
+    use noodles::vcf::variant::record_buf::{RecordBuf, Samples};
 
     fn test_header() -> Header {
         Header::builder()

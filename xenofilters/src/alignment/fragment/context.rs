@@ -10,12 +10,7 @@ pub(super) struct WindowCtx {
 }
 
 impl WindowCtx {
-    pub(super) fn new(
-        dvnt_i: usize,
-        seg_i: usize,
-        ref_start: usize,
-        ref_end: usize,
-    ) -> Self {
+    pub(super) fn new(dvnt_i: usize, seg_i: usize, ref_start: usize, ref_end: usize) -> Self {
         Self {
             dvnt_i,
             seg_i,

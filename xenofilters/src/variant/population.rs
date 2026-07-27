@@ -1,8 +1,8 @@
-use crate::variant::Variant;
 use crate::Error;
-use noodles::vcf::variant::record_buf::info::field::{value::Array::Float, Value};
-use noodles::vcf::variant::record_buf::RecordBuf;
+use crate::variant::Variant;
 use noodles::vcf::Header;
+use noodles::vcf::variant::record_buf::RecordBuf;
+use noodles::vcf::variant::record_buf::info::field::{Value, value::Array::Float};
 
 #[derive(Debug, Clone)]
 pub(crate) struct Population {
@@ -82,12 +82,12 @@ pub(crate) fn parse_population_record(
 mod min_af_cutoff_tests {
     use super::*;
     use noodles::core::Position;
-    use noodles::vcf::header::record::value::{map::Contig, Map};
-    use noodles::vcf::variant::record_buf::info::field::{
-        value::Array as InfoArray, Value as InfoValue,
-    };
-    use noodles::vcf::variant::record_buf::RecordBuf;
     use noodles::vcf::Header;
+    use noodles::vcf::header::record::value::{Map, map::Contig};
+    use noodles::vcf::variant::record_buf::RecordBuf;
+    use noodles::vcf::variant::record_buf::info::field::{
+        Value as InfoValue, value::Array as InfoArray,
+    };
 
     /// Minimal single-contig header sufficient for `parse_variant_core`'s
     /// `header.contigs().get_index_of(&chrom)` lookup. Not used for real

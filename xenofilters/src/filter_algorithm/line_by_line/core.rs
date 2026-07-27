@@ -8,7 +8,7 @@ use crate::{
     Error,
     alignment::{FragmentState, SimpleRec},
     aln_stream::AlignmentStream,
-    config::{run_config::RunConfig, args::resolve_threshold},
+    config::{args::resolve_threshold, run_config::RunConfig},
     filter_algorithm::line_by_line::ChimericThresholds,
     penalty::Penalty,
     progress::ProgressReporter,
@@ -148,7 +148,8 @@ impl<R: SimpleRec> LineByLine<R> {
             true => is_secondary,
             false => always_false,
         };
-        let ambiguous_log_threshold = resolve_threshold(config.scoring.ambiguous_threshold, config.is_pass2);
+        let ambiguous_log_threshold =
+            resolve_threshold(config.scoring.ambiguous_threshold, config.is_pass2);
 
         let aln_len = aln.len();
         for i in 0..aln_len {

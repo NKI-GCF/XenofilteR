@@ -4,11 +4,11 @@
 //! bgzf BAM readers behind a uniform interface.
 
 use noodles::bam::{io::Reader as BamReader, record::Record};
-use noodles::bgzf::{self, io::MultithreadedReader, VirtualPosition};
+use noodles::bgzf::{self, VirtualPosition, io::MultithreadedReader};
 use noodles::sam::Header;
+use rayon::ThreadPool;
 use std::fs::File;
 use std::sync::Arc;
-use rayon::ThreadPool;
 
 /// Wraps both bgzf reader variants in a zero-cost internal enum.
 ///

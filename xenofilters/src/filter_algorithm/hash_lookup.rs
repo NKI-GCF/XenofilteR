@@ -20,8 +20,9 @@ pub(crate) mod stage;
 #[cfg(test)]
 pub(crate) mod tests;
 
-use crate::alignment::{mate_slot, segment_id, Fragment, MateKind, MdCigFlags, SimpleRec};
-use crate::alignment::{pre_assess_scoring_records, PreAssessResult};
+use crate::Error;
+use crate::alignment::{Fragment, MateKind, MdCigFlags, SimpleRec, mate_slot, segment_id};
+use crate::alignment::{PreAssessResult, pre_assess_scoring_records};
 use crate::aln_stream::AlignmentStream;
 use crate::config::args::resolve_threshold;
 use crate::config::run_config::RunConfig;
@@ -31,15 +32,14 @@ use crate::penalty::Penalty;
 use crate::region::tabix_query::{TabixBed, TabixVcf};
 use crate::region::{ScoreFn, ScoredRegions};
 use crate::variant::FragEvalVec;
-use crate::Error;
 use assemble::{
     EarlyKind, FragmentTable, MappedRecord, PendingFragment, RecordKind, StreamKind, insert,
     new_fragment_table,
 };
 use noodles::core::Position;
+use noodles::sam::alignment::record::Cigar as CigarTrait;
 use noodles::sam::alignment::record::cigar::op::{Kind, Op};
 use noodles::sam::alignment::record::data::field::{Tag, Value};
-use noodles::sam::alignment::record::Cigar as CigarTrait;
 use noodles::sam::alignment::record_buf::{
     Cigar, Data, QualityScores, RecordBuf, Sequence, data::field::Value as BufValue,
 };

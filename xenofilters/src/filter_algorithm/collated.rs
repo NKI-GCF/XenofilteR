@@ -150,13 +150,15 @@ impl<R: SimpleRec> CollatedMatcher<R> {
                 .saturating_sub(1);
             let end = start + rec.cigar().as_ref().len();
             if let Some(b) = bed
-                && b.any_overlap(ref_id, start, end, is_rev)? {
-                    return Ok(true);
-                }
+                && b.any_overlap(ref_id, start, end, is_rev)?
+            {
+                return Ok(true);
+            }
             if let Some(v) = vcf
-                && v.overlaps(ref_id, start, end)? {
-                    return Ok(true);
-                }
+                && v.overlaps(ref_id, start, end)?
+            {
+                return Ok(true);
+            }
         }
         Ok(false)
     }
@@ -188,7 +190,12 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         // must be scored via NW to properly account for variant rescue).
         if !a_needs_scoring
             && !b_needs_scoring
-            && let PreAssessResult::EarlyDecision(pa_ord) = pre_assess_alignments(&mcfs1, &mcfs2, &self.penalties, self.ambiguous_log_threshold)
+            && let PreAssessResult::EarlyDecision(pa_ord) = pre_assess_alignments(
+                &mcfs1,
+                &mcfs2,
+                &self.penalties,
+                self.ambiguous_log_threshold,
+            )
         {
             drop(mcfs1);
             drop(mcfs2);

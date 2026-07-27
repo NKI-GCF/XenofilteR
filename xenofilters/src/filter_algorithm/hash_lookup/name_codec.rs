@@ -1,7 +1,7 @@
 // src/filter_algorithm/hash_lookup/name_codec.rs
 use crate::aln_stream::AlignmentStream;
-use crate::config::{run_config::RunConfig, NameEncoderKind};
-use crate::{ensure, Error};
+use crate::config::{NameEncoderKind, run_config::RunConfig};
+use crate::{Error, ensure};
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::SmallVec;
 

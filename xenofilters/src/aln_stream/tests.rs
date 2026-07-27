@@ -1,8 +1,8 @@
 use super::*;
 use crate::config::run_config::RunConfig;
 use crate::tests::create_record;
-use noodles::sam::header::record::value::map::Program;
 use noodles::sam::header::record::value::Map;
+use noodles::sam::header::record::value::map::Program;
 use std::cell::RefCell;
 use std::rc::Rc;
 

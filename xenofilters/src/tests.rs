@@ -10,12 +10,12 @@ pub(crate) use aln_stream::tests::*;
 use noodles::core::Position;
 use noodles::sam::alignment::{
     record::data::field::Tag,
-    record_buf::{data::field::Value, Data},
+    record_buf::{Data, data::field::Value},
 };
 use noodles::sam::alignment::{
     record::{
-        cigar::{op::Kind, Op},
         Flags,
+        cigar::{Op, op::Kind},
     },
     record_buf::{Cigar, QualityScores, RecordBuf, Sequence},
 };

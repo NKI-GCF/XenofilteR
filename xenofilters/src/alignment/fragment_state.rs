@@ -1,13 +1,13 @@
-use crate::alignment::mate_kind::{mate_slot, segment_id, MateClassifiable, MateKind};
-use crate::alignment::{tie_break_bool, Fragment, MdCigFlags, SimpleRec};
-use crate::filter_algorithm::line_by_line::{Scratch, READ_CT};
+use crate::Error;
+use crate::alignment::mate_kind::{MateClassifiable, MateKind, mate_slot, segment_id};
+use crate::alignment::{Fragment, MdCigFlags, SimpleRec, tie_break_bool};
+use crate::filter_algorithm::line_by_line::{READ_CT, Scratch};
 use crate::penalty::Penalty;
 use crate::region::{PositiveRegions, ScoreFn};
 use crate::variant::{FragEvalVec, StoreTrait};
-use crate::Error;
 use noodles::sam::alignment::record::Cigar;
 use noodles::sam::alignment::record::Flags;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use std::cmp::Ordering;
 
 #[derive(PartialEq, Debug)]

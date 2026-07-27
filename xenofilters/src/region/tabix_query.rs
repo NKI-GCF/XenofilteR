@@ -8,10 +8,10 @@
 //! - BED query: use tabix index chunks to check overlap; parse overlapping records.
 //! - VCF indexed reader: `vcf::io::IndexedReader` provides `.query(&header, &region)`.
 
-use crate::region::ScoreFn;
 use crate::Error;
+use crate::region::ScoreFn;
 use noodles::bgzf;
-use noodles::core::{region::Interval, Position, Region};
+use noodles::core::{Position, Region, region::Interval};
 use noodles::csi::BinningIndex;
 use noodles::{tabix, vcf};
 use std::cell::RefCell;
@@ -101,23 +101,24 @@ impl TabixScored {
                 if cols.len() >= 3
                     && let (Ok(rec_start), Ok(rec_end)) =
                         (cols[1].parse::<usize>(), cols[2].parse::<usize>())
-                        && rec_start < end && rec_end > start {
-                            let score = cols
-                                .get(4)
-                                .and_then(|s| s.parse::<f64>().ok())
-                                .unwrap_or(1000.0);
-                            let strand = cols
-                                .get(5)
-                                .and_then(|s| s.as_bytes().first().copied())
-                                .map(crate::region::scored::Strand::from_byte)
-                                .unwrap_or(crate::region::scored::Strand::Any);
-                            if strand.matches(read_is_reverse) {
-                                let overlap_bases =
-                                    rec_end.min(end).saturating_sub(rec_start.max(start));
-                                let region_len = rec_end.saturating_sub(rec_start).max(1);
-                                total += score_fn.apply(score, overlap_bases, region_len);
-                            }
-                        }
+                    && rec_start < end
+                    && rec_end > start
+                {
+                    let score = cols
+                        .get(4)
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(1000.0);
+                    let strand = cols
+                        .get(5)
+                        .and_then(|s| s.as_bytes().first().copied())
+                        .map(crate::region::scored::Strand::from_byte)
+                        .unwrap_or(crate::region::scored::Strand::Any);
+                    if strand.matches(read_is_reverse) {
+                        let overlap_bases = rec_end.min(end).saturating_sub(rec_start.max(start));
+                        let region_len = rec_end.saturating_sub(rec_start).max(1);
+                        total += score_fn.apply(score, overlap_bases, region_len);
+                    }
+                }
 
                 if past_chunk {
                     break;
