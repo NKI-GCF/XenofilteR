@@ -10,11 +10,11 @@ use std::collections::HashMap;
 use std::path::Path;
 
 #[derive(Serialize)]
-struct MultiQcData<'a> {
+struct MultiQcData {
     id: &'static str,
     plot_type: &'static str,
     pconfig: PConfig,
-    data: HashMap<&'a str, StreamStats>,
+    data: HashMap<String, StreamStats>,
 }
 
 #[derive(Serialize)]
@@ -69,24 +69,20 @@ pub(crate) fn write_stats(
     labels: &[String],
     sample_name: &str,
 ) -> Result<(), Error> {
-    // Rebuild with owned strings to satisfy lifetime:
-    let owned: Vec<(String, StreamStats)> = (0..stream_count)
+    let data: HashMap<String, StreamStats> = (0..stream_count)
         .map(|nr| {
             let label = labels.get(nr).map(|s| s.as_str()).unwrap_or("unknown");
             let key = format!("{sample_name}:stream_{nr}:{label}");
             (key, StreamStats::from_counters(counters, nr))
         })
         .collect();
-
-    // Re-derive correctly:
-    let data_map: HashMap<String, StreamStats> = owned.into_iter().collect();
-    let final_doc = serde_json::json!({
-        "id": "xenofilters",
-        "plot_type": "generalstats",
-        "pconfig": { "namespace": "xenofilters" },
-        "data": data_map,
-    });
+    let doc = MultiQcData {
+        id: "xenofilters",
+        plot_type: "generalstats",
+        pconfig: PConfig { namespace: "xenofilters" },
+        data,
+    };
     let f = std::fs::File::create(path)?;
-    serde_json::to_writer_pretty(f, &final_doc)?;
+    serde_json::to_writer_pretty(f, &doc)?;
     Ok(())
 }

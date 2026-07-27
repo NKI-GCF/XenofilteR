@@ -560,6 +560,30 @@ impl<R: SimpleRec> HashLookup<R> {
         penalty += Fragment::new(&self.penalties, seg, mcfs)?
             .score(&mut self.scratch, &mut dvnt)
             .map_err(|e| Error::ScoreStreamError(aln_idx, e.to_string()))?;
+
+        if let Some((regions, score_fn)) = self.positive[aln_idx].as_ref().map(|(r, f)| (r, *f)) {
+            let bonus: f64 = bufs
+                .iter()
+                .filter(|b| !b.flags().is_secondary() && !b.flags().is_supplementary())
+                .map(|b| {
+                    let is_rev = b.flags().is_reverse_complemented();
+                    let ref_id = b.reference_sequence_id().unwrap_or(usize::MAX);
+                    let start = b
+                        .alignment_start()
+                        .map(|p| p.get().saturating_sub(1))
+                        .unwrap_or(0);
+                    let end = start + b.cigar().len();
+                    regions
+                        .overlapping(ref_id, start, end, is_rev)
+                        .map(|region| {
+                            let ob = region.overlap_bases(start, end);
+                            score_fn.apply(region.score, ob, region.len())
+                        })
+                        .sum::<f64>()
+                })
+                .sum();
+            penalty += bonus;
+        }
         Ok(penalty)
     }
 
