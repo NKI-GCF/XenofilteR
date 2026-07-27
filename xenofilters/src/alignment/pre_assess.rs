@@ -778,7 +778,7 @@ mod hashlookup_threshold_floor_tests {
     use std::f64::consts::LN_10;
 
     fn cigar_bytes(len: u32) -> Vec<u8> {
-        ((len << 4)).to_le_bytes().to_vec()
+        (len << 4).to_le_bytes().to_vec()
     }
 
     fn mapped(cigar_len: u32, md: &[u8], supp_count: usize) -> RecordKind {

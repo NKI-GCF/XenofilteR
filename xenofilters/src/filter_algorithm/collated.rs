@@ -149,16 +149,14 @@ impl<R: SimpleRec> CollatedMatcher<R> {
                 .get()
                 .saturating_sub(1);
             let end = start + rec.cigar().as_ref().len();
-            if let Some(b) = bed {
-                if b.any_overlap(ref_id, start, end, is_rev)? {
+            if let Some(b) = bed
+                && b.any_overlap(ref_id, start, end, is_rev)? {
                     return Ok(true);
                 }
-            }
-            if let Some(v) = vcf {
-                if v.overlaps(ref_id, start, end)? {
+            if let Some(v) = vcf
+                && v.overlaps(ref_id, start, end)? {
                     return Ok(true);
                 }
-            }
         }
         Ok(false)
     }
