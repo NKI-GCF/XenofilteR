@@ -80,16 +80,16 @@ pub struct ScoringArgs {
     #[arg(long, default_value = "illumina", help_heading = "Scoring")]
     pub error_model: ErrorModel,
 
-    /// Mismatch penalty (PHRED). Default: 4.0.
-    #[arg(short = 'm', long, default_value = "4.0", help_heading = "Scoring")]
+    /// Mismatch penalty (PHRED). Default: from error model: 4.0 for Illumina.
+    #[arg(short = 'm', long, default_value_t = f64::INFINITY, help_heading = "Scoring")]
     pub mismatch_penalty: f64,
 
-    /// Gap open penalty (PHRED). Default: 6.0.
-    #[arg(short = 'g', long, default_value = "6.0", help_heading = "Scoring")]
+    /// Gap open penalty (PHRED). Default: from error model: 6.0 for Illumina.
+    #[arg(short = 'g', long, default_value_t = f64::INFINITY, help_heading = "Scoring")]
     pub gap_open: f64,
 
-    /// Gap extend penalty (PHRED). Default: 1.0.
-    #[arg(short = 'e', long, default_value = "1.0", help_heading = "Scoring")]
+    /// Gap extend penalty (PHRED). Default: from error model: 1.0 for Illumina.
+    #[arg(short = 'e', long, default_value_t = f64::INFINITY, help_heading = "Scoring")]
     pub gap_extend: f64,
 
     /// A supplemnetary read counts as a gap with bases. Default: 20.
@@ -341,10 +341,23 @@ impl ScoringArgs {
     }
 
     pub fn to_penalty(&self) -> Penalty {
+        let gap_open = match self.gap_open {
+            f64::INFINITY => self.error_model.default_gap_open(),
+            _ => self.gap_open,
+        };
+        let gap_extend = match self.gap_extend {
+            f64::INFINITY => self.error_model.default_gap_extend(),
+            _ => self.gap_extend,
+        };
+        let mismatch_penalty = match self.mismatch_penalty {
+            f64::INFINITY => self.error_model.default_mismatch_penalty(),
+            _ => self.mismatch_penalty,
+        };
+
         Penalty::build(
-            self.gap_open,
-            self.gap_extend,
-            self.mismatch_penalty,
+            gap_open,
+            gap_extend,
+            mismatch_penalty,
             self.chimeric_junction_bases,
             self.error_model,
             self.min_rescue_p_variant,
