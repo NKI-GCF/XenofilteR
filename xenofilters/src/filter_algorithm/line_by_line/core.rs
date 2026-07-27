@@ -31,7 +31,6 @@ pub(crate) const MAX_STREAMS: usize = 32;
 ///   nr*4+2  ambiguous (includes unmapped-ambiguous when configured)
 ///   nr*4+3  chimeric  (XC:Z: tagged, both streams count)
 pub(crate) const COUNTER_STRIDE: usize = 4;
-pub(crate) const COUNTER_LEN: usize = MAX_STREAMS * COUNTER_STRIDE;
 
 pub(crate) type RecordEvalFn = fn(&dyn Record) -> Result<bool, Error>;
 pub(crate) type FragmentBuffer<R> = SmallVec<[FragmentState<R>; 2]>;
@@ -201,20 +200,5 @@ impl<R: SimpleRec> LineByLine<R> {
             region_score_fn: config.variants.region_score_fn,
             chimeric_thresholds: config.chimeric_thresholds,
         })
-    }
-}
-
-#[cfg(test)]
-fn debug_new_qname_fn<R: SimpleRec>() -> fn(&FragmentBuffer<R>, &[u8]) -> Option<bool> {
-    |best: &FragmentBuffer<R>, qname2: &[u8]| {
-        if let Some(q1) = best.first().map(|b| b.first_qname())
-            && (q1.ends_with(b"/1") || q1.ends_with(b"/2"))
-        {
-            return best
-                .first()
-                .map(|b| b.first_qname())
-                .map(|q1| q1[..q1.len() - 2] != qname2[..qname2.len() - 2]);
-        }
-        best.first().map(|b| b.first_qname()).map(|q1| q1 != qname2)
     }
 }

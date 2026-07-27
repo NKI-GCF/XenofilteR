@@ -1,7 +1,7 @@
 // src/variant/parse_core.rs
 use crate::Error;
 use noodles::vcf::{
-    variant::record::{AlternateBases, ReferenceBases},
+    variant::record::AlternateBases,
     variant::RecordBuf,
     Header,
 };

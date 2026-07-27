@@ -1,6 +1,5 @@
 use crate::variant::Variant;
 use crate::Error;
-use noodles::vcf::variant::record::AlternateBases;
 use noodles::vcf::variant::record_buf::samples::sample::Value;
 use noodles::vcf::variant::record_buf::RecordBuf;
 use noodles::vcf::Header;

@@ -16,7 +16,7 @@ use noodles::csi::BinningIndex;
 use noodles::{tabix, vcf};
 use std::cell::RefCell;
 use std::fs::File;
-use std::io::{BufRead, Seek};
+use std::io::BufRead;
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use vcf::io::IndexedReader;
