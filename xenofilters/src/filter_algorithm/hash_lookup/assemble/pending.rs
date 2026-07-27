@@ -78,17 +78,17 @@ impl PendingFragment {
 pub(crate) fn insert(
     table: &mut FragmentTable,
     rec: RecordKind,
-    name: String,
+    key: Box<[u8]>,
     nr: usize,
     seq_counter: &mut u64,
     bed: Option<&AmbiguousRegions>,
     vcf: Option<&SegregateVariants>,
-) -> Result<(String, bool), Error> {
-    let entry = table.entry(name.clone()).or_insert_with(|| {
+) -> Result<(Box<[u8]>, bool), Error> {
+    let entry = table.entry(key.clone()).or_insert_with(|| {
         let sn = *seq_counter;
         *seq_counter += 1;
         PendingFragment::new(sn)
     });
     let complete = entry.push(rec, nr, bed, vcf)?;
-    Ok((name, complete))
+    Ok((key, complete))
 }

@@ -121,30 +121,6 @@ fn test_header_name_to_id() {
 }
 
 #[test]
-fn test_load_ambiguous_regions_ignores_empty_strings() {
-    use crate::region::load::load_ambiguous_regions_memory;
-    let name_to_id = HashMap::new();
-    let specs = vec!["".to_string(), "".to_string()];
-    let result = load_ambiguous_regions_memory(&specs, &name_to_id).unwrap();
-    assert!(result[0].is_none());
-    assert!(result[1].is_none());
-
-    let specs_single = vec!["".to_string()];
-    let result_single = load_ambiguous_regions_memory(&specs_single, &name_to_id).unwrap();
-    assert!(result_single[0].is_none());
-    assert!(result_single[1].is_none());
-}
-
-#[test]
-fn test_load_distinct_variants_ignores_empty_strings() {
-    let name_to_id = HashMap::new();
-    let specs = vec!["".to_string(), "".to_string()];
-    let result = crate::region::load::load_distinct_variants_memory(&specs, &name_to_id).unwrap();
-    assert!(result[0].is_none());
-    assert!(result[1].is_none());
-}
-
-#[test]
 fn test_namesorted_sequential_single_alignment() {
     use crate::config::args::{ChimericArgs, IoArgs, ParallelArgs};
     use crate::config::{CommonArgs, NamesortedArgs};

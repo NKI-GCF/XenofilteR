@@ -46,6 +46,7 @@ use noodles::sam::alignment::record_buf::{
 use smallvec::SmallVec;
 use stage::StagedOutput;
 use std::cmp::Ordering;
+use name_codec::NameEncoder;
 
 // ---------------------------------------------------------------------------
 // ScoredFragment
@@ -84,6 +85,7 @@ pub(crate) struct HashLookup<R: SimpleRec> {
     bed: [Option<AmbiguousRegions>; 2],
     vcf: [Option<SegregateVariants>; 2],
     bisulfite: bool,
+    encoder: Box<dyn NameEncoder>,
 }
 
 impl<R: SimpleRec> HashLookup<R> {
@@ -93,6 +95,7 @@ impl<R: SimpleRec> HashLookup<R> {
         bed: [Option<AmbiguousRegions>; 2],
         vcf: [Option<SegregateVariants>; 2],
     ) -> Result<HashLookup<RecordBuf>, Error> {
+        let encoder = crate::filter_algorithm::hash_lookup::name_codec::make_encoder(args, &aln)?;
         let ambiguous_log_threshold = resolve_threshold(args.scoring.ambiguous_threshold, false);
         Ok(HashLookup {
             aln,
@@ -108,6 +111,7 @@ impl<R: SimpleRec> HashLookup<R> {
             bed,
             vcf,
             bisulfite: args.scoring.bisulfite,
+            encoder,
         })
     }
 
@@ -150,7 +154,7 @@ impl<R: SimpleRec> HashLookup<R> {
         Ok(())
     }
 
-    fn next_scoring_record(&mut self, nr: usize) -> Result<Option<(String, RecordKind)>, Error> {
+    fn next_scoring_record(&mut self, nr: usize) -> Result<Option<(Box<[u8]>, RecordKind)>, Error> {
         let rec = match self.aln[nr].next_rec()? {
             Some(r) => r,
             None => return Ok(None),
@@ -160,7 +164,7 @@ impl<R: SimpleRec> HashLookup<R> {
             .name()
             .map(|n| n.as_ref())
             .ok_or(Error::RecordHasNoReadName)?;
-        let key = String::from_utf8_lossy(raw_name).to_string();
+        let key = self.encoder.encode(raw_name);
 
         let flags = rec.flags()?;
         let virtual_offset = self.record_counters[nr];
@@ -266,7 +270,7 @@ impl<R: SimpleRec> HashLookup<R> {
         )))
     }
 
-    fn ingest(&mut self, key: String, rec: RecordKind, nr: usize) -> Result<(), Error> {
+    fn ingest(&mut self, key: Box<[u8]>, rec: RecordKind, nr: usize) -> Result<(), Error> {
         let bed = self.bed[nr].as_ref().filter(|b| !b.is_empty());
         let vcf = self.vcf[nr].as_ref().filter(|v| !v.is_empty());
         let (key, complete) = insert(
