@@ -111,12 +111,12 @@ pub struct ScoringArgs {
 
     // TODO: if variants are below this, skip them at load time.
     /// Minimum p_variant required for a variant to contribute rescue
-    /// evidence, in addition to the structural requirement p_variant > 0.5.
-    /// Default 0.5 (no additional gate beyond the structural minimum).
-    /// Raise this (e.g. 0.9) to require materially stronger evidence before
+    /// evidence, in addition to the structural requirement p_variant > 0.01.
+    /// Default 0.01 (no additional gate beyond the structural minimum).
+    /// Raise this (e.g. 0.05) to require materially stronger evidence before
     /// a variant is allowed to influence a fragment's score -- analogous to
     /// a significance cutoff on top of the sign requirement.
-    #[arg(long, default_value_t = 0.5, help_heading = "Variants")]
+    #[arg(long, default_value_t = 0.01, help_heading = "Variants")]
     pub min_rescue_p_variant: f64,
 }
 
