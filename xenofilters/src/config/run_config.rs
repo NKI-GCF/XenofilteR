@@ -1,14 +1,14 @@
 use crate::{
-    Error,
     aln_stream::{AlignmentStream, AlnStream},
     config::{
-        CommonArgs, MatchingAlgorithm, NameEncoderKind,
         args::{ChimericArgs, IoArgs, RelatedArgs, ScoringArgs, SegregateArgs},
+        CommonArgs, MatchingAlgorithm, NameEncoderKind,
     },
     filter_algorithm::line_by_line::ChimericThresholds,
+    Error,
 };
 use noodles::sam::alignment::record_buf::RecordBuf;
-use smallvec::{SmallVec, smallvec};
+use smallvec::{smallvec, SmallVec};
 use std::num::NonZeroUsize;
 use std::ops::RangeInclusive;
 /// Single flat struct consumed by all three engines. No Args-struct

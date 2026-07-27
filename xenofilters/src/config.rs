@@ -2,13 +2,13 @@ pub mod args;
 pub(crate) mod run_config;
 
 use crate::{
-    Error,
     config::args::SegregateArgs,
     config::run_config::RunConfig,
     file_spec::FileSpec,
     filter_algorithm::{
         line_by_line::MAX_STREAMS, strain::StrainArgs, viral_integration::ViralIntegrationArgs,
     },
+    Error,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
@@ -188,6 +188,17 @@ impl NamesortedArgs {
     }
 }
 
+fn build_segregate(
+    ambiguous_regions: Vec<FileSpec>,
+    distinct_variants: Vec<FileSpec>,
+    positive_regions: &[FileSpec],
+) -> Option<SegregateArgs> {
+    (!distinct_variants.is_empty() || !positive_regions.is_empty()).then_some(SegregateArgs {
+        ambiguous_regions,
+        distinct_variants,
+    })
+}
+
 #[derive(Args, Clone, Debug)]
 pub(crate) struct HashlookupArgs {
     #[command(flatten)]
@@ -212,16 +223,11 @@ pub(crate) struct HashlookupArgs {
 
 impl HashlookupArgs {
     pub(crate) fn into_run_config(self) -> Result<RunConfig, Error> {
-        let segregate = if self.distinct_variants.is_empty()
-            && self.common.variants.positive_regions.is_empty()
-        {
-            None
-        } else {
-            Some(SegregateArgs {
-                ambiguous_regions: self.ambiguous_regions,
-                distinct_variants: self.distinct_variants,
-            })
-        };
+        let segregate = build_segregate(
+            self.ambiguous_regions,
+            self.distinct_variants,
+            &self.common.variants.positive_regions,
+        );
         RunConfig::new(
             self.common,
             None,
@@ -253,16 +259,11 @@ pub(crate) struct CollatedArgs {
 
 impl CollatedArgs {
     pub(crate) fn into_run_config(self) -> Result<RunConfig, Error> {
-        let segregate = if self.distinct_variants.is_empty()
-            && self.common.variants.positive_regions.is_empty()
-        {
-            None
-        } else {
-            Some(SegregateArgs {
-                ambiguous_regions: self.ambiguous_regions,
-                distinct_variants: self.distinct_variants,
-            })
-        };
+        let segregate = build_segregate(
+            self.ambiguous_regions,
+            self.distinct_variants,
+            &self.common.variants.positive_regions,
+        );
         RunConfig::new(self.common, None, None, 1, 2..=2, 1, segregate)
     }
 }
