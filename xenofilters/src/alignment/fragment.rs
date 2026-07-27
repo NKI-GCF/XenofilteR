@@ -160,7 +160,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             }
             let seg_ref_start = self.seg_start[prior_seg_i];
             let seg_ref_end = seg_ref_start + self.seg[prior_seg_i].cigar().len();
-            let ctx = WindowCtx::new(i, prior_seg_i, seg_ref_start, seg_ref_end, 0.0);
+            let ctx = WindowCtx::new(i, prior_seg_i, seg_ref_start, seg_ref_end);
             self.evaluate_variants_in_window(scratch, dvnt, finished, ctx)?;
         }
 
@@ -220,7 +220,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
                         self.pen.log_likelihood_bisulfite_base[self.q(self.seg_i, self.nt_i)?];
                 }
             }
-            let ctx = WindowCtx::new(i, self.seg_i, ref_start, self.refpos, ref_score);
+            let ctx = WindowCtx::new(i, self.seg_i, ref_start, self.refpos);
             self.evaluate_variants_in_window(scratch, dvnt, finished, ctx)?;
             score += ref_score;
         }
@@ -233,7 +233,7 @@ impl<'r, R: SimpleRec> Fragment<'r, R> {
             }
             let seg_ref_start = self.seg_start[next_seg_i];
             let seg_ref_end = seg_ref_start + self.seg[next_seg_i].sequence().len();
-            let ctx = WindowCtx::new(i, next_seg_i, seg_ref_start, seg_ref_end, 0.0);
+            let ctx = WindowCtx::new(i, next_seg_i, seg_ref_start, seg_ref_end);
             self.evaluate_variants_in_window(scratch, dvnt, finished, ctx)?;
         }
 

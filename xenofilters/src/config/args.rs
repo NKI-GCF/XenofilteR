@@ -71,8 +71,6 @@ pub(crate) struct IoArgs {
     // Mutable state set during stream init -- not CLI args.
     #[arg(skip)]
     pub(crate) is_pass2: bool,
-    #[arg(skip)]
-    pub(crate) is_paired: Option<bool>,
 }
 
 /// Scoring flags, shared everywhere.

@@ -7,7 +7,6 @@ pub(super) struct WindowCtx {
     pub(super) seg_i: usize,
     pub(super) ref_start: usize,
     pub(super) ref_end: usize,
-    pub(super) ref_score: f64,
 }
 
 impl WindowCtx {
@@ -16,14 +15,12 @@ impl WindowCtx {
         seg_i: usize,
         ref_start: usize,
         ref_end: usize,
-        ref_score: f64,
     ) -> Self {
         Self {
             dvnt_i,
             seg_i,
             ref_start,
             ref_end,
-            ref_score,
         }
     }
 

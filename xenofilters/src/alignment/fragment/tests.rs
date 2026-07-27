@@ -558,7 +558,7 @@ fn test_score_variants_in_window_boundaries() -> Result<(), Error> {
     let mut scratch = Scratch::new();
 
     // Create a WindowCtx that covers [1, 6)
-    let ctx = WindowCtx::new(0, 0, 1, 6, 0.0);
+    let ctx = WindowCtx::new(0, 0, 1, 6);
 
     fragment.evaluate_variants_in_window(&mut scratch, &mut dvnt, &mut finished, ctx)?;
 

@@ -18,9 +18,6 @@ pub struct MdCigFlags<'r> {
     /// Read sequence (ASCII bases). `None` when bisulfite mode is off or
     /// the sequence is unavailable (hard-clipped supplementary).
     seq: Option<Vec<u8>>,
-    /// Whether this record is on the reverse strand. Used for strand-specific
-    /// bisulfite conversion detection (C->T forward, G->A reverse).
-    is_reverse: bool,
 }
 
 impl<'r> MdCigFlags<'r> {
@@ -90,7 +87,6 @@ impl<'r> MdCigFlags<'r> {
             cig,
             supp_count,
             seq,
-            is_reverse: flags.is_reverse_complemented(),
         })
     }
 
