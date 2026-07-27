@@ -13,28 +13,18 @@
 pub(crate) mod corrected;
 pub(crate) mod impls;
 
-use crate::{
-    Error,
-    variant::{
-        Variant,
-        population::{Population, parse_population_record},
-        sample::{Sample as SampleVariant, parse_sample_record},
-        store::Store,
-    },
-};
+use crate::Error;
 use fasta::io::IndexedReader;
 use noodles::{
     core::Region,
     fasta, vcf,
     vcf::variant::RecordBuf,
-    vcf::variant::record::{AlternateBases, ReferenceBases},
 };
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::io::{BufRead, Seek};
 use std::path::Path;
 use std::str::FromStr;
-use tracing::{debug, warn};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -217,11 +207,6 @@ fn left_normalize(
 
     (pos, r, a)
 }
-
-#[inline(always)]
-const fn prev_chrom_base_to_u8(b: u8) -> u8 {
-    b
-} // identity; name for clarity
 
 /// Attempt one right-shift of a deletion.
 ///

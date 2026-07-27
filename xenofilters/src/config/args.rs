@@ -94,10 +94,6 @@ pub struct ScoringArgs {
     #[arg(short = 'e', long, default_value = "1.0", help_heading = "Scoring")]
     pub gap_extend: f64,
 
-    /// Clipping penalty (PHRED). Default: 5.0.
-    #[arg(short = 'c', long, default_value_t = 5.0, help_heading = "Scoring")]
-    pub clipping_penalty: f64,
-
     /// A supplemnetary read counts as a gap with bases. Default: 20.
     #[arg(short = 'J', long, default_value_t = 20, help_heading = "Scoring")]
     pub chimeric_junction_bases: u32,
