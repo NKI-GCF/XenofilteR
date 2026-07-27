@@ -434,25 +434,6 @@ pub(crate) fn setup_mock_streams() -> SmallVec<[Box<dyn AlignmentStream<RecordBu
     ]
 }
 
-fn setup_mock_streams_r4() -> SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> {
-    let stream1 = MockStream::new(
-        0,
-        vec![
-            create_record(b"R4", "*", &[], &[], "10", false).unwrap(), // unmapped => discarded
-        ],
-    );
-    let stream2 = MockStream::new(
-        1,
-        vec![
-            create_record(b"R4", "5M5S", &[], &[], "5", false).unwrap(), // mismatch => out
-        ],
-    );
-    smallvec![
-        Box::new(stream1) as Box<dyn AlignmentStream<RecordBuf>>,
-        Box::new(stream2) as Box<dyn AlignmentStream<RecordBuf>>
-    ]
-}
-
 fn setup_mock_streams_observed_examples() -> SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]> {
     // human
     // FRAGMENT1/1        100M    MD:Z:86T13

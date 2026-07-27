@@ -69,46 +69,6 @@ impl Default for BamOutput {
     }
 }
 
-// -- MergedOutput --------------------------------------------------------------
-
-/// A single BAM file that receives winners, discarded reads, and ambiguous reads
-/// from all streams, distinguished by `RG:Z` tag suffixes.
-///
-/// Created when `--merged-output` is supplied.  The header it was opened with
-/// already contains the expanded `@RG` lines (see [`crate::bam::expand_header`]).
-///
-/// The `Arc` wrapper lets `LineByLine` hold one `MergedOutput` and hand
-/// references to the IO helpers that need to call `write_alignment_record`.
-#[derive(Default)]
-pub(crate) struct MergedOutput {
-    writer: BamOutput,
-    /// The expanded header (with `_xenofilt` / `_xenoambig` RG groups).
-    header: Header,
-}
-
-impl MergedOutput {
-    pub(crate) fn new(
-        path: &Path,
-        header: Header, // already expanded by expand_header()
-        add_pg: bool,
-        threads: usize,
-    ) -> Result<Self, Error> {
-        let mut hdr = header;
-        if add_pg {
-            add_pg_line(&mut hdr)?;
-        }
-        let writer = open_writer(path, &hdr, threads)?;
-        Ok(Self {
-            writer,
-            header: hdr,
-        })
-    }
-
-    pub(crate) fn write_alignment_record(&mut self, rec: &RecordBuf) -> std::io::Result<()> {
-        self.writer.write_alignment_record(&self.header, rec)
-    }
-}
-
 // -- Public constructors -------------------------------------------------------
 
 pub(crate) fn path_unicode_ok<'a, P: 'a + AsRef<Path>>(path: P) -> Result<(), Error> {

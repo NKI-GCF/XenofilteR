@@ -10,26 +10,9 @@ use crate::filter_algorithm::line_by_line::apply_decision_tag;
 use noodles::sam::alignment::record_buf::RecordBuf;
 use smallvec::SmallVec;
 use std::collections::BTreeMap;
-
-// CONCURRENCY STUB -- HashLookup pass-2 seek-IO thread
-//
-// In `emit_scored`, each `fetch_by_virtual_offset` call serialises on disk
-// seeks.  To overlap seeks with scoring work, offload to a dedicated thread:
-//
-//   let (seek_tx, seek_rx) =
-//       crossbeam_channel::unbounded::<(usize, u64, Sender<RecordBuf>)>();
-//   thread::spawn(move || {
-//       for (stream_nr, voffset, reply_tx) in seek_rx {
-//           let rec = aln[stream_nr].fetch_by_virtual_offset(voffset).unwrap();
-//           let _ = reply_tx.send(rec);
-//       }
-//   });
-//
-// Writers stay on the IO thread (no Mutex); the seek thread owns BAM handles.
-// Bounded work-channel capacity provides back-pressure.
-//
-// N-STREAM NOTE: `FragmentTable` memory scales as O(in-flight * streams).
-// Beyond 2 streams the table can exhaust RAM; profile before enabling.
+// TODO: overlap pass-2 seeks with scoring via a dedicated seek-IO thread +
+// bounded channel (see collated.rs for the same pattern). Writers must stay on
+// the IO thread (no Mutex). Watch FragmentTable memory beyond 2 streams.
 pub(crate) struct StagedOutput {
     next_emit: u64,
     pending: BTreeMap<u64, ScoredFragment>,
@@ -173,21 +156,6 @@ mod ordering_tests {
         );
         smallvec![Box::new(s0) as Box<dyn AlignmentStream<RecordBuf>>]
     }
-
-    fn names(_aln: &SmallVec<[Box<dyn AlignmentStream<RecordBuf>>; 2]>) -> Vec<String> {
-        // Downcast not available; instead re-derive via a second accessor path.
-        // Simplify by asserting count only if downcasting is impractical --
-        // see note below on refactor to expose written() through the trait
-        // or via a concrete type in tests.
-        unimplemented!()
-    }
-
-    // NOTE: because `aln` is `SmallVec<[Box<dyn AlignmentStream<R>>; 2]>`,
-    // inspecting `written()` after passing ownership through requires
-    // downcasting or restructuring the test to hold the MockStream directly
-    // and pass `&mut vec of trait objects` referencing it via Rc<RefCell<..>>
-    // OR (simpler) give MockStream an `Rc<RefCell<Vec<_>>>` sink.
-    // See refactor suggestion below -- the concrete recommended pattern:
 
     #[test]
     fn flush_holds_back_until_gap_is_filled_flush_all_does_not() {

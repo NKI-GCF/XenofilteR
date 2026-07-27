@@ -75,18 +75,10 @@ impl<R: SimpleRec> CollatedMatcher<R> {
         })
     }
 
-    // CONCURRENCY STUB -- CollatedMatcher parallel worker pool
-    //
-    // `score_pair` / `nw_score_fragment` are embarrassingly parallel once a pair
-    // has been extracted from `waiting_a` / `waiting_b`.  A crossbeam bounded
-    // channel can dispatch pairs to N workers:
-    //
-    //   let (work_tx, work_rx) = bounded::<(FragmentState<R>, FragmentState<R>)>(N*2);
-    //   Workers call score_pair and send ScoredFragment back to the IO thread.
-    //   Writers remain on the IO thread (no Mutex needed).
-    //
-    // Output order is NOT guaranteed (acceptable for Collated).
-    // N-STREAM: scales to N waiting maps; memory is O(name-order skew * streams).
+    // TODO: score_pair/nw_score_fragment are embarrassingly parallel post-match;
+    // dispatch via bounded crossbeam channel to N workers, same pattern as
+    // line_by_line/parallel.rs. Output order not guaranteed (already true for
+    // Collated).
     pub(crate) fn process(&mut self, config: &RunConfig) -> Result<(), Error> {
         loop {
             let fa = self.a.next_fragment()?;

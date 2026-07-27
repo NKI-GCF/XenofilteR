@@ -27,21 +27,6 @@ mod indel_expansion_integration {
     };
     use std::{collections::HashMap, sync::Arc};
 
-    // -- In-memory reference helpers -------------------------------------------
-
-    /// Build a tiny in-memory FASTA and return its bytes.
-    /// Sequence: GAAAAGCCCCT  (positions 0-10)
-    fn tiny_fasta_bytes() -> Vec<u8> {
-        b">chr1\nGAAAAGCCCCT\n".to_vec()
-    }
-
-    /// `name_to_id` for the tiny reference (one chromosome).
-    fn name_to_id() -> HashMap<String, usize> {
-        let mut m = HashMap::new();
-        m.insert("chr1".to_string(), 0);
-        m
-    }
-
     // -- Shared variant constructors -------------------------------------------
 
     /// A deletion of one A at position 1 (0-based) in GAAAAG.
