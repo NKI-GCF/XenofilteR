@@ -39,12 +39,6 @@ impl TabixScored {
     /// BGZF chunk, reads lines within it, and applies `score_fn` using the
     /// record's actual BED score (col 5) and strand (col 6), restricted to
     /// records that genuinely overlap [start, end).
-    ///
-    /// NEEDS VERIFICATION: exact noodles 0.112 API for `Chunk::start()` /
-    /// `Chunk::end()` (bgzf::VirtualPosition) and `bgzf::io::Reader::seek`/
-    /// `virtual_position()` -- written to match the pattern already used by
-    /// `TabixVcf`/`IndexedReader` elsewhere in this file, but not compiled
-    /// here.
     pub(crate) fn overlapping_bonus(
         &self,
         ref_id: usize,

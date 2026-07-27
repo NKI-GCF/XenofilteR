@@ -116,7 +116,7 @@ mod sample_ps_tests {
     /// `parse_sample_record`, which do NOT accept a genotype string like
     /// "0/1" for GT.
     ///
-    /// NEEDS VERIFICATION against noodles 0.111/0.112's exact
+    /// NEEDS VERIFICATION against noodles 0.113's exact
     /// `Samples`/`Keys` constructors -- isolated here so a mismatch is a
     /// one-function patch.
     fn sample_record(gt: i32, gq: i32, ps: Option<i32>) -> RecordBuf {
