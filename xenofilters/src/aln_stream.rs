@@ -10,10 +10,10 @@ use crate::file_spec::path_for_stream;
 use crate::region::{diagnostic::SegregateVariants, PositiveRegions, ScoreFn, ScoredRegions};
 use crate::variant::{
     build_diagnostic_store_expanded,
-    indel_equiv::corrected::read_vcf_or_bcf_header,
-    indel_equiv::{
-        build_population_store_expanded, build_sample_store_expanded, IndelEquivalenceExpander,
+    indel_equiv::corrected::{
+        build_population_store_expanded, build_sample_store_expanded, read_vcf_or_bcf_header,
     },
+    indel_equiv::IndelEquivalenceExpander,
     name_to_id::header_name_to_id,
     population::{parse_population_record, Population},
     sample::{parse_sample_record, Sample},
@@ -31,6 +31,7 @@ use std::fs::File;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use rayon::ThreadPoolBuilder;
+use std::collections::HashMap;
 
 pub(crate) trait AlignmentStream<R: SimpleRec> {
     fn next_qname(&self) -> &[u8];
@@ -157,7 +158,7 @@ where
             opt.is_paired
         };
 
-        let (sample_variants, population_variants) = build_variant_stores(opt, i)?;
+        let (sample_variants, population_variants) = build_variant_stores(opt, i, name_to_id)?;
 
         opt.io.output.get(i).map(path_unicode_ok).transpose()?;
         opt.io
@@ -327,6 +328,7 @@ where
 fn build_variant_stores(
     config: &RunConfig,
     stream_idx: usize,
+    name_to_id: HashMap<String, usize>,
 ) -> Result<(Option<Arc<dyn StoreTrait>>, Option<Arc<dyn StoreTrait>>), Error> {
     // Resolve the VCF paths for this stream index.
     let sample_vcf_path = path_for_stream(&config.variants.sample_variants, stream_idx);
@@ -357,7 +359,6 @@ fn build_variant_stores(
     let fasta_path = path_for_stream(&config.io.reference, stream_idx);
     let fasta_path = fasta_path.ok_or(crate::Error::ExpandIndelsRequiresReference)?;
 
-    // Validate that the .fai sidecar exists before opening the expander.
     let fai_path = fasta_path.with_extension(
         fasta_path
             .extension()
@@ -368,16 +369,17 @@ fn build_variant_stores(
         return Err(crate::Error::FastaIndexMissing(fasta_path.to_path_buf()));
     }
 
+    // Validate that the .fai sidecar exists before opening the expander.
     let sample_store: Option<Arc<dyn StoreTrait>> = sample_vcf_path
         .map(|p| {
-            build_sample_store_expanded(p, fasta_path, min_gq)
+            build_sample_store_expanded(p, fasta_path, &name_to_id, min_gq)
                 .map(|s| Arc::new(s) as Arc<dyn StoreTrait>)
         })
         .transpose()?;
 
     let population_store: Option<Arc<dyn StoreTrait>> = population_vcf_path
         .map(|p| {
-            build_population_store_expanded(p, fasta_path, min_af)
+            build_population_store_expanded(p, fasta_path, &name_to_id, min_af)
                 .map(|s| Arc::new(s) as Arc<dyn StoreTrait>)
         })
         .transpose()?;
