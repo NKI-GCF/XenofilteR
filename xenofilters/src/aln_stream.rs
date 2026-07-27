@@ -326,63 +326,43 @@ where
 fn build_variant_stores(
     config: &RunConfig,
     stream_idx: usize,
-    name_to_id: HashMap<String, usize>,
+    name_to_id: HashMap<String, usize>, // BAM-header-derived, correct for overlapping_multi's tid
 ) -> Result<(Option<Arc<dyn StoreTrait>>, Option<Arc<dyn StoreTrait>>), Error> {
-    // Resolve the VCF paths for this stream index.
     let sample_vcf_path = path_for_stream(&config.variants.sample_variants, stream_idx);
     let population_vcf_path = path_for_stream(&config.variants.population_variants, stream_idx);
     let min_gq = config.variants.min_sample_gq;
     let min_af = config.variants.min_population_af;
 
-    if !config.variants.expand_indels {
-        // -- Plain path: existing behavior, unchanged -------------------------
-        let sample_store: Option<Arc<dyn StoreTrait>> = sample_vcf_path
-            .map(|p| {
-                Store::<Sample>::new_from_path(p, parse_sample_record, min_gq)
-                    .map(|s| Arc::new(s) as Arc<dyn StoreTrait>)
-            })
-            .transpose()?;
-
-        let population_store: Option<Arc<dyn StoreTrait>> = population_vcf_path
-            .map(|p| {
-                Store::<Population>::new_from_path(p, parse_population_record, min_af)
-                    .map(|s| Arc::new(s) as Arc<dyn StoreTrait>)
-            })
-            .transpose()?;
-
-        return Ok((sample_store, population_store));
+    match path_for_stream(&config.io.reference, stream_idx) {
+        None => {
+            let sample_store = sample_vcf_path
+                .map(|p| Store::<Sample>::new_from_path(p, parse_sample_record, min_gq)
+                    .map(|s| Arc::new(s) as Arc<dyn StoreTrait>))
+                .transpose()?;
+            let population_store = population_vcf_path
+                .map(|p| Store::<Population>::new_from_path(p, parse_population_record, min_af)
+                    .map(|s| Arc::new(s) as Arc<dyn StoreTrait>))
+                .transpose()?;
+            Ok((sample_store, population_store))
+        }
+        Some(fasta_path) => {
+            let fai_path = fasta_path.with_extension(
+                fasta_path.extension().map(|e| format!("{}.fai", e.to_string_lossy())).unwrap_or_else(|| "fai".to_string()),
+            );
+            if !fai_path.exists() {
+                return Err(Error::FastaIndexMissing(fasta_path.to_path_buf()));
+            }
+            let sample_store = sample_vcf_path
+                .map(|p| build_sample_store_expanded(p, fasta_path, &name_to_id, min_gq)
+                    .map(|s| Arc::new(s) as Arc<dyn StoreTrait>))
+                .transpose()?;
+            let population_store = population_vcf_path
+                .map(|p| build_population_store_expanded(p, fasta_path, &name_to_id, min_af)
+                    .map(|s| Arc::new(s) as Arc<dyn StoreTrait>))
+                .transpose()?;
+            Ok((sample_store, population_store))
+        }
     }
-
-    // -- Expanded path: requires --reference ----------------------------------
-    let fasta_path = path_for_stream(&config.io.reference, stream_idx);
-    let fasta_path = fasta_path.ok_or(crate::Error::ExpandIndelsRequiresReference)?;
-
-    let fai_path = fasta_path.with_extension(
-        fasta_path
-            .extension()
-            .map(|e| format!("{}.fai", e.to_string_lossy()))
-            .unwrap_or_else(|| "fai".to_string()),
-    );
-    if !fai_path.exists() {
-        return Err(crate::Error::FastaIndexMissing(fasta_path.to_path_buf()));
-    }
-
-    // Validate that the .fai sidecar exists before opening the expander.
-    let sample_store: Option<Arc<dyn StoreTrait>> = sample_vcf_path
-        .map(|p| {
-            build_sample_store_expanded(p, fasta_path, &name_to_id, min_gq)
-                .map(|s| Arc::new(s) as Arc<dyn StoreTrait>)
-        })
-        .transpose()?;
-
-    let population_store: Option<Arc<dyn StoreTrait>> = population_vcf_path
-        .map(|p| {
-            build_population_store_expanded(p, fasta_path, &name_to_id, min_af)
-                .map(|s| Arc::new(s) as Arc<dyn StoreTrait>)
-        })
-        .transpose()?;
-
-    Ok((sample_store, population_store))
 }
 
 /// Build the diagnostic variant store for one stream.
@@ -394,30 +374,19 @@ pub(crate) fn build_diagnostic_store_for_stream(
     config: &RunConfig,
     header: &Header,
     stream_idx: usize,
-) -> Result<Option<crate::region::diagnostic::SegregateVariants>, Error> {
-    if let Some(segregate) = &config.segregate {
-        let diag_vcf_path = path_for_stream(&segregate.distinct_variants, stream_idx);
-        let Some(path) = diag_vcf_path else {
-            return Ok(None);
-        };
-        if !config.variants.expand_indels {
-            // Plain diagnostic loading: existing behavior.
-            return SegregateVariants::from_vcf(path, &header_name_to_id(header)).map(Some);
+) -> Result<Option<SegregateVariants>, Error> {
+    let Some(segregate) = &config.segregate else { return Ok(None) };
+    let Some(path) = path_for_stream(&segregate.distinct_variants, stream_idx) else { return Ok(None) };
+    let name_to_id = header_name_to_id(header);
+
+    match path_for_stream(&config.io.reference, stream_idx) {
+        None => SegregateVariants::from_vcf(path, &name_to_id).map(Some),
+        Some(fasta_path) => {
+            let fasta_reader = Builder::default().build_from_path(fasta_path)?;
+            let mut expander = IndelEquivalenceExpander::new(fasta_reader);
+            let vcf_header = read_vcf_or_bcf_header(path)?;
+            build_diagnostic_store_expanded(path, &mut expander, &name_to_id, &vcf_header).map(Some)
         }
-        let fasta_path = path_for_stream(&config.io.reference, stream_idx);
-        let fasta_path = fasta_path.ok_or(crate::Error::ExpandIndelsRequiresReference)?;
-
-        let fasta_reader = Builder::default().build_from_path(fasta_path)?;
-
-        let mut expander = IndelEquivalenceExpander::new(fasta_reader);
-        let name_to_id = header_name_to_id(header);
-
-        // Read the VCF header separately so we can pass it by reference.
-        let vcf_header = read_vcf_or_bcf_header(path)?;
-
-        build_diagnostic_store_expanded(path, &mut expander, &name_to_id, &vcf_header).map(Some)
-    } else {
-        Ok(None)
     }
 }
 

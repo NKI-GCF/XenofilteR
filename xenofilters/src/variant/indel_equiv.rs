@@ -11,15 +11,12 @@
 //   VCF input  -- 1-based, inclusive (noodles Variant::variant_start()).
 //   All output -- 0-based (pos = vcf_pos - 1).
 pub(crate) mod corrected;
-pub(crate) mod impls;
 
 use crate::Error;
 use fasta::io::IndexedReader;
-use noodles::{core::Region, fasta, vcf, vcf::variant::RecordBuf};
+use noodles::{core::Region, fasta};
 use smallvec::SmallVec;
-use std::collections::HashMap;
 use std::io::{BufRead, Seek};
-use std::path::Path;
 use std::str::FromStr;
 
 // ---------------------------------------------------------------------------
@@ -360,74 +357,6 @@ impl<R: BufRead + Seek> IndelEquivalenceExpander<R> {
 
         Ok((ctx_start, bytes))
     }
-}
-
-// -- Private VCF iteration helpers ----------------------------------------
-
-fn vcf_header(path: &Path) -> Result<vcf::Header, Error> {
-    use noodles::bgzf;
-    use std::{fs::File, io::BufReader};
-    if path.extension().is_some_and(|e| e == "bcf") {
-        use noodles::bcf;
-        Ok(
-            bcf::io::Reader::new(bgzf::io::Reader::new(BufReader::new(File::open(path)?)))
-                .read_header()?,
-        )
-    } else {
-        Ok(vcf::io::Reader::new(BufReader::new(File::open(path)?)).read_header()?)
-    }
-}
-
-fn for_each_vcf_rec(
-    path: &Path,
-    header: &vcf::Header,
-    mut f: impl FnMut(&mut RecordBuf) -> Result<(), Error>,
-) -> Result<(), Error> {
-    use noodles::bgzf;
-    use std::{fs::File, io::BufReader};
-    if path.extension().is_some_and(|e| e == "bcf") {
-        use noodles::bcf;
-        let mut r = bcf::io::Reader::new(bgzf::io::Reader::new(BufReader::new(File::open(path)?)));
-        let _ = r.read_header()?;
-        for result in r.record_bufs(header) {
-            f(&mut result.map_err(Error::from)?)?;
-        }
-    } else {
-        let mut r = vcf::io::Reader::new(BufReader::new(File::open(path)?));
-        let _ = r.read_header()?;
-        for result in r.record_bufs(header) {
-            f(&mut result.map_err(Error::from)?)?;
-        }
-    }
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// `with_alleles` extension on variant types
-// ---------------------------------------------------------------------------
-// These must be implemented on SampleVariant and Population respectively.
-// Shown here as a trait to avoid repeating the derive boilerplate.
-
-pub(crate) trait WithAlleles: Sized {
-    /// Clone self with new 0-based position and alleles; all scoring
-    /// parameters (p_variant, GQ, AF, phase information) are preserved.
-    fn with_alleles(&self, pos_0based: usize, ref_a: &[u8], alt_a: &[u8]) -> Self;
-}
-
-// ---------------------------------------------------------------------------
-// Initialization loop (shown as a standalone function)
-// ---------------------------------------------------------------------------
-//
-// Wire this into AlnStream::new() or the per-stream variant-store
-// initialization block in main.rs where Store<Sample> / Store<Population>
-// are currently constructed.
-
-fn build_name_to_id(hdr: &vcf::Header) -> HashMap<String, usize> {
-    hdr.contigs()
-        .iter()
-        .enumerate()
-        .map(|(i, (name, _))| (name.to_string(), i))
-        .collect()
 }
 
 #[cfg(test)]

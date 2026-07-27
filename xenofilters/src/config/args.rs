@@ -142,23 +142,6 @@ pub(crate) struct RelatedArgs {
     #[arg(long, default_value = "linear:1.0", help_heading = "Regions")]
     pub(crate) region_score_fn: ScoreFn,
 
-    // FIXME: only expand if necessary.
-    #[arg(
-        long,
-        default_value_t = false,
-        requires = "reference",
-        help_heading = "Variants"
-    )]
-    pub(crate) expand_indels: bool,
-
-    #[arg(
-        long,
-        default_value_t = 50,
-        requires = "expand-indels",
-        help_heading = "Variants"
-    )]
-    pub(crate) indel_expand_padding: usize,
-
     /// Minimum population allele frequency required for a variant to be
     /// loaded from --population-variants. Default 0.9. Any variant below
     /// this AF cannot structurally produce a positive rescue delta anyway

@@ -26,19 +26,6 @@ use noodles::{bcf, bgzf, vcf};
 use tracing::{debug, warn};
 
 // ---------------------------------------------------------------------------
-// WithAlleles for DiagnosticSite
-// ---------------------------------------------------------------------------
-
-impl crate::variant::indel_equiv::WithAlleles for DiagnosticSite {
-    fn with_alleles(&self, pos_0based: usize, ref_a: &[u8], _alt_a: &[u8]) -> Self {
-        DiagnosticSite {
-            pos: pos_0based,
-            ref_len: ref_a.len(),
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // AmbiguousRegions equivalence expansion
 // ---------------------------------------------------------------------------
 //
@@ -57,15 +44,11 @@ impl crate::variant::indel_equiv::WithAlleles for DiagnosticSite {
 // boundary still triggers full scoring.  Expansion is conservative: overlapping
 // expanded intervals are merged by the existing BED merge step.
 //
-// NOTE: BED expansion does NOT require a reference FASTA because it operates
-// on positional ranges, not allele sequences.  The "expansion" here simply
-// widens the interval: new_start = start - MAX_SHIFT, new_end = end + MAX_SHIFT,
-// and we rely on bedtools merge (or the in-memory sort-merge) to clean up.
-//
-// Implement as a flag: --expand-ambiguous-regions (default off).
-// When on, each BED interval is padded by --indel-expand-padding (default 50).
-
-pub(crate) const INDEL_EXPAND_PADDING_DEFAULT: usize = 50;
+// Expansion is automatic whenever --reference is supplied for a stream
+// (see aln_stream::build_diagnostic_store_for_stream); no separate flag
+// or fixed padding is needed since enumerate_equivalents inserts every
+// equivalent position as its own Lapper interval, which the overlap
+// query already handles without requiring explicit interval merging.
 
 // ---------------------------------------------------------------------------
 // build_diagnostic_store_expanded
