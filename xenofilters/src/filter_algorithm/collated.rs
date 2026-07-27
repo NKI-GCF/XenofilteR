@@ -22,10 +22,11 @@ use crate::alignment::{
     pre_assess_alignments,
 };
 use crate::aln_stream::AlignmentStream;
-use crate::config::args::resolve_threshold;
-use crate::config::run_config::RunConfig;
-use crate::filter_algorithm::line_by_line::apply_decision_tag;
-use crate::filter_algorithm::line_by_line::{Scratch, ordering::Decision};
+use crate::config::{args::resolve_threshold, run_config::RunConfig};
+use crate::filter_algorithm::{ambiguous_vcf::AmbiguousVcfEvaluator,
+    line_by_line::apply_decision_tag,
+    line_by_line::{Scratch, ordering::Decision}
+};
 use crate::penalty::Penalty;
 use crate::region::{ambiguous::AmbiguousRegions, diagnostic::SegregateVariants};
 use ahash::RandomState;
@@ -174,6 +175,28 @@ impl<R: SimpleRec> CollatedMatcher<R> {
             drop(mcfs1);
             drop(mcfs2);
             return self.apply_ordered(a, b, o);
+        }
+        // -- Ambiguous-VCF fast path (before Tier 2.5 / Tier 3 NW) --------
+        // Runs only when cmp_perfect was inconclusive (ord is None). Current
+        // evaluator is a conservative no-op (see ambiguous_vcf.rs); real
+        // positive-evidence logic is a follow-up.
+        if !a_needs_scoring && !b_needs_scoring {
+            let positions_a: Vec<usize> = a.get_records().iter()
+                .filter_map(|r| r.alignment_start().transpose().ok().flatten().map(|p| p.get()))
+                .collect();
+            let positions_b: Vec<usize> = b.get_records().iter()
+                .filter_map(|r| r.alignment_start().transpose().ok().flatten().map(|p| p.get()))
+                .collect();
+            if let Some(dec) = crate::filter_algorithm::ambiguous_vcf::NoopAmbiguousVcfEvaluator
+                .evaluate_ambiguous_variants(&positions_a, &positions_b)
+            {
+                drop(mcfs1); drop(mcfs2);
+                return match dec {
+                    Decision::First => { self.emit_discarded(b)?; self.write_fragment(a, None, Some(true)) }
+                    Decision::Last => { self.emit_discarded(a)?; self.write_fragment(b, None, Some(true)) }
+                    _ => { self.write_fragment(a, None, None)?; self.write_fragment(b, None, None) }
+                };
+            }
         }
 
         // Tier 2.5: unified pre-assessment -- single CIGAR+MD walk per record.
