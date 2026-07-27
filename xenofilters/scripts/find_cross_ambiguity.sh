@@ -54,8 +54,9 @@ MISMATCHES=""
 THREADS=""
 OUT_DIR=""
 STEP=1
+FORCE_INDEXING=0
 
-while getopts "h:m:l:e:t:o:s:" opt; do
+while getopts "h:m:l:e:t:o:s:f" opt; do
     case "${opt}" in
         h) HUMAN_FA="$OPTARG" ;;
         m) MOUSE_FA="$OPTARG" ;;
@@ -64,6 +65,7 @@ while getopts "h:m:l:e:t:o:s:" opt; do
         t) THREADS="$OPTARG" ;;
         o) OUT_DIR="$OPTARG" ;;
         s) STEP="$OPTARG" ;;
+        f) FORCE_INDEXING=1;;
         *) usage ;;
     esac
 done
@@ -74,11 +76,11 @@ if [[ -z "$HUMAN_FA" || -z "$MOUSE_FA" || -z "$LEN" || -z "$MISMATCHES" || -z "$
     usage
 fi
 
-# Convert paths to absolute paths
-HUMAN_FA=$(realpath "$HUMAN_FA")
-MOUSE_FA=$(realpath "$MOUSE_FA")
+# Convert paths to absolute paths, do not resolve symlinks
+HUMAN_FA=$(realpath -se "$HUMAN_FA")
+MOUSE_FA=$(realpath -se "$MOUSE_FA")
 mkdir -p "$OUT_DIR"
-OUT_DIR=$(realpath "$OUT_DIR")
+OUT_DIR=$(realpath -se "$OUT_DIR")
 
 # ------------------------------------------------------------------------------
 # Environment & Dependency Checks
@@ -118,15 +120,17 @@ run_ambiguity_mapping() {
     log_info "------------------------------------------------------------"
 
     # Step 1: Ensure Target Bowtie2 Index Exists
-    local INDEX_DIR="${OUT_DIR}/indexes/${TGT_LABEL}"
-    local INDEX_PREFIX="${INDEX_DIR}/${TGT_LABEL}_idx"
-    mkdir -p "$INDEX_DIR"
+    local INDEX_PREFIX="${TGT_FASTA%.fa}"
 
     if ls "${INDEX_PREFIX}"*.bt2 >/dev/null 2>&1 || ls "${INDEX_PREFIX}"*.bt2l >/dev/null 2>&1; then
         log_info "Found existing Bowtie2 index for ${TGT_LABEL}."
-    else
+    elif [ $FORCE_INDEXING -eq 1 ]; then
         log_info "Building Bowtie2 index for ${TGT_LABEL} (this may take some time)..."
         bowtie2-build --threads "$THREADS" "$TGT_FASTA" "$INDEX_PREFIX" > /dev/null
+    else
+        echo "${INDEX_PREFIX}"*.bt2
+        echo "Bowtie2 index for ${TGT_LABEL} not found. Please build it first or rerun with -f to force indexing." 1>&2
+        exit 1;
     fi
 
     # Step 2: Ensure Source FASTA is indexed
