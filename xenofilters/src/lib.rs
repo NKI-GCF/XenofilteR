@@ -247,7 +247,8 @@ fn run_collated(args: CollatedArgs) -> Result<(), Error> {
 // Strain -- specialized collated matcher for strain detection
 // ---------------------------------------------------------------------------
 
-fn run_strain(args: StrainArgs) -> Result<(), Error> {
+fn run_strain(mut args: StrainArgs) -> Result<(), Error> {
+    args.validate_and_init()?;
     let stats_path = args.io.stats_output.clone();
     let score_threads = args.parallel.score_threads;
     let stream_labels = vec![];
@@ -266,7 +267,8 @@ fn run_strain(args: StrainArgs) -> Result<(), Error> {
 // Viral integration -- specialized collated matcher for virus-host chimeras
 // ---------------------------------------------------------------------------
 
-fn run_viral_integration(args: ViralIntegrationArgs) -> Result<(), Error> {
+fn run_viral_integration(mut args: ViralIntegrationArgs) -> Result<(), Error> {
+    args.validate_and_init()?;
     let stats_path = args.io.stats_output.clone();
     let score_threads = args.score_threads;
     let chimeric_pairs = vec![[0, 1]];
