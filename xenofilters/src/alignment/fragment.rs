@@ -590,62 +590,40 @@ mod phasing_merge_tests {
             "linked evidence must not be summed as if independent"
         );
     }
-    // alignment/fragment/tests.rs
 
-    #[test]
-    fn snv_below_p_variant_threshold_is_skipped_without_scoring() {
-        // A SNV whose alt allele exactly matches the read at every position,
-        // with p_variant well below 0.5. If the early-skip fix works, delta
-        // must be exactly 0.0 -- if it were NOT skipped and instead fully
-        // scored, a p<0.5, alt-matches-read SNV would still correctly resolve
-        // to a non-positive delta per the proof above, so this test alone
-        // can't distinguish "skipped" from "scored and correctly negative".
-        // See the counting-based test below for that distinction.
-        let rec = create_record(b"r", "5M", b"AAGAA", &[30u8; 5], "2G2", false).unwrap();
+    fn score_with_probe_variant(
+        read: &[u8], md: &str, vnt_pos: usize, ref_a: &[u8], alt_a: &[u8], p_variant: f64,
+    ) -> f64 {
+        let rec = create_record(b"r", "5M", read, &[30u8; 5], md, false).unwrap();
         let flags = rec.flags();
         let p = setup_penalties();
-
-        struct LowPVariant {
-            pos: usize,
-            ref_a: Vec<u8>,
-            alt_a: Vec<u8>,
+        struct ProbeVariant { pos: usize, ref_a: Vec<u8>, alt_a: Vec<u8>, p: f64 }
+        impl Variant for ProbeVariant {
+            fn pos(&self) -> usize { self.pos }
+            fn ref_allele(&self) -> &[u8] { &self.ref_a }
+            fn alt_allele(&self) -> &[u8] { &self.alt_a }
+            fn p_variant(&self) -> f64 { self.p }
         }
-        impl Variant for LowPVariant {
-            fn pos(&self) -> usize {
-                self.pos
-            }
-            fn ref_allele(&self) -> &[u8] {
-                &self.ref_a
-            }
-            fn alt_allele(&self) -> &[u8] {
-                &self.alt_a
-            }
-            fn p_variant(&self) -> f64 {
-                0.1
-            } // well below 0.5
-        }
-        let pv: &'static _ = Box::leak(Box::new(LowPVariant {
-            pos: 2,
-            ref_a: vec![b'A'],
-            alt_a: vec![b'G'], // alt matches read[2]='G'
-        }));
+        let pv: &'static _ = Box::leak(Box::new(ProbeVariant { pos: vnt_pos, ref_a: ref_a.to_vec(), alt_a: alt_a.to_vec(), p: p_variant }));
         let mut ev = Eval::new();
         ev.set_variant(pv as &dyn Variant);
         let mut dvnt: FragEvalVec<'_> = smallvec![smallvec![ev]];
-
-        let mut frag = Fragment::new(
-            &p,
-            smallvec![&rec],
-            smallvec![MdCigFlags::try_from_record(&rec, &flags, false).unwrap()],
-        )
-        .unwrap();
+        let mut frag = Fragment::new(&p, smallvec![&rec], smallvec![MdCigFlags::try_from_record(&rec, &flags, false).unwrap()]).unwrap();
         let mut scratch = Scratch::new();
         let _ = frag.score(&mut scratch, &mut dvnt).unwrap();
+        scratch.last_variant_delta
+    }
 
-        assert_eq!(
-            scratch.last_variant_delta, 0.0,
-            "p_variant=0.1 SNV must never contribute a positive rescue delta"
-        );
+    #[test]
+    fn snv_below_p_variant_threshold_is_skipped_without_scoring() {
+        let delta = score_with_probe_variant(b"AAGAA", "2G2", 2, b"A", b"G", 0.1);
+        assert_eq!(delta, 0.0, "p_variant=0.1 SNV must never contribute a positive rescue delta");
+    }
+
+    #[test]
+    fn indel_below_threshold_is_still_fully_scored_not_early_skipped() {
+        let delta = score_with_probe_variant(b"AAAAA", "5", 1, b"AA", b"A", 0.1);
+        assert!(delta <= 0.0, "low-p_variant deletion must still resolve non-positive via full scoring");
     }
 
     #[test]
@@ -705,60 +683,4 @@ mod phasing_merge_tests {
         );
     }
 
-    #[test]
-    fn indel_below_threshold_is_still_fully_scored_not_early_skipped() {
-        // Regression guard for the deliberate scoping decision: indels must
-        // NOT be early-skipped (no proof exists that the SNV sign-bound
-        // generalizes to gapped NW alignment), so a low-p_variant deletion
-        // must still go through score_variant_against_segment and resolve via
-        // the existing (already-correct) delta computation -- this test only
-        // confirms the *code path* isn't silently bypassed by asserting the
-        // same non-positive outcome, which full scoring is already known (via
-        // variant_rescue_p_variant_table) to produce correctly.
-        let rec = create_record(b"r", "5M", b"AAAAA", &[30u8; 5], "5", false).unwrap();
-        let flags = rec.flags();
-        let p = setup_penalties();
-
-        struct LowPDeletion {
-            pos: usize,
-            ref_a: Vec<u8>,
-            alt_a: Vec<u8>,
-        }
-        impl Variant for LowPDeletion {
-            fn pos(&self) -> usize {
-                self.pos
-            }
-            fn ref_allele(&self) -> &[u8] {
-                &self.ref_a
-            }
-            fn alt_allele(&self) -> &[u8] {
-                &self.alt_a
-            }
-            fn p_variant(&self) -> f64 {
-                0.1
-            }
-        }
-        let pv: &'static _ = Box::leak(Box::new(LowPDeletion {
-            pos: 1,
-            ref_a: vec![b'A', b'A'],
-            alt_a: vec![b'A'], // 1bp deletion, ref_len=2
-        }));
-        let mut ev = Eval::new();
-        ev.set_variant(pv as &dyn Variant);
-        let mut dvnt: FragEvalVec<'_> = smallvec![smallvec![ev]];
-
-        let mut frag = Fragment::new(
-            &p,
-            smallvec![&rec],
-            smallvec![MdCigFlags::try_from_record(&rec, &flags, false).unwrap()],
-        )
-        .unwrap();
-        let mut scratch = Scratch::new();
-        let _ = frag.score(&mut scratch, &mut dvnt).unwrap();
-
-        assert!(
-            scratch.last_variant_delta <= 0.0,
-            "low-p_variant deletion must still resolve non-positive via full scoring"
-        );
-    }
 }

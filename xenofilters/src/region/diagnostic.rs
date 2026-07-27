@@ -102,18 +102,11 @@ mod tests {
     #[test]
     fn test_snv_overlap_cases() {
         let s = store(&[(0, 100, 1)]);
-
-        // Format: (q_ref, q_start, q_end, expected_overlap)
-        let cases = [
-            (0, 100, 110, true),  // overlaps
-            (0, 50, 100, false),  // no overlap before
-            (0, 101, 200, false), // no overlap after
-            (1, 100, 110, false), // wrong ref
-        ];
-
-        for (q_ref, q_start, q_end, expected) in cases {
-            assert_eq!(s.overlaps(q_ref, q_start, q_end), expected);
-        }
+        crate::tests::common::run_overlap_cases(
+            &[(0, 100, 110, true), (0, 50, 100, false),
+            (0, 101, 200, false), (1, 100, 110, false)],
+            |r, s2, e| s.overlaps(r, s2, e),
+        );
     }
 
     #[test]

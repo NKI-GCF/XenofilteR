@@ -89,3 +89,9 @@ pub(crate) fn two_stream_aln(s0: Vec<RecordBuf>, s1: Vec<RecordBuf>) -> SmallVec
         Box::new(MockStream::new(1, s1)) as Box<dyn AlignmentStream<RecordBuf>>,
     ]
 }
+
+pub(crate) fn run_overlap_cases(cases: &[(usize, usize, usize, bool)], overlaps: impl Fn(usize, usize, usize) -> bool) {
+    for &(ref_id, start, end, expected) in cases {
+        assert_eq!(overlaps(ref_id, start, end), expected, "ref_id={ref_id} start={start} end={end}");
+    }
+}

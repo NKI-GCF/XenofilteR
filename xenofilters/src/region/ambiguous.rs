@@ -124,19 +124,11 @@ mod tests {
     #[test]
     fn test_overlap_cases() {
         let s = store(&[(0, 100, 200)]);
-
-        let cases = [
-            (0, 120, 150, true),  // contained
-            (0, 50, 150, true),   // straddles left
-            (0, 150, 250, true),  // straddles right
-            (0, 50, 100, false),  // touching left edge
-            (0, 200, 300, false), // touching right edge
-            (1, 100, 200, false), // wrong ref_id
-        ];
-
-        for (q_ref, q_start, q_end, expected) in cases {
-            assert_eq!(s.overlaps(q_ref, q_start, q_end), expected);
-        }
+        crate::tests::common::run_overlap_cases(
+            &[(0, 120, 150, true), (0, 50, 150, true), (0, 150, 250, true),
+              (0, 50, 100, false), (0, 200, 300, false), (1, 100, 200, false)],
+            |r, s2, e| s.overlaps(r, s2, e),
+        );
     }
 
     #[test]
