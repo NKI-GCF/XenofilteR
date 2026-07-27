@@ -32,9 +32,6 @@ impl ViralIntegrationArgs {
             io: self.io,
             scoring: self.scoring,
             variants: self.variants,
-            // Preset: streams 0 and 1 are always the host<->virus chimeric pair.
-            chimeric_pairs: vec!["0:1".to_string()],
-            stream_labels: self.stream_labels,
             ..Default::default()
         })
     }

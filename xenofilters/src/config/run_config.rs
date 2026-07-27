@@ -21,8 +21,6 @@ pub(crate) struct RunConfig {
     pub(crate) scoring: ScoringArgs,
     pub(crate) variants: RelatedArgs,
     pub(crate) threads: usize,
-    pub(crate) chimeric_pairs: Vec<String>,
-    pub(crate) stream_labels: Vec<String>,
     pub(crate) segregate: Option<SegregateArgs>,
     pub(crate) name_encoder: Option<NameEncoderKind>,
     pub(crate) is_pass2: bool,
@@ -47,17 +45,13 @@ impl RunConfig {
         common.scoring.validate()?;
         common.variants.validate()?;
 
-        let (chimeric_pairs, stream_labels, chimeric_thresholds) = match chimeric {
-            Some(c) => (
-                c.chimeric_pairs,
-                c.stream_labels,
-                ChimericThresholds {
+        let chimeric_thresholds = match chimeric {
+            Some(c) => ChimericThresholds {
                     min_mapped_frac: c.chimeric_min_mapped_frac,
                     max_overlap_frac: c.chimeric_max_overlap_frac,
                     min_union_frac: c.chimeric_min_union_frac,
                 },
-            ),
-            None => (vec![], vec![], ChimericThresholds::default()),
+            None => ChimericThresholds::default(),
         };
 
         Ok(RunConfig {
@@ -65,8 +59,6 @@ impl RunConfig {
             scoring: common.scoring,
             variants: common.variants,
             threads,
-            chimeric_pairs,
-            stream_labels,
             segregate,
             name_encoder,
             chimeric_thresholds,

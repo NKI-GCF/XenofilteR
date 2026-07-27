@@ -114,7 +114,7 @@ proptest! {
             alignment::fragment::wis_max_rescue_delta,
             variant::{Eval, Variant},
         };
-        struct V { pos: usize, delta: f64 }
+        struct V { pos: usize }
         impl Variant for V {
             fn pos(&self) -> usize { self.pos }
             fn ref_allele(&self) -> &[u8] { b"A" }
@@ -124,7 +124,7 @@ proptest! {
         let vs: Vec<&'static V> = deltas
             .iter()
             .enumerate()
-            .map(|(i, _)| Box::leak(Box::new(V { pos: i * 5, delta: 0.0 })) as &'static V)
+            .map(|(i, _)| Box::leak(Box::new(V { pos: i * 5 })) as &'static V)
             .collect();
         let evals: smallvec::SmallVec<[Eval<'_>; 4]> = vs
             .iter()

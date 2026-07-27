@@ -1,8 +1,6 @@
-//! One-line stderr progress updated every 100 k fragments.
+//! One-line stderr progress bar, redrawn at 4 Hz.
 
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-
-const REPORT_INTERVAL: u64 = 100_000;
 
 const STYLE: &str = "[xenofilters] {human_pos} frags  {wide_bar:.cyan/blue}  \
      {per_sec}  {elapsed_precise} elapsed  {eta_precise} ETA";

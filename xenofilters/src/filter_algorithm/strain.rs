@@ -41,8 +41,6 @@ impl StrainArgs {
             io,
             scoring: self.scoring,
             variants: self.variants,
-            chimeric_pairs: vec![],
-            stream_labels: vec![],
             ..Default::default()
         })
     }

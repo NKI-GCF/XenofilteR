@@ -30,8 +30,6 @@ pub(super) struct FragmentBundle {
     pub(super) stores: SmallVec<[Option<Arc<dyn StoreTrait>>; 2]>,
     /// Scoring parameters cloned from [`LineByLine`] once at pipeline startup.
     pub(super) ctx: ScoringContext,
-    /// Chimeric pairs to check for complementary mate mapping across species.
-    pub(super) chimeric_pairs: Vec<[usize; 2]>,
 }
 
 /// A scored fragment ready to be written by the IO thread.
@@ -53,7 +51,6 @@ fn worker_loop(rx: Receiver<FragmentBundle>, tx: Sender<ScoredFragment>) {
             mut best,
             stores,
             ctx,
-            chimeric_pairs: _,
         } = bundle;
         let decision = score_bundle(&mut best, &stores, &ctx, &mut scratch);
         // Ignore send errors: the IO thread may have exited after an error.
@@ -190,7 +187,6 @@ impl LineByLine<RecordBuf> {
                         best: best.drain(..).collect(),
                         stores: stores.iter().cloned().collect(),
                         ctx: ctx.clone(),
-                        chimeric_pairs: self.chimeric_pairs.clone(),
                     };
 
                     // Try non-blocking send first.

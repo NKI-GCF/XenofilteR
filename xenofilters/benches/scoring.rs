@@ -101,7 +101,9 @@ fn bench_wis(c: &mut Criterion) {
         alignment::fragment::wis_max_rescue_delta,
         variant::{eval::Eval, Variant},
     };
-
+    // FIXME: len/delta are set but the benchmark hardcodes fixed geometry/delta
+    // regardless. Either wire them in to vary interval width/weight per-n for a
+    // more realistic benchmark, or drop the fields.
     struct V {
         pos: usize,
         len: usize,
