@@ -38,22 +38,21 @@
 //! candidate rather than one per read segment.
 
 use super::core::{FragmentBuffer, LineByLine, Scratch};
-use crate::Error;
 use crate::alignment::pre_assess::min_delta_for_early_decision;
 use crate::alignment::{
-    BaseOp, FragmentState, MateClassifiable, MateKind, MdCigFlags, ScoreOpIter, SimpleRec,
-    mate_slot, segment_id,
+    mate_slot, segment_id, BaseOp, FragmentState, MateClassifiable, MateKind, MdCigFlags,
+    ScoreOpIter, SimpleRec,
 };
 use crate::config::run_config::RunConfig;
 use crate::filter_algorithm::line_by_line::{
-    ChimericDecision, MAX_STREAMS, READ_CT,
-    chimeric::{ChimericKind, detect_chimeric_mate_complement},
-    detect_chimeric_event,
+    chimeric::{detect_chimeric_mate_complement, ChimericKind},
+    detect_chimeric_event, ChimericDecision, MAX_STREAMS, READ_CT,
 };
 use crate::region::{ScoreFn, ScoredRegions};
 use crate::variant::StoreTrait;
+use crate::Error;
 use noodles::sam::alignment::RecordBuf;
-use smallvec::{SmallVec, smallvec};
+use smallvec::{smallvec, SmallVec};
 use std::f64::consts::LN_10;
 use std::sync::Arc;
 
@@ -330,6 +329,7 @@ pub(super) struct ScoringContext {
 /// operates on owned data with no `&mut self`.
 pub(super) fn score_bundle(
     best: &mut FragmentBuffer<RecordBuf>,
+    lose: &mut FragmentBuffer<RecordBuf>,
     stores: &SmallVec<[Option<Arc<dyn StoreTrait>>; 2]>,
     ctx: &ScoringContext,
     scratch: &mut Scratch,
@@ -343,7 +343,7 @@ pub(super) fn score_bundle(
     if has_mapped {
         for i in (0..best.len()).rev() {
             if best[i].is_all_unmapped() {
-                best.remove(i);
+                lose.push(best.remove(i));
             }
         }
     }
@@ -381,7 +381,7 @@ pub(super) fn score_bundle(
         threshold,
         ctx.add_decision_tag,
         |b, i| {
-            b.remove(i);
+            lose.push(b.remove(i));
             Ok(())
         },
     )
@@ -408,7 +408,7 @@ fn score_candidate_owned(
     scratch: &mut Scratch,
     cancel_slot: [bool; 2],
 ) -> Result<f64, Error> {
-    use crate::alignment::{Fragment, stringify_record};
+    use crate::alignment::{stringify_record, Fragment};
     use crate::variant::FragEvalVec;
 
     let mut segment: SmallVec<[&RecordBuf; READ_CT]> = SmallVec::new();

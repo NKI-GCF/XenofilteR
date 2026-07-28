@@ -6,16 +6,16 @@
 //! which owns all writers (no Mutex required).
 
 use super::chimeric::{
-    ChimericDecision, ChimericKind, detect_chimeric_event, detect_chimeric_mate_complement,
+    detect_chimeric_event, detect_chimeric_mate_complement, ChimericDecision, ChimericKind,
 };
 use super::core::{FragmentBuffer, LineByLine, Scratch};
-use super::ordering::{ScoringContext, score_bundle};
+use super::ordering::{score_bundle, ScoringContext};
 use crate::config::run_config::RunConfig;
 use crate::filter_algorithm::line_by_line::apply_decision_tag;
-use crate::{Error, variant::StoreTrait};
-use crossbeam_channel::{Receiver, Sender, bounded};
+use crate::{variant::StoreTrait, Error};
+use crossbeam_channel::{bounded, Receiver, Sender};
 use noodles::sam::alignment::record_buf::RecordBuf;
-use smallvec::{SmallVec, smallvec};
+use smallvec::{smallvec, SmallVec};
 use std::sync::Arc;
 use std::thread;
 
@@ -35,6 +35,7 @@ pub(super) struct FragmentBundle {
 /// A scored fragment ready to be written by the IO thread.
 pub(super) struct ScoredFragment {
     pub(super) best: FragmentBuffer<RecordBuf>,
+    pub(super) lose: FragmentBuffer<RecordBuf>,
     pub(super) decision: Option<super::ordering::Decision>,
 }
 
@@ -52,9 +53,14 @@ fn worker_loop(rx: Receiver<FragmentBundle>, tx: Sender<ScoredFragment>) {
             stores,
             ctx,
         } = bundle;
-        let decision = score_bundle(&mut best, &stores, &ctx, &mut scratch);
+        let mut lose: FragmentBuffer<RecordBuf> = smallvec![];
+        let decision = score_bundle(&mut best, &mut lose, &stores, &ctx, &mut scratch);
         // Ignore send errors: the IO thread may have exited after an error.
-        let _ = tx.send(ScoredFragment { best, decision });
+        let _ = tx.send(ScoredFragment {
+            best,
+            lose,
+            decision,
+        });
     }
 }
 
@@ -146,8 +152,10 @@ impl LineByLine<RecordBuf> {
                 }
                 if best.len() == 1 {
                     // Single-stream fragment -- no scoring needed.
+                    // XXX: It suggests there is nothing to discard.
                     self.write_scored(ScoredFragment {
                         best: best.drain(..).collect(),
+                        lose: smallvec![],
                         decision: None,
                     })?;
                 } else {
@@ -233,7 +241,11 @@ impl LineByLine<RecordBuf> {
     }
 
     fn write_scored(&mut self, sf: ScoredFragment) -> Result<(), Error> {
-        let ScoredFragment { mut best, decision } = sf;
+        let ScoredFragment {
+            mut best,
+            mut lose,
+            decision,
+        } = sf;
         let best_state = (best.len() == 1).then_some(true);
         best.drain(..).try_for_each(|mut b| {
             let nr = b.get_nr();
@@ -244,6 +256,15 @@ impl LineByLine<RecordBuf> {
                 apply_decision_tag(&mut r, decision.as_ref());
                 self.write_record(nr, r, best_state)
             })
+        })?;
+        // Lost ones eliminated during scoring were never written by score_bundle
+        // (writers must stay on the IO thread) -- write them here as discarded,
+        // mirroring process_sequential's discard_at (no decision tag, no
+        // is_unmapped_skipped filtering, matching current sequential semantics).
+        lose.drain(..).try_for_each(|mut b| {
+            let nr = b.get_nr();
+            b.drain_records()
+                .try_for_each(|r| self.write_record(nr, r, Some(false)))
         })
     }
 }
