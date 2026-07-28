@@ -6,16 +6,18 @@ use super::*;
 pub(crate) mod property;
 #[cfg(test)]
 pub(crate) use aln_stream::tests::*;
+#[cfg(test)]
+mod proptest_invariants;
 
 use noodles::core::Position;
 use noodles::sam::alignment::{
     record::data::field::Tag,
-    record_buf::{Data, data::field::Value},
+    record_buf::{data::field::Value, Data},
 };
 use noodles::sam::alignment::{
     record::{
+        cigar::{op::Kind, Op},
         Flags,
-        cigar::{Op, op::Kind},
     },
     record_buf::{Cigar, QualityScores, RecordBuf, Sequence},
 };
