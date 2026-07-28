@@ -13,9 +13,13 @@ use crate::{
     alignment::fragment::wis_max_rescue_delta,
     alignment::FragmentState,
     config::{args::ScoringArgs, run_config::RunConfig},
-    filter_algorithm::line_by_line::{
-        core::FragmentBuffer, detect_chimeric_event, ChimericDecision, ChimericThresholds,
-        LineByLine, MAX_STREAMS,
+    filter_algorithm::{
+        collated::CollatedMatcher,
+        hash_lookup::HashLookup,
+        line_by_line::{
+            core::FragmentBuffer, detect_chimeric_event, ChimericDecision, ChimericThresholds,
+            LineByLine, MAX_STREAMS,
+        },
     },
     tests::{create_record, MockStream},
     variant::{Eval, Variant},
@@ -143,6 +147,197 @@ fn default_run_config(add_decision_tag: bool, quiet: bool, no_program_line: bool
     }
 }
 
+fn frag_op_strategy() -> impl Strategy<Value = FragOp> {
+    prop_oneof![Just(FragOp::AddTiedPerfect), Just(FragOp::AddCleanWin)]
+}
+
+struct PropVariant {
+    pos: usize,
+    p: f64,
+}
+
+impl Variant for PropVariant {
+    fn pos(&self) -> usize {
+        self.pos
+    }
+    fn ref_allele(&self) -> &[u8] {
+        b"A"
+    }
+    fn alt_allele(&self) -> &[u8] {
+        b"G"
+    }
+    fn p_variant(&self) -> f64 {
+        self.p
+    }
+}
+
+#[derive(Debug, Clone)]
+enum FragOp {
+    /// Add a new independent (tied-perfect) fragment: contributes 1 to
+    /// ambiguous on both streams.
+    AddTiedPerfect,
+    /// Add a fragment where stream 0 wins cleanly.
+    AddCleanWin,
+}
+
+/// Build a decisive winner/loser MD pair: `n_mismatch` mismatches, each
+/// separated by at least one match base, with no zero-length digit run
+/// anywhere in the MD string.
+///
+/// NOTE: `next_md_base` (src/alignment/ops.rs) advances `read_pos` and
+/// returns `BaseOp::Match` unconditionally whenever it parses a digit
+/// run -- including a run of `"0"` -- so a `"0"` token anywhere (leading,
+/// trailing, or between two adjacent mismatch letters, e.g. "5A0C10")
+/// injects a phantom match base with no corresponding read base skipped.
+/// This generator avoids emitting any zero-length digit run so the test
+/// exercises cross-algorithm agreement, not that parser quirk.
+fn decisive_loser_md(len: usize, n_mismatch: usize) -> String {
+    debug_assert!(len >= 2 * n_mismatch + 1);
+    let mut md = "1A".repeat(n_mismatch);
+    md.push_str(&(len - 2 * n_mismatch).to_string());
+    md
+}
+
+/// A pair of fixtures with a match-count delta comfortably above the
+/// default Phred-10 ambiguous threshold, so all three backends' Tier-2.5
+/// / Tier-3 floors resolve the same winner (see module doc above p9).
+#[derive(Debug, Clone)]
+struct DecisivePair {
+    len: usize,
+    n_mismatch: usize,
+    winner_on_stream0: bool,
+}
+
+fn decisive_pair_strategy() -> impl Strategy<Value = DecisivePair> {
+    (3usize..=10, any::<bool>()).prop_flat_map(|(n_mismatch, winner_on_stream0)| {
+        // len >= 2*n_mismatch + 1 keeps every MD digit run >= 1 (see decisive_loser_md).
+        (2 * n_mismatch + 1..=2 * n_mismatch + 40).prop_map(move |len| DecisivePair {
+            len,
+            n_mismatch,
+            winner_on_stream0,
+        })
+    })
+}
+
+impl DecisivePair {
+    fn records(&self) -> Result<(RecordBuf, RecordBuf), Error> {
+        let q = vec![30u8; self.len];
+        let winner = create_record(
+            b"R1",
+            &format!("{}M", self.len),
+            &[],
+            &q,
+            &self.len.to_string(),
+            false,
+        )?;
+        let loser = create_record(
+            b"R1",
+            &format!("{}M", self.len),
+            &[],
+            &q,
+            &decisive_loser_md(self.len, self.n_mismatch),
+            false,
+        )?;
+        if self.winner_on_stream0 {
+            Ok((winner, loser))
+        } else {
+            Ok((loser, winner))
+        }
+    }
+}
+
+fn two_stream_run_config() -> RunConfig {
+    default_run_config(false, true, false)
+}
+
+struct StreamCountCase {
+    label: &'static str,
+    n: usize,
+}
+
+// ===========================================================================
+// Table-driven edge cases for cross-algorithm / cross-parallelism agreement
+// ===========================================================================
+//
+// Complements p9/p10: named rows for boundary conditions that random
+// generation covers only by luck (exact ties, exact threshold cutoffs,
+// minimal lengths). Failures report the row label, not a shrunk seed.
+
+struct AgreementCase {
+    label: &'static str,
+    len: usize,
+    n_mismatch: usize,
+    winner_on_stream0: bool,
+    /// If `Some(false)`, this case is a KNOWN boundary where Tier-2.5's
+    /// floor may legitimately diverge from Tier-3 across backends (see
+    /// `min_delta_for_early_decision`); we assert only that LineByLine's
+    /// own sequential/parallel outputs agree, not full 3-backend equality.
+    expect_full_backend_agreement: bool,
+}
+
+fn agreement_cases() -> Vec<AgreementCase> {
+    vec![
+        AgreementCase {
+            label: "exact_tie_zero_mismatch_delta",
+            len: 20,
+            n_mismatch: 0,
+            winner_on_stream0: true,
+            expect_full_backend_agreement: true, // both perfect -> all backends ambiguous
+        },
+        AgreementCase {
+            label: "minimal_length_single_mismatch_boundary",
+            // len=2*1+1=3 is the smallest legal len for n_mismatch=1 per
+            // decisive_loser_md's debug_assert.
+            len: 3,
+            n_mismatch: 1,
+            winner_on_stream0: true,
+            expect_full_backend_agreement: false, // delta too small vs Phred-10 floor
+        },
+        AgreementCase {
+            label: "decisive_winner_on_stream0_large_delta",
+            len: 50,
+            n_mismatch: 8,
+            winner_on_stream0: true,
+            expect_full_backend_agreement: true,
+        },
+        AgreementCase {
+            label: "decisive_winner_on_stream1_large_delta",
+            len: 50,
+            n_mismatch: 8,
+            winner_on_stream0: false,
+            expect_full_backend_agreement: true,
+        },
+        AgreementCase {
+            label: "delta_just_above_phred10_threshold",
+            // min_delta_for_early_decision at Phred-10 default; pick a
+            // mismatch count comfortably (not marginally) above it so this
+            // row is stable rather than flaky against penalty tuning --
+            // see p9's module doc on why near-tie cases are excluded from
+            // the "must fully agree" bucket.
+            len: 30,
+            n_mismatch: 4,
+            winner_on_stream0: true,
+            expect_full_backend_agreement: true,
+        },
+        AgreementCase {
+            label: "long_read_many_mismatches",
+            len: 150,
+            n_mismatch: 20,
+            winner_on_stream0: false,
+            expect_full_backend_agreement: true,
+        },
+        AgreementCase {
+            label: "short_read_max_mismatch_density",
+            // len must satisfy len >= 2*n_mismatch+1; this is the tightest
+            // packing (every other base a mismatch) at a small scale.
+            len: 9,
+            n_mismatch: 4,
+            winner_on_stream0: true,
+            expect_full_backend_agreement: false, // delta likely below floor at this scale
+        },
+    ]
+}
+
 // ===========================================================================
 // P1 — Determinism: identical input -> identical routing counters
 // ===========================================================================
@@ -203,6 +398,59 @@ proptest! {
         prop_assert_eq!(total, n as u64,
             "n={} streams each contributed one record; total routed must equal n, got {}", n, total);
     }
+}
+
+#[test]
+fn table_stream_count_boundaries_conserve_fragment() {
+    let cases = vec![
+        StreamCountCase {
+            label: "minimum_two_streams",
+            n: 2,
+        },
+        StreamCountCase {
+            label: "three_streams",
+            n: 3,
+        },
+        StreamCountCase {
+            label: "max_streams_32",
+            n: MAX_STREAMS,
+        },
+    ];
+
+    crate::tests::common::run_collecting(
+        &cases,
+        |c| c.label.to_string(),
+        |c| {
+            let cfg = default_run_config(false, true, false);
+            let per_stream: Vec<Vec<RecordBuf>> = (0..c.n)
+                .map(|i| {
+                    // Vary MD slightly per stream so it's not a degenerate
+                    // all-identical-perfect fixture at every n.
+                    let md = if i == 0 {
+                        "20".to_string()
+                    } else {
+                        format!("{}A{}", i.min(19), 19 - i.min(19))
+                    };
+                    create_record(b"R1", "20M", &[], &[30u8; 20], &md, false)
+                        .map(|r| vec![r])
+                        .map_err(|e| format!("create_record failed for stream {i}: {e:?}"))
+                })
+                .collect::<Result<Vec<Vec<_>>, String>>()?;
+
+            let aln = n_stream_aln(per_stream);
+            let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&cfg, aln, vec![], vec![])
+                .map_err(|e| format!("LineByLine::new failed: {e:?}"))?;
+            lbl.process_sequential(&cfg)
+                .map_err(|e| format!("process_sequential failed: {e:?}"))?;
+
+            let total: u64 = lbl.routing_counters.iter().sum();
+            if total != c.n as u64 {
+                Err(format!("expected total={}, got {}", c.n, total))
+            } else {
+                Ok(())
+            }
+        },
+    );
 }
 
 // ===========================================================================
@@ -390,25 +638,6 @@ proptest! {
 // core of `--min-rescue-p-variant`; test it directly rather than through
 // the full NW pipeline so failures shrink to a single (delta, p) pair.
 
-struct PropVariant {
-    pos: usize,
-    p: f64,
-}
-impl Variant for PropVariant {
-    fn pos(&self) -> usize {
-        self.pos
-    }
-    fn ref_allele(&self) -> &[u8] {
-        b"A"
-    }
-    fn alt_allele(&self) -> &[u8] {
-        b"G"
-    }
-    fn p_variant(&self) -> f64 {
-        self.p
-    }
-}
-
 proptest! {
     #[test]
     fn p7_rescue_respects_min_p_variant_gate(
@@ -475,19 +704,6 @@ proptest! {
     }
 }
 
-#[derive(Debug, Clone)]
-enum FragOp {
-    /// Add a new independent (tied-perfect) fragment: contributes 1 to
-    /// ambiguous on both streams.
-    AddTiedPerfect,
-    /// Add a fragment where stream 0 wins cleanly.
-    AddCleanWin,
-}
-
-fn frag_op_strategy() -> impl Strategy<Value = FragOp> {
-    prop_oneof![Just(FragOp::AddTiedPerfect), Just(FragOp::AddCleanWin)]
-}
-
 proptest! {
     #[test]
     fn stateful_ambiguous_and_win_counts_track_ops(
@@ -524,4 +740,193 @@ proptest! {
             prop_assert_eq!(lbl.routing_counters[1], expect_win0, "stream-0 win count after {} ops", i + 1);
         }
     }
+}
+
+// ===========================================================================
+// P9 — Namesorted-compatible input: all three algorithms agree
+// ===========================================================================
+//
+// LineByLine (namesorted), HashLookup, and CollatedMatcher all claim to
+// implement the same tournament semantics on 2-stream input, differing
+// only in I/O strategy (streaming vs. two-pass seek vs. hash-buffered).
+// For a decisively-scored fragment (match-count delta far above the
+// default ambiguous threshold, so no backend's Tier-2.5 floor disagrees
+// with what Tier-3 NW would resolve), the aggregate routing counters
+// (stride-4 per stream: discard/out/ambiguous/chimeric) must be identical
+// across all three.
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 40, .. ProptestConfig::default() })]
+    #[test]
+    fn p9_all_three_algorithms_agree_on_namesorted_input(pair in decisive_pair_strategy()) {
+        let (rec0, rec1) = pair.records()?;
+        let cfg = two_stream_run_config();
+
+        let lbl_counters = {
+            let aln = n_stream_aln(vec![vec![rec0.clone()], vec![rec1.clone()]]);
+            let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&cfg, aln, vec![], vec![])?;
+            lbl.process_sequential(&cfg)?;
+            lbl.routing_counters
+        };
+
+        let hl_counters = {
+            let aln = crate::tests::common::two_stream_aln(vec![rec0.clone()], vec![rec1.clone()]);
+            let mut hl = HashLookup::<RecordBuf>::new(&cfg, aln, [None, None], [None, None])?;
+            hl.process(&cfg)?;
+            hl.routing_counters
+        };
+
+        let coll_counters = {
+            let aln = crate::tests::common::two_stream_aln(vec![rec0], vec![rec1]);
+            let mut coll = CollatedMatcher::<RecordBuf>::new(&cfg, aln, [None, None], [None, None])?;
+            coll.process(&cfg)?;
+            coll.routing_counters
+        };
+
+        prop_assert_eq!(
+            &lbl_counters, &hl_counters,
+            "LineByLine vs HashLookup diverged for len={} n_mismatch={} winner_on_stream0={}",
+            pair.len, pair.n_mismatch, pair.winner_on_stream0
+        );
+        prop_assert_eq!(
+            &lbl_counters, &coll_counters,
+            "LineByLine vs CollatedMatcher diverged for len={} n_mismatch={} winner_on_stream0={}",
+            pair.len, pair.n_mismatch, pair.winner_on_stream0
+        );
+    }
+}
+
+// ===========================================================================
+// P10 — Cross-algorithm agreement extended to sequential vs parallel LineByLine
+// ===========================================================================
+//
+// Composes with p4: the same decisive fixture must agree across all of
+// {sequential, parallel, HashLookup, Collated} simultaneously -- a
+// regression here pinpoints whether a divergence is backend-specific
+// (only HashLookup or only Collated disagrees with LineByLine) or a
+// parallelism-specific regression (only process_parallel disagrees),
+// which the pairwise p4/p9 tests can each miss if run in isolation but
+// this one catches jointly.
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 24, .. ProptestConfig::default() })]
+    #[test]
+    fn p10_sequential_parallel_and_all_backends_agree(
+        pair in decisive_pair_strategy(),
+        threads in 2usize..=4,
+    ) {
+        let cfg = two_stream_run_config();
+
+        let (r0, r1) = pair.records()?;
+        let seq = {
+            let aln = n_stream_aln(vec![vec![r0.clone()], vec![r1.clone()]]);
+            let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&cfg, aln, vec![], vec![])?;
+            lbl.process_sequential(&cfg)?;
+            lbl.routing_counters
+        };
+        let par = {
+            let aln = n_stream_aln(vec![vec![r0.clone()], vec![r1.clone()]]);
+            let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&cfg, aln, vec![], vec![])?;
+            lbl.process_parallel(&cfg, threads)?;
+            lbl.routing_counters
+        };
+        let hl = {
+            let aln = crate::tests::common::two_stream_aln(vec![r0.clone()], vec![r1.clone()]);
+            let mut hl = HashLookup::<RecordBuf>::new(&cfg, aln, [None, None], [None, None])?;
+            hl.process(&cfg)?;
+            hl.routing_counters
+        };
+        let coll = {
+            let aln = crate::tests::common::two_stream_aln(vec![r0], vec![r1]);
+            let mut coll = CollatedMatcher::<RecordBuf>::new(&cfg, aln, [None, None], [None, None])?;
+            coll.process(&cfg)?;
+            coll.routing_counters
+        };
+
+        prop_assert_eq!(&seq, &par, "sequential vs parallel diverged");
+        prop_assert_eq!(&seq, &hl, "sequential vs HashLookup diverged");
+        prop_assert_eq!(&seq, &coll, "sequential vs CollatedMatcher diverged");
+    }
+}
+
+#[test]
+fn table_cross_algorithm_agreement() {
+    let cases = agreement_cases();
+    crate::tests::common::run_collecting(
+        &cases,
+        |c| c.label.to_string(),
+        |c| {
+            let pair = DecisivePair {
+                len: c.len,
+                n_mismatch: c.n_mismatch,
+                winner_on_stream0: c.winner_on_stream0,
+            };
+            let cfg = two_stream_run_config();
+
+            let (r0, r1) = pair
+                .records()
+                .map_err(|e| format!("record construction failed: {e:?}"))?;
+
+            let lbl_counters = {
+                let aln = n_stream_aln(vec![vec![r0.clone()], vec![r1.clone()]]);
+                let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&cfg, aln, vec![], vec![])
+                    .map_err(|e| format!("LineByLine::new failed: {e:?}"))?;
+                lbl.process_sequential(&cfg)
+                    .map_err(|e| format!("process_sequential failed: {e:?}"))?;
+                lbl.routing_counters
+            };
+            let par_counters = {
+                let aln = n_stream_aln(vec![vec![r0.clone()], vec![r1.clone()]]);
+                let mut lbl: LineByLine<RecordBuf> = LineByLine::new(&cfg, aln, vec![], vec![])
+                    .map_err(|e| format!("LineByLine::new (parallel) failed: {e:?}"))?;
+                lbl.process_parallel(&cfg, 3)
+                    .map_err(|e| format!("process_parallel failed: {e:?}"))?;
+                lbl.routing_counters
+            };
+            if lbl_counters != par_counters {
+                return Err(format!(
+                    "sequential {:?} != parallel {:?}",
+                    lbl_counters, par_counters
+                ));
+            }
+
+            if !c.expect_full_backend_agreement {
+                // Known boundary case: only sequential/parallel LineByLine
+                // agreement is asserted above; cross-backend Tier-2.5 floor
+                // behavior is allowed to differ here. Nothing further to check.
+                return Ok(());
+            }
+
+            let hl_counters = {
+                let aln = crate::tests::common::two_stream_aln(vec![r0.clone()], vec![r1.clone()]);
+                let mut hl = HashLookup::<RecordBuf>::new(&cfg, aln, [None, None], [None, None])
+                    .map_err(|e| format!("HashLookup::new failed: {e:?}"))?;
+                hl.process(&cfg)
+                    .map_err(|e| format!("HashLookup::process failed: {e:?}"))?;
+                hl.routing_counters
+            };
+            if lbl_counters != hl_counters {
+                return Err(format!(
+                    "LineByLine {:?} != HashLookup {:?}",
+                    lbl_counters, hl_counters
+                ));
+            }
+
+            let coll_counters = {
+                let aln = crate::tests::common::two_stream_aln(vec![r0], vec![r1]);
+                let mut coll =
+                    CollatedMatcher::<RecordBuf>::new(&cfg, aln, [None, None], [None, None])
+                        .map_err(|e| format!("CollatedMatcher::new failed: {e:?}"))?;
+                coll.process(&cfg)
+                    .map_err(|e| format!("CollatedMatcher::process failed: {e:?}"))?;
+                coll.routing_counters
+            };
+            if lbl_counters != coll_counters {
+                return Err(format!(
+                    "LineByLine {:?} != CollatedMatcher {:?}",
+                    lbl_counters, coll_counters
+                ));
+            }
+
+            Ok(())
+        },
+    );
 }
